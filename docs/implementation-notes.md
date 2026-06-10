@@ -9,7 +9,7 @@
 
 ## 1. 開発環境
 
-- Go 1.22 以上(`net/http` の メソッド付きルーティング前提。ルーターは chi を採用)
+- Go 1.25 以上(modernc.org/sqlite v1.52 の要求。ルーターは chi を採用)
 - Node.js 20 以上 + npm
 - 主要 Go 依存(予定):
   - `github.com/go-chi/chi/v5` — ルーター
@@ -274,7 +274,7 @@ http.ServeContent(w, r, st.Name(), st.ModTime(), f)
 multi-stage ビルド:
 
 1. `node:20` で frontend をビルド
-2. `golang:1.22` で dist を embed して `CGO_ENABLED=0 go build`
+2. `golang:1.25` で dist を embed して `CGO_ENABLED=0 go build`
 3. `gcr.io/distroless/static`(または alpine)へバイナリのみコピー
 
 compose 例は design.md §10 参照。

@@ -16,7 +16,7 @@ stashPad — 自宅ファイルサーバ上のメディア(音声・動画・画
 
 ## 確定済みの重要事項(詳細は design.md §12 決定事項ログ)
 
-- バックエンド: **Go 1.22+**(chi + modernc.org/sqlite)。Python ではない
+- バックエンド: **Go 1.25+**(chi + modernc.org/sqlite v1.52 の要求)。Python ではない
 - フロントエンド: React + TypeScript + Vite。本番はビルド成果物を Go バイナリに `go:embed` し単一コンテナで配信
 - DB: SQLite。メディアファイルの実体は **read-only マウント**され、絶対に書き込まない
 - トランスコードなし(flac/wav/mp3/mp4/webp/png/jpg は全てブラウザネイティブ再生)
