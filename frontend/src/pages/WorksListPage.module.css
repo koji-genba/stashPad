@@ -1,0 +1,185 @@
+.layout {
+  display: flex;
+  gap: 20px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 14px;
+}
+
+/* PC のみ表示するサイドパネル */
+.sidebar {
+  display: none;
+}
+
+.sidebarTitle {
+  font-size: 15px;
+  margin: 0 0 12px;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.searchForm {
+  display: flex;
+  gap: 8px;
+}
+.searchForm .input {
+  flex: 1;
+}
+
+.controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.filterBtn {
+  flex: 1;
+}
+.sortSelect {
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.chipX {
+  font-size: 10px;
+  opacity: 0.8;
+}
+.chipNote {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.resultCount {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin: 24px 0;
+}
+.pageInfo {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.center {
+  display: flex;
+  justify-content: center;
+  padding: 48px 0;
+}
+.empty {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 48px 0;
+}
+
+/* ---- ドロワー(スマホ) ---- */
+.drawerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.5);
+}
+.drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 84%;
+  max-width: 360px;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  padding-top: calc(env(safe-area-inset-top) + 16px);
+  overflow-y: auto;
+}
+.drawerHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.drawerClose {
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+
+/* ---- PC レイアウト ---- */
+@media (min-width: 768px) {
+  .grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .filterBtn {
+    display: none; /* PC はサイドパネルがあるのでドロワー不要 */
+  }
+  .sidebar {
+    display: block;
+    width: 240px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 14px;
+    align-self: flex-start;
+    max-height: calc(100vh - 28px);
+    overflow-y: auto;
+  }
+  .searchForm .input {
+    max-width: 480px;
+  }
+}
+
+@media (min-width: 1100px) {
+  .grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+@media (min-width: 1400px) {
+  .grid {
+    grid-template-columns: repeat(6, 1fr);
+  }
+}

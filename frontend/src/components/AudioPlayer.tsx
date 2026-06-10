@@ -1,0 +1,251 @@
+// 画面下部固定のミニプレイヤー。<audio> 要素を ref で保持し、
+// ページ遷移しても unmount されない(App ルート直下に常駐)。
+// 再生状態は playerStore が単一の真実。ここは store の命令(loadNonce / seekRequest /
+// isPlaying / playbackRate)を <audio> に反映し、<audio> のイベントを store へ返す。
+import { useEffect, useRef } from 'react';
+import { useStore } from 'zustand';
+import {
+  currentSrc,
+  currentTrack,
+  playerThumbUrl,
+  usePlayerStore,
+} from '@/store/playerStore';
+import { formatTime } from '@/utils/format';
+import styles from './AudioPlayer.module.css';
+
+const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+
+export default function AudioPlayer() {
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  const ctx = useStore(usePlayerStore, (s) => s.ctx);
+  const index = useStore(usePlayerStore, (s) => s.index);
+  const queueLen = useStore(usePlayerStore, (s) => s.queue.length);
+  const isPlaying = useStore(usePlayerStore, (s) => s.isPlaying);
+  const currentTime = useStore(usePlayerStore, (s) => s.currentTime);
+  const duration = useStore(usePlayerStore, (s) => s.duration);
+  const playbackRate = useStore(usePlayerStore, (s) => s.playbackRate);
+  const loadNonce = useStore(usePlayerStore, (s) => s.loadNonce);
+  const seekRequest = useStore(usePlayerStore, (s) => s.seekRequest);
+  const src = useStore(usePlayerStore, currentSrc);
+  const track = useStore(usePlayerStore, currentTrack);
+
+  // ---- store -> <audio>: 新トラックのロード ----
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el || !src) return;
+    if (el.src !== absoluteUrl(src)) {
+      el.src = src;
+    }
+    el.playbackRate = playbackRate;
+    el.load();
+    void el.play().catch(() => {
+      // 自動再生がブロックされたら停止状態にする
+      usePlayerStore.getState().setPlaying(false);
+    });
+    // loadNonce が変わるたびに発火
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadNonce, src]);
+
+  // ---- store -> <audio>: 再生 / 停止 ----
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el || !src) return;
+    if (isPlaying && el.paused) {
+      void el.play().catch(() => usePlayerStore.getState().setPlaying(false));
+    } else if (!isPlaying && !el.paused) {
+      el.pause();
+    }
+  }, [isPlaying, src]);
+
+  // ---- store -> <audio>: 再生速度 ----
+  useEffect(() => {
+    const el = audioRef.current;
+    if (el) el.playbackRate = playbackRate;
+  }, [playbackRate]);
+
+  // ---- store -> <audio>: シーク要求 ----
+  useEffect(() => {
+    const el = audioRef.current;
+    if (el && seekRequest) {
+      el.currentTime = seekRequest.time;
+    }
+  }, [seekRequest]);
+
+  // ---- Media Session API ----
+  useEffect(() => {
+    if (!('mediaSession' in navigator) || !ctx || !track) return;
+    const ms = navigator.mediaSession;
+    const thumb = playerThumbUrl(ctx);
+    ms.metadata = new MediaMetadata({
+      title: track.name,
+      artist: ctx.workTitle,
+      album: ctx.workTitle,
+      artwork: thumb
+        ? [{ src: absoluteUrl(thumb), sizes: '512x512', type: 'image/jpeg' }]
+        : [],
+    });
+    const store = usePlayerStore.getState();
+    const set = (action: MediaSessionAction, handler: (() => void) | null) => {
+      try {
+        ms.setActionHandler(action, handler);
+      } catch {
+        /* 未対応アクションは無視 */
+      }
+    };
+    set('play', () => store.setPlaying(true));
+    set('pause', () => store.setPlaying(false));
+    set('seekbackward', () => store.seekBy(-10));
+    set('seekforward', () => store.seekBy(10));
+    set('previoustrack', () => usePlayerStore.getState().prev());
+    set('nexttrack', () => usePlayerStore.getState().next());
+    return () => {
+      (
+        [
+          'play',
+          'pause',
+          'seekbackward',
+          'seekforward',
+          'previoustrack',
+          'nexttrack',
+        ] as MediaSessionAction[]
+      ).forEach((a) => set(a, null));
+    };
+  }, [ctx, track]);
+
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    }
+  }, [isPlaying]);
+
+  if (!ctx) return null;
+
+  const store = usePlayerStore.getState();
+  const onSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    store.seekTo(Number(e.target.value));
+  };
+
+  return (
+    <>
+      <audio
+        ref={audioRef}
+        onTimeUpdate={(e) =>
+          usePlayerStore.getState().setCurrentTime(e.currentTarget.currentTime)
+        }
+        onLoadedMetadata={(e) =>
+          usePlayerStore.getState().setDuration(e.currentTarget.duration)
+        }
+        onDurationChange={(e) =>
+          usePlayerStore.getState().setDuration(e.currentTarget.duration)
+        }
+        onPlay={() => usePlayerStore.getState().setPlaying(true)}
+        onPause={() => usePlayerStore.getState().setPlaying(false)}
+        onEnded={() => usePlayerStore.getState().handleEnded()}
+      />
+
+      <div className={styles.bar}>
+        <div
+          className={styles.seek}
+          style={{
+            background: `linear-gradient(to right, var(--accent) ${
+              duration ? (currentTime / duration) * 100 : 0
+            }%, var(--border) 0)`,
+          }}
+        >
+          <input
+            type="range"
+            min={0}
+            max={duration || 0}
+            step={0.1}
+            value={Math.min(currentTime, duration || 0)}
+            onChange={onSeek}
+            aria-label="再生位置"
+          />
+        </div>
+
+        <div className={styles.body}>
+          <img
+            className={styles.thumb}
+            src={playerThumbUrl(ctx) ?? ''}
+            alt=""
+            onError={(e) => {
+              e.currentTarget.style.visibility = 'hidden';
+            }}
+          />
+          <div className={styles.meta}>
+            <div className={styles.trackName} title={track?.name}>
+              {track?.name}
+            </div>
+            <div className={styles.workName} title={ctx.workTitle}>
+              {ctx.workTitle}
+            </div>
+          </div>
+
+          <div className={styles.controls}>
+            <button
+              className={styles.ctrl}
+              onClick={() => store.prev()}
+              disabled={queueLen <= 1}
+              aria-label="前のトラック"
+            >
+              ⏮
+            </button>
+            <button
+              className={styles.ctrl}
+              onClick={() => store.seekBy(-10)}
+              aria-label="10秒戻る"
+            >
+              <span className={styles.skipLabel}>-10</span>
+            </button>
+            <button
+              className={styles.play}
+              onClick={() => store.togglePlay()}
+              aria-label={isPlaying ? '一時停止' : '再生'}
+            >
+              {isPlaying ? '❚❚' : '▶'}
+            </button>
+            <button
+              className={styles.ctrl}
+              onClick={() => store.seekBy(10)}
+              aria-label="10秒進む"
+            >
+              <span className={styles.skipLabel}>+10</span>
+            </button>
+            <button
+              className={styles.ctrl}
+              onClick={() => store.next()}
+              disabled={index + 1 >= queueLen}
+              aria-label="次のトラック"
+            >
+              ⏭
+            </button>
+          </div>
+
+          <div className={styles.right}>
+            <span className={styles.time}>
+              {formatTime(currentTime)} / {formatTime(duration)}
+            </span>
+            <select
+              className={styles.rate}
+              value={playbackRate}
+              onChange={(e) => store.setRate(Number(e.target.value))}
+              aria-label="再生速度"
+            >
+              {RATES.map((r) => (
+                <option key={r} value={r}>
+                  {r}x
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function absoluteUrl(path: string): string {
+  if (/^https?:\/\//.test(path)) return path;
+  return new URL(path, window.location.origin).href;
+}
