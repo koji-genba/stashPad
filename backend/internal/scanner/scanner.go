@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"sync"
 )
 
 // rjPattern は "RJ" に続く 6〜8 桁の数字にマッチする。
@@ -32,11 +34,19 @@ type ThumbnailGenerator interface {
 // Scan はすべてのライブラリルートをスキャンしてワークを upsert し、
 // 消えたパスの root_path を NULL に戻す。
 // thumbGen が nil の場合はサムネイル生成をスキップする。
+// サムネイル生成のみ worker pool(NumCPU)で並列化する。
 func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, error) {
 	var res Result
 
-	// ステップ1: 各ルートの直下ディレクトリを列挙してスキャン
+	// ステップ1: 各ルートの直下ディレクトリを列挙し works を直列 upsert する。
+	// サムネイル生成が必要な (workID, absPath) ペアを収集する。
 	foundPaths := make(map[string]bool) // スキャンで見つかった root_path の集合
+
+	type thumbJob struct {
+		workID  int64
+		absPath string
+	}
+	var thumbJobs []thumbJob
 
 	for _, root := range roots {
 		entries, err := os.ReadDir(root)
@@ -54,7 +64,7 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 			foundPaths[absPath] = true
 			res.WorksFound++
 
-			n, linked, err := upsertWork(db, absPath, dirName, thumbGen)
+			n, linked, err := upsertWorkNoThumb(db, absPath, dirName)
 			if err != nil {
 				log.Printf("スキャン: upsert 失敗 %q: %v", absPath, err)
 				continue
@@ -64,6 +74,14 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 			}
 			if linked {
 				res.LinkedToCSV++
+			}
+
+			// サムネイル生成ジョブを積む
+			if thumbGen != nil {
+				workID, qErr := getWorkIDByPath(db, absPath)
+				if qErr == nil && workID > 0 {
+					thumbJobs = append(thumbJobs, thumbJob{workID: workID, absPath: absPath})
+				}
 			}
 		}
 	}
@@ -75,12 +93,66 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 	}
 	res.MissingMarked = missing
 
+	// ステップ3: サムネイル生成を worker pool で並列実行
+	if thumbGen != nil && len(thumbJobs) > 0 {
+		type thumbResult struct {
+			workID    int64
+			thumbPath string
+		}
+
+		numWorkers := runtime.NumCPU()
+		if numWorkers < 1 {
+			numWorkers = 1
+		}
+		jobs := make(chan thumbJob, len(thumbJobs))
+		results := make(chan thumbResult, len(thumbJobs))
+
+		var wg sync.WaitGroup
+		for i := 0; i < numWorkers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := range jobs {
+					thumbPath, tErr := thumbGen.Generate(j.workID, j.absPath)
+					if tErr != nil {
+						log.Printf("サムネイル生成失敗 work_id=%d: %v", j.workID, tErr)
+						continue
+					}
+					if thumbPath != "" {
+						results <- thumbResult{workID: j.workID, thumbPath: thumbPath}
+					}
+				}
+			}()
+		}
+
+		for _, j := range thumbJobs {
+			jobs <- j
+		}
+		close(jobs)
+
+		// ワーカー完了後にチャネルを閉じる
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
+
+		// DB 更新は直列化(SQLite は同時書き込み非対応)
+		for r := range results {
+			if _, uErr := db.Exec(
+				"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
+				r.thumbPath, r.workID,
+			); uErr != nil {
+				log.Printf("thumbnail_path 更新失敗 work_id=%d: %v", r.workID, uErr)
+			}
+		}
+	}
+
 	return res, nil
 }
 
-// upsertWork は 1 つのフォルダを works テーブルに upsert する。
+// upsertWorkNoThumb は 1 つのフォルダを works テーブルに upsert する(サムネイル生成なし)。
 // 返り値は (新規作成されたか, CSV 既存行に root_path がリンクされたか, エラー)。
-func upsertWork(db *sql.DB, absPath, dirName string, thumbGen ThumbnailGenerator) (newlyRegistered bool, linkedToCSV bool, err error) {
+func upsertWorkNoThumb(db *sql.DB, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, err error) {
 	m := rjPattern.FindStringSubmatch(dirName)
 
 	if m != nil {
@@ -91,28 +163,6 @@ func upsertWork(db *sql.DB, absPath, dirName string, thumbGen ThumbnailGenerator
 		// RJ 番号なし → フォルダ名全体をタイトルとして登録
 		newlyRegistered, err = upsertByPath(db, absPath, dirName)
 	}
-	if err != nil {
-		return
-	}
-
-	// サムネイル生成
-	if thumbGen != nil {
-		workID, qErr := getWorkIDByPath(db, absPath)
-		if qErr == nil && workID > 0 {
-			thumbPath, tErr := thumbGen.Generate(workID, absPath)
-			if tErr != nil {
-				log.Printf("サムネイル生成失敗 work_id=%d: %v", workID, tErr)
-			} else if thumbPath != "" {
-				if _, uErr := db.Exec(
-					"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
-					thumbPath, workID,
-				); uErr != nil {
-					log.Printf("thumbnail_path 更新失敗 work_id=%d: %v", workID, uErr)
-				}
-			}
-		}
-	}
-
 	return
 }
 

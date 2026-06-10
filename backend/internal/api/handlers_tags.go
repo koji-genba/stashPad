@@ -30,6 +30,7 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN work_tags wt ON wt.tag_id=t.id
 		WHERE 1=1` + whereClause + `
 		GROUP BY t.id
+		HAVING COUNT(wt.work_id) > 0
 		ORDER BY work_count DESC, t.name ASC`
 
 	rows, err := s.db.Query(query, args...)
@@ -61,6 +62,24 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// handleCleanupTags は POST /api/tags/cleanup を処理する。
+// work_tags に 1 件も紐付かないタグを物理削除し、削除件数を返す。
+func (s *Server) handleCleanupTags(w http.ResponseWriter, r *http.Request) {
+	res, err := s.db.Exec(
+		`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM work_tags)`,
+	)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "タグクリーンアップ失敗: "+err.Error())
+		return
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "件数取得失敗: "+err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
 
 // ---- 未使用インポート回避用ヘルパー ------------------------------------------

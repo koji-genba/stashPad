@@ -3,7 +3,7 @@
 // ファイルタップで media_kind に応じて プレイヤー / 画像ビューア / 動画 / テキスト を起動。
 import { useEffect, useState } from 'react';
 import type { EntriesResponse, Entry } from '@/api/types';
-import { fetchEntries } from '@/api/client';
+import { fetchEntries, fileUrl } from '@/api/client';
 import { usePlayerStore } from '@/store/playerStore';
 import { useOverlayStore } from '@/store/overlayStore';
 import { formatBytes, joinPath, pathCrumbs } from '@/utils/format';
@@ -86,7 +86,10 @@ export default function FileBrowser({ workId, workTitle }: Props) {
         });
         break;
       default:
-        // other は何もしない(将来ダウンロードリンク等)
+        // 再生非対応(other / PDF 等)はダウンロード。
+        // backend が Content-Disposition: attachment を返すので、
+        // 一時的な <a> をクリックして SPA 状態を壊さずに保存させる。
+        downloadFile(fileUrl(workId, joinPath(path, entry.name)), entry.name);
         break;
     }
   };
@@ -146,4 +149,15 @@ export default function FileBrowser({ workId, workTitle }: Props) {
       )}
     </section>
   );
+}
+
+/** SPA の状態を壊さずにファイルを保存させる(一時 <a download> をクリック)。 */
+function downloadFile(url: string, name: string) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }

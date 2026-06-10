@@ -3,6 +3,7 @@
 // 再生状態は playerStore が単一の真実。ここは store の命令(loadNonce / seekRequest /
 // isPlaying / playbackRate)を <audio> に反映し、<audio> のイベントを store へ返す。
 import { useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useStore } from 'zustand';
 import {
   currentSrc,
@@ -17,6 +18,7 @@ const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
 export default function AudioPlayer() {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const navigate = useNavigate();
 
   const ctx = useStore(usePlayerStore, (s) => s.ctx);
   const index = useStore(usePlayerStore, (s) => s.index);
@@ -165,22 +167,29 @@ export default function AudioPlayer() {
         </div>
 
         <div className={styles.body}>
-          <img
-            className={styles.thumb}
-            src={playerThumbUrl(ctx) ?? ''}
-            alt=""
-            onError={(e) => {
-              e.currentTarget.style.visibility = 'hidden';
-            }}
-          />
-          <div className={styles.meta}>
-            <div className={styles.trackName} title={track?.name}>
-              {track?.name}
+          <button
+            type="button"
+            className={styles.nav}
+            onClick={() => navigate(`/works/${ctx.workId}`)}
+            aria-label={`${ctx.workTitle} の作品ページを開く`}
+          >
+            <img
+              className={styles.thumb}
+              src={playerThumbUrl(ctx) ?? ''}
+              alt=""
+              onError={(e) => {
+                e.currentTarget.style.visibility = 'hidden';
+              }}
+            />
+            <div className={styles.meta}>
+              <div className={styles.trackName} title={track?.name}>
+                {track?.name}
+              </div>
+              <div className={styles.workName} title={ctx.workTitle}>
+                {ctx.workTitle}
+              </div>
             </div>
-            <div className={styles.workName} title={ctx.workTitle}>
-              {ctx.workTitle}
-            </div>
-          </div>
+          </button>
 
           <div className={styles.controls}>
             <button

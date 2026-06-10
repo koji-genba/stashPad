@@ -57,6 +57,7 @@ func (s *Server) Router(middlewares ...func(http.Handler) http.Handler) http.Han
 			r.Get("/", s.handleGetWork)
 			r.Patch("/", s.handlePatchWork)
 			r.Get("/thumbnail", s.handleWorkThumbnail)
+			r.Post("/thumbnail/refresh", s.handleRefreshThumbnail)
 			r.Get("/entries", s.handleWorkEntries)
 			r.Get("/file", s.handleWorkFile)
 			r.Post("/tags", s.handleAddTag)
@@ -64,8 +65,12 @@ func (s *Server) Router(middlewares ...func(http.Handler) http.Handler) http.Han
 			r.Post("/plays", s.handleRecordPlay)
 		})
 
+		// サムネイル一括再生成
+		r.Post("/thumbnails/rebuild", s.handleRebuildThumbnails)
+
 		// タグ
 		r.Get("/tags", s.handleListTags)
+		r.Post("/tags/cleanup", s.handleCleanupTags)
 
 		// 再生履歴
 		r.Get("/history", s.handleHistory)

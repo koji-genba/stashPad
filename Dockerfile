@@ -7,7 +7,8 @@ COPY frontend/ ./
 RUN npm run build
 
 # ---- stage 2: backend ビルド(dist を embed)----
-FROM golang:1.24 AS backend
+# go.mod の go directive(modernc.org/sqlite が Go 1.25 を要求)と合わせること
+FROM golang:1.25 AS backend
 WORKDIR /app/backend
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download

@@ -77,3 +77,23 @@
   color: var(--danger);
   font-size: 13px;
 }
+
+.maintRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.maintRow:last-of-type {
+  margin-bottom: 0;
+}
+.maintResult {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.maintResult b {
+  color: var(--accent);
+  font-size: 15px;
+  margin: 0 2px;
+}

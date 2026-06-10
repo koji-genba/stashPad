@@ -70,6 +70,11 @@
   padding: 4px 10px;
   font-size: 12px;
 }
+.chipKind {
+  font-size: 10px;
+  opacity: 0.75;
+  margin-right: 2px;
+}
 .chipX {
   font-size: 10px;
   opacity: 0.8;
@@ -99,8 +104,20 @@
   margin: 24px 0;
 }
 .pageInfo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 13px;
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.pageSelect {
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -134,6 +151,7 @@
   padding: 16px;
   padding-top: calc(env(safe-area-inset-top) + 16px);
   overflow-y: auto;
+  overflow-x: hidden;
 }
 .drawerHead {
   display: flex;

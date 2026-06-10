@@ -19,7 +19,11 @@ import (
 )
 
 // priorityPattern はサムネイル優先ファイル名のパターン(大文字小文字無視)。
+// thumbnail.* の特別ルールより低い優先度として使う。
 var priorityPattern = regexp.MustCompile(`(?i)(表紙|cover|jacket|サムネ|main)`)
+
+// thumbnailPattern はルート直下の thumbnail.(jpg|jpeg|png|webp) にマッチする(大文字小文字無視)。
+var thumbnailPattern = regexp.MustCompile(`(?i)^thumbnail\.(jpg|jpeg|png|webp)$`)
 
 // Generator はサムネイル生成器。
 type Generator struct {
@@ -32,33 +36,49 @@ func New(thumbsDir string) *Generator {
 }
 
 // Generate は workID の作品フォルダ rootPath からサムネイルを生成し、
-// {ThumbsDir}/{workID}.jpg へ保存する。既存ならスキップ。
+// {ThumbsDir}/{workID}.jpg へ保存する。
+// ソース画像の mtime がキャッシュより新しい(またはキャッシュが無い)場合のみ(再)生成する。
 // 保存したパス(または既存パス)を返す。画像が見つからない場合は空文字列を返す。
 func (g *Generator) Generate(workID int64, rootPath string) (string, error) {
-	outPath := filepath.Join(g.ThumbsDir, fmt.Sprintf("%d.jpg", workID))
+	_, outPath, err := g.Refresh(workID, rootPath)
+	return outPath, err
+}
 
-	// 生成済みならスキップ
-	if _, err := os.Stat(outPath); err == nil {
-		return outPath, nil
-	}
+// Refresh は mtime 判定を行い、ソース画像がキャッシュより新しい(またはキャッシュが無い)
+// 場合のみサムネイルを(再)生成する。再生成した場合は true、スキップした場合は false を返す。
+// 画像が見つからない場合は (false, "", nil)。
+func (g *Generator) Refresh(workID int64, rootPath string) (regenerated bool, outPath string, err error) {
+	outPath = filepath.Join(g.ThumbsDir, fmt.Sprintf("%d.jpg", workID))
 
-	// 画像候補を収集(深さ 2 まで)
+	// 候補収集
 	candidates, err := collectImageCandidates(rootPath, 2)
 	if err != nil {
-		return "", fmt.Errorf("画像候補収集失敗: %w", err)
+		return false, "", fmt.Errorf("画像候補収集失敗: %w", err)
 	}
 	if len(candidates) == 0 {
-		return "", nil
+		return false, "", nil
 	}
 
-	// 優先ファイル名ルール
-	chosen := chooseBestImage(candidates)
+	chosen := chooseBestImage(rootPath, candidates)
 
-	// 画像を読み込んでリサイズ
+	// ソース画像の mtime
+	srcStat, err := os.Stat(chosen)
+	if err != nil {
+		return false, "", fmt.Errorf("ソース画像 Stat 失敗: %w", err)
+	}
+
+	// キャッシュの mtime との比較
+	cacheStat, cacheErr := os.Stat(outPath)
+	if cacheErr == nil && !srcStat.ModTime().After(cacheStat.ModTime()) {
+		// キャッシュが新しい or 同時刻 → スキップ
+		return false, outPath, nil
+	}
+
+	// (再)生成
 	if err := generateThumbnail(chosen, outPath); err != nil {
-		return "", fmt.Errorf("サムネイル生成失敗 %q: %w", chosen, err)
+		return false, "", fmt.Errorf("サムネイル生成失敗 %q: %w", chosen, err)
 	}
-	return outPath, nil
+	return true, outPath, nil
 }
 
 // collectImageCandidates は rootPath から maxDepth の深さまで画像ファイルを収集する。
@@ -104,9 +124,21 @@ func isImageFile(name string) bool {
 }
 
 // chooseBestImage は候補から最適な画像を選ぶ。
-// 優先: 名前が priorityPattern にマッチするもの。なければ自然順で最初の画像。
-func chooseBestImage(candidates []string) string {
-	// 優先ファイル名チェック(ディレクトリ名は除いてファイル名部分だけを確認)
+// 優先順位:
+//  1. 作品ルート直下の thumbnail.(jpg|jpeg|png|webp)(大文字小文字無視)
+//  2. 名前が priorityPattern(表紙|cover|jacket|サムネ|main)にマッチするもの
+//  3. 自然順で最初の画像
+func chooseBestImage(rootPath string, candidates []string) string {
+	// 最優先: ルート直下の thumbnail.*
+	for _, c := range candidates {
+		dir := filepath.Dir(c)
+		base := filepath.Base(c)
+		if dir == rootPath && thumbnailPattern.MatchString(base) {
+			return c
+		}
+	}
+
+	// 次優先: 名前が priorityPattern にマッチするもの(ディレクトリ名は除いてファイル名部分だけを確認)
 	for _, c := range candidates {
 		base := filepath.Base(c)
 		noExt := strings.TrimSuffix(base, filepath.Ext(base))

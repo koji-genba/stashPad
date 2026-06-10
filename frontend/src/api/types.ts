@@ -113,10 +113,26 @@ export interface ScanResult {
   missing_marked: number;
 }
 
+/** POST /api/tags/cleanup のレスポンス */
+export interface TagCleanupResult {
+  deleted: number;
+}
+
+/** POST /api/thumbnails/rebuild のレスポンス */
+export interface ThumbnailRebuildResult {
+  checked: number;
+  regenerated: number;
+}
+
+/** POST /api/works/{id}/thumbnail/refresh のレスポンス */
+export interface ThumbnailRefreshResult {
+  refreshed: boolean;
+}
+
 /** エラーレスポンス */
 export interface ApiError {
   error: string;
 }
 
-export type SortKey = 'purchase_date' | 'title' | 'created_at';
+export type SortKey = 'purchase_date' | 'title' | 'created_at' | 'circle';
 export type SortOrder = 'asc' | 'desc';

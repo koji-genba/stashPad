@@ -101,7 +101,7 @@ flowchart LR
 
 | レイヤ | 技術 | 選定理由 |
 |--------|------|----------|
-| バックエンド | **Go 1.22+**(net/http + chi) | `http.ServeContent` が Range/206 を標準でサポートしストリーミング配信に最適。単一静的バイナリでコンテナ/k8s と相性が良い。本アプリの実態は「ファイル配信 + SQLite CRUD」であり Go の得意領域 |
+| バックエンド | **Go 1.25+**(net/http + chi) | `http.ServeContent` が Range/206 を標準でサポートしストリーミング配信に最適。単一静的バイナリでコンテナ/k8s と相性が良い。本アプリの実態は「ファイル配信 + SQLite CRUD」であり Go の得意領域 |
 | DB | SQLite(modernc.org/sqlite, pure Go) | cgo 不要でクロスビルド容易。単一ファイルでバックアップ楽。想定規模(数千作品)に十分 |
 | サムネイル | golang.org/x/image + 標準 image | jpg/png/webp のデコード・縮小に対応(キャッシュ出力は jpeg) |
 | フロントエンド | React + TypeScript + Vite | SPA でプレイヤー/ビューアの状態管理がしやすい(ブラウズ中の再生継続) |

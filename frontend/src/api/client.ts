@@ -8,7 +8,10 @@ import type {
   SortKey,
   SortOrder,
   Tag,
+  TagCleanupResult,
   TagsResponse,
+  ThumbnailRebuildResult,
+  ThumbnailRefreshResult,
   WorkDetail,
   WorksResponse,
 } from './types';
@@ -62,6 +65,10 @@ async function sendJson<T>(
 export interface WorksQuery {
   q?: string;
   tags?: number[];
+  /** サークル名の完全一致フィルタ */
+  circle?: string;
+  /** シリーズ名の完全一致フィルタ */
+  series?: string;
   sort?: SortKey;
   order?: SortOrder;
   page?: number;
@@ -72,6 +79,8 @@ export function fetchWorks(query: WorksQuery, signal?: AbortSignal): Promise<Wor
   const params = new URLSearchParams();
   if (query.q) params.set('q', query.q);
   if (query.tags && query.tags.length > 0) params.set('tags', query.tags.join(','));
+  if (query.circle) params.set('circle', query.circle);
+  if (query.series) params.set('series', query.series);
   if (query.sort) params.set('sort', query.sort);
   if (query.order) params.set('order', query.order);
   if (query.page) params.set('page', String(query.page));
@@ -162,4 +171,22 @@ export async function importCsv(file: File): Promise<ImportResult> {
 
 export function runScan(): Promise<ScanResult> {
   return sendJson<ScanResult>('POST', `${API_BASE}/scan`);
+}
+
+/** どの作品にも紐づかないタグを削除する */
+export function cleanupTags(): Promise<TagCleanupResult> {
+  return sendJson<TagCleanupResult>('POST', `${API_BASE}/tags/cleanup`);
+}
+
+/** 全作品のサムネイルを再生成チェックする(時間がかかる場合がある) */
+export function rebuildThumbnails(): Promise<ThumbnailRebuildResult> {
+  return sendJson<ThumbnailRebuildResult>('POST', `${API_BASE}/thumbnails/rebuild`);
+}
+
+/** 単一作品のサムネイルを再生成チェックする(fire-and-forget で利用) */
+export function refreshThumbnail(workId: number): Promise<ThumbnailRefreshResult> {
+  return sendJson<ThumbnailRefreshResult>(
+    'POST',
+    `${API_BASE}/works/${workId}/thumbnail/refresh`,
+  );
 }
