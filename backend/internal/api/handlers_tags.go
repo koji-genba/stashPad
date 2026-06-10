@@ -3,7 +3,6 @@ package api
 import (
 	"net/http"
 	"strconv"
-	"strings"
 )
 
 // handleListTags は GET /api/tags を処理する。
@@ -76,19 +75,4 @@ func parseIntParam(s string, defaultVal int) int {
 		return defaultVal
 	}
 	return v
-}
-
-// splitCSV はカンマ区切り文字列を分割してトリムしたスライスを返す。
-func splitCSV(s string) []string {
-	if s == "" {
-		return nil
-	}
-	var result []string
-	for _, p := range strings.Split(s, ",") {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			result = append(result, p)
-		}
-	}
-	return result
 }

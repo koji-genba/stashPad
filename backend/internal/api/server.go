@@ -51,7 +51,6 @@ func (s *Server) Router(middlewares ...func(http.Handler) http.Handler) http.Han
 
 		// 作品
 		r.Get("/works", s.handleListWorks)
-		r.Post("/works", http.NotFound) // 将来用プレースホルダ
 
 		r.Route("/works/{id}", func(r chi.Router) {
 			r.Get("/", s.handleGetWork)

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -510,7 +511,7 @@ func (s *Server) handleWorkEntries(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 自然順ソート(挿入ソート)
+	// 自然順ソート
 	sortEntries(dirs)
 	sortEntries(files)
 
@@ -536,13 +537,11 @@ func (s *Server) handleWorkEntries(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// sortEntries は entryItem スライスを自然順でソートする(挿入ソート)。
+// sortEntries は entryItem スライスを自然順でソートする。
 func sortEntries(items []entryItem) {
-	for i := 1; i < len(items); i++ {
-		for j := i; j > 0 && media.NaturalLess(items[j].Name, items[j-1].Name); j-- {
-			items[j], items[j-1] = items[j-1], items[j]
-		}
-	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return media.NaturalLess(items[i].Name, items[j].Name)
+	})
 }
 
 // ---- ファイル配信 -----------------------------------------------------------

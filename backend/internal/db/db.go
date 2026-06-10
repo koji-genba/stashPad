@@ -16,20 +16,16 @@ import (
 var migrationsFS embed.FS
 
 // Open は SQLite データベースを開き、PRAGMA を設定してマイグレーションを適用する。
+// PRAGMA は database/sql のプール内の全コネクションに効かせる必要があるため、
+// Exec ではなく DSN パラメータで指定する(modernc.org/sqlite の _pragma 構文)。
 func Open(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn := "file:" + path +
+		"?_pragma=journal_mode(WAL)" +
+		"&_pragma=foreign_keys(1)" +
+		"&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("DB オープン失敗: %w", err)
-	}
-
-	// SQLite の同時書き込みはほぼないが接続ごとに PRAGMA を設定する
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("WAL 設定失敗: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("foreign_keys 設定失敗: %w", err)
 	}
 
 	if err := migrate(db); err != nil {

@@ -17,10 +17,10 @@ var rjPattern = regexp.MustCompile(`^(RJ\d{6,8})`)
 
 // Result はスキャン結果のサマリ。POST /api/scan のレスポンスに使う。
 type Result struct {
-	WorksFound       int `json:"works_found"`
-	NewlyRegistered  int `json:"newly_registered"`
-	LinkedToCSV      int `json:"linked_to_csv"`
-	MissingMarked    int `json:"missing_marked"`
+	WorksFound      int `json:"works_found"`
+	NewlyRegistered int `json:"newly_registered"`
+	LinkedToCSV     int `json:"linked_to_csv"`
+	MissingMarked   int `json:"missing_marked"`
 }
 
 // ThumbnailGenerator はサムネイル生成の依存を抽象化するインターフェース。

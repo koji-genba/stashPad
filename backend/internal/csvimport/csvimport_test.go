@@ -71,9 +71,10 @@ func samplesCSVPath(t *testing.T) string {
 		t.Fatal("runtime.Caller 失敗")
 	}
 	// このファイルは backend/internal/csvimport/csvimport_test.go
-	// docs/samples は ../../../../../../docs/samples からアクセス可能
+	// stashPad/docs/samples は 3 階層上の docs/samples
+	//   csvimport/ -> internal/ -> backend/ -> stashPad/
 	dir := filepath.Dir(file)
-	path := filepath.Join(dir, "..", "..", "..", "..", "docs", "samples", "works.csv")
+	path := filepath.Join(dir, "..", "..", "..", "docs", "samples", "works.csv")
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		t.Fatal(err)
@@ -140,14 +141,17 @@ func TestImportRJ404669Tags(t *testing.T) {
 	}
 
 	// タグ件数
+	// design.md §4.3 の表を数えると:
+	//   genre×2 + detail_genre×8 + scenario×1 + illustration×1 + voice_actor×2 = 14
+	// 本文の「計13タグ」は誤植(表の行数が正しい)
 	var tagCount int
 	if err := db.QueryRow(
 		"SELECT COUNT(*) FROM work_tags WHERE work_id=?", workID,
 	).Scan(&tagCount); err != nil {
 		t.Fatal(err)
 	}
-	if tagCount != 13 {
-		t.Errorf("RJ404669 のタグ件数 = %d, want 13", tagCount)
+	if tagCount != 14 {
+		t.Errorf("RJ404669 のタグ件数 = %d, want 14", tagCount)
 	}
 
 	// 期待するタグ一覧(design.md §4.3)
@@ -257,6 +261,18 @@ func TestImportRJ404669WorkRow(t *testing.T) {
 	}
 	if w.ageRating.String != "R-15" {
 		t.Errorf("age_rating = %q", w.ageRating.String)
+	}
+
+	// 全年齢作品は genres カラムに「全年齢」を含まないため、
+	// age_rating カラム自体から取り込まれていることを確認する(回帰テスト)
+	var allAges sql.NullString
+	if err := db.QueryRow(
+		"SELECT age_rating FROM works WHERE rj_number='RJ01547274'",
+	).Scan(&allAges); err != nil {
+		t.Fatalf("SELECT 失敗: %v", err)
+	}
+	if allAges.String != "全年齢" {
+		t.Errorf("RJ01547274 age_rating = %q, want 全年齢", allAges.String)
 	}
 }
 

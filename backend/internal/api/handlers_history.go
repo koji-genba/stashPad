@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"net/http"
 	"strconv"
 )
@@ -40,7 +41,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		var (
 			workID       int64
 			workTitle    string
-			thumbPath    nullString
+			thumbPath    sql.NullString
 			lastPlayedAt string
 			lastFilePath string
 			playCount    int
@@ -74,28 +75,6 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		"items": items,
 		"page":  page,
 	})
-}
-
-// nullString は database/sql.NullString の代替(循環インポート回避)。
-type nullString struct {
-	String string
-	Valid  bool
-}
-
-func (ns *nullString) Scan(value any) error {
-	if value == nil {
-		ns.Valid = false
-		return nil
-	}
-	switch v := value.(type) {
-	case string:
-		ns.String = v
-		ns.Valid = true
-	case []byte:
-		ns.String = string(v)
-		ns.Valid = true
-	}
-	return nil
 }
 
 // itoa は int64 を文字列に変換する。

@@ -110,7 +110,7 @@ func importRow(tx *sql.Tx, res *Result, colIdx map[string]int, record []string, 
 		WorkType:     get("work_type"),
 		FileFormat:   get("file_format"),
 		FileSizeText: get("file_size"),
-		AgeRating:    parseAgeRating(get("genres")),
+		AgeRating:    get("age_rating"),
 		Event:        get("event"),
 	})
 	if err != nil {
@@ -315,18 +315,6 @@ func splitTrim(s, sep string) []string {
 		}
 	}
 	return result
-}
-
-// parseAgeRating は genres フィールドから年齢区分を抽出する。
-// 「全年齢」「R-15」「R-18」のうち最初に見つかったものを返す。
-func parseAgeRating(genres string) string {
-	for _, g := range splitTrim(genres, ",") {
-		switch g {
-		case "全年齢", "R-15", "R-18":
-			return g
-		}
-	}
-	return ""
 }
 
 // buildColumnIndex はヘッダ行からカラム名→インデックスのマップを作る。

@@ -88,10 +88,10 @@ func setupLibrary(t *testing.T) string {
 	}
 	// ダミー画像ファイル
 	files := map[string]string{
-		filepath.Join(lib, "RJ404669_耳舐め作品", "cover.jpg"):  "img",
-		filepath.Join(lib, "RJ304928_別の作品", "表紙.png"):       "img",
-		filepath.Join(lib, "非RJフォルダ", "main.jpg"):           "img",
-		filepath.Join(lib, "not_a_dir.txt"):                    "text",
+		filepath.Join(lib, "RJ404669_耳舐め作品", "cover.jpg"): "img",
+		filepath.Join(lib, "RJ304928_別の作品", "表紙.png"):     "img",
+		filepath.Join(lib, "非RJフォルダ", "main.jpg"):         "img",
+		filepath.Join(lib, "not_a_dir.txt"):               "text",
 	}
 	for path, content := range files {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
