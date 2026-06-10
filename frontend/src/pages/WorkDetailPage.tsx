@@ -4,6 +4,7 @@ import type { Tag, WorkDetail } from '@/api/types';
 import {
   addCustomTag,
   fetchWork,
+  refreshThumbnail,
   removeTag,
   thumbnailUrl,
 } from '@/api/client';
@@ -31,6 +32,8 @@ export default function WorkDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [newTag, setNewTag] = useState('');
   const [busy, setBusy] = useState(false);
+  // サムネ再生成が走ったら src にクエリを足して再読込させる
+  const [thumbBust, setThumbBust] = useState<number | null>(null);
 
   useEffect(() => {
     if (!Number.isFinite(workId)) return;
@@ -48,6 +51,23 @@ export default function WorkDetailPage() {
         setLoading(false);
       });
     return () => ac.abort();
+  }, [workId]);
+
+  // 詳細表示時にサムネ再生成チェックを裏で実行。差し替わったら img を再読込。
+  useEffect(() => {
+    if (!Number.isFinite(workId)) return;
+    let active = true;
+    setThumbBust(null);
+    refreshThumbnail(workId)
+      .then((r) => {
+        if (active && r?.refreshed) setThumbBust(Date.now());
+      })
+      .catch(() => {
+        // fire-and-forget。失敗しても何もしない
+      });
+    return () => {
+      active = false;
+    };
   }, [workId]);
 
   const onTagClick = (tag: Tag) => {
@@ -103,10 +123,24 @@ export default function WorkDetailPage() {
     );
   }
 
-  const meta: { label: string; value: string | null | undefined }[] = [
+  const meta: {
+    label: string;
+    value: string | null | undefined;
+    to?: string;
+  }[] = [
     { label: 'RJ番号', value: work.rj_number },
-    { label: 'サークル', value: work.circle },
-    { label: 'シリーズ', value: work.series_name },
+    {
+      label: 'サークル',
+      value: work.circle,
+      to: work.circle ? `/?circle=${encodeURIComponent(work.circle)}` : undefined,
+    },
+    {
+      label: 'シリーズ',
+      value: work.series_name,
+      to: work.series_name
+        ? `/?series=${encodeURIComponent(work.series_name)}`
+        : undefined,
+    },
     { label: '種別', value: work.work_type },
     { label: '年齢指定', value: work.age_rating },
     { label: '形式', value: work.file_format },
@@ -123,7 +157,7 @@ export default function WorkDetailPage() {
       <div className={styles.header}>
         <img
           className={styles.thumb}
-          src={thumbnailUrl(work.id)}
+          src={thumbBust ? `${thumbnailUrl(work.id)}?t=${thumbBust}` : thumbnailUrl(work.id)}
           alt=""
           onError={(e) => {
             e.currentTarget.style.visibility = 'hidden';
@@ -138,7 +172,15 @@ export default function WorkDetailPage() {
               .map((m) => (
                 <div key={m.label} className={styles.metaRow}>
                   <dt>{m.label}</dt>
-                  <dd>{m.value}</dd>
+                  <dd>
+                    {m.to ? (
+                      <Link to={m.to} className={styles.metaLink}>
+                        {m.value}
+                      </Link>
+                    ) : (
+                      m.value
+                    )}
+                  </dd>
                 </div>
               ))}
           </dl>

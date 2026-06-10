@@ -12,6 +12,7 @@ const SORT_LABELS: Record<SortKey, string> = {
   purchase_date: '購入日',
   title: 'タイトル',
   created_at: '登録日',
+  circle: 'サークル名',
 };
 
 function parseTags(value: string | null): number[] {
@@ -26,6 +27,8 @@ export default function WorksListPage() {
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
   const tags = useMemo(() => parseTags(params.get('tags')), [params]);
+  const circle = params.get('circle') ?? '';
+  const series = params.get('series') ?? '';
   const sort = (params.get('sort') as SortKey) || 'purchase_date';
   const page = Number(params.get('page') ?? '1') || 1;
 
@@ -40,6 +43,21 @@ export default function WorksListPage() {
   useEffect(() => {
     setQInput(q);
   }, [q]);
+
+  // 入力を 300ms デバウンスして URL に反映(リアルタイム検索)
+  useEffect(() => {
+    if (qInput === q) return;
+    const t = setTimeout(() => {
+      update((p) => {
+        if (qInput) p.set('q', qInput);
+        else p.delete('q');
+        p.delete('page');
+      });
+    }, 300);
+    return () => clearTimeout(t);
+    // update / q / params は最新を参照したいが、トリガは qInput のみ
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qInput]);
 
   // 選択タグのラベル表示用に、全タグ名を一度だけ取得してキャッシュ
   useEffect(() => {
@@ -56,7 +74,10 @@ export default function WorksListPage() {
     const ac = new AbortController();
     setLoading(true);
     setError(null);
-    fetchWorks({ q, tags, sort, page, limit: LIMIT }, ac.signal)
+    fetchWorks(
+      { q, tags, circle: circle || undefined, series: series || undefined, sort, page, limit: LIMIT },
+      ac.signal,
+    )
       .then((d) => {
         setData(d);
         setLoading(false);
@@ -67,7 +88,7 @@ export default function WorksListPage() {
         setLoading(false);
       });
     return () => ac.abort();
-  }, [q, tags, sort, page]);
+  }, [q, tags, circle, series, sort, page]);
 
   const update = (mut: (p: URLSearchParams) => void) => {
     const next = new URLSearchParams(params);
@@ -105,6 +126,13 @@ export default function WorksListPage() {
   const goPage = (n: number) => {
     update((p) => p.set('page', String(n)));
     window.scrollTo(0, 0);
+  };
+
+  const clearParam = (key: 'circle' | 'series') => {
+    update((p) => {
+      p.delete(key);
+      p.delete('page');
+    });
   };
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
@@ -153,8 +181,30 @@ export default function WorksListPage() {
             </select>
           </div>
 
-          {tags.length > 0 && (
+          {(tags.length > 0 || circle || series) && (
             <div className={styles.chips}>
+              {circle && (
+                <button
+                  className={styles.chip}
+                  onClick={() => clearParam('circle')}
+                  title="クリックで解除"
+                >
+                  <span className={styles.chipKind}>サークル</span>
+                  {circle}
+                  <span className={styles.chipX}>✕</span>
+                </button>
+              )}
+              {series && (
+                <button
+                  className={styles.chip}
+                  onClick={() => clearParam('series')}
+                  title="クリックで解除"
+                >
+                  <span className={styles.chipKind}>シリーズ</span>
+                  {series}
+                  <span className={styles.chipX}>✕</span>
+                </button>
+              )}
               {tags.map((id) => (
                 <button
                   key={id}
@@ -166,7 +216,7 @@ export default function WorksListPage() {
                   <span className={styles.chipX}>✕</span>
                 </button>
               ))}
-              <span className={styles.chipNote}>(AND 条件)</span>
+              {tags.length > 1 && <span className={styles.chipNote}>(AND 条件)</span>}
             </div>
           )}
         </div>
@@ -205,9 +255,22 @@ export default function WorksListPage() {
                 >
                   前へ
                 </button>
-                <span className={styles.pageInfo}>
-                  {page} / {totalPages}
-                </span>
+                <label className={styles.pageInfo}>
+                  <select
+                    className={styles.pageSelect}
+                    value={page}
+                    onChange={(e) => goPage(Number(e.target.value))}
+                    aria-label="ページを選択"
+                  >
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                  {' / '}
+                  {totalPages}
+                </label>
                 <button
                   className="btn"
                   onClick={() => goPage(page + 1)}

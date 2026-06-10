@@ -1,6 +1,16 @@
 import { useRef, useState } from 'react';
-import type { ImportResult, ScanResult } from '@/api/types';
-import { importCsv, runScan } from '@/api/client';
+import type {
+  ImportResult,
+  ScanResult,
+  TagCleanupResult,
+  ThumbnailRebuildResult,
+} from '@/api/types';
+import {
+  cleanupTags,
+  importCsv,
+  rebuildThumbnails,
+  runScan,
+} from '@/api/client';
 import styles from './SettingsPage.module.css';
 
 export default function SettingsPage() {
@@ -13,6 +23,16 @@ export default function SettingsPage() {
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<TagCleanupResult | null>(null);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
+
+  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuildResult, setRebuildResult] = useState<ThumbnailRebuildResult | null>(
+    null,
+  );
+  const [rebuildError, setRebuildError] = useState<string | null>(null);
 
   const onImport = async () => {
     if (!csvFile) return;
@@ -43,6 +63,36 @@ export default function SettingsPage() {
     }
   };
 
+  const onCleanupTags = async () => {
+    setCleaning(true);
+    setCleanupResult(null);
+    setCleanupError(null);
+    try {
+      const result = await cleanupTags();
+      setCleanupResult(result);
+    } catch (e) {
+      setCleanupError(e instanceof Error ? e.message : 'タグ削除に失敗しました');
+    } finally {
+      setCleaning(false);
+    }
+  };
+
+  const onRebuildThumbnails = async () => {
+    setRebuilding(true);
+    setRebuildResult(null);
+    setRebuildError(null);
+    try {
+      const result = await rebuildThumbnails();
+      setRebuildResult(result);
+    } catch (e) {
+      setRebuildError(
+        e instanceof Error ? e.message : 'サムネイル再生成に失敗しました',
+      );
+    } finally {
+      setRebuilding(false);
+    }
+  };
+
   return (
     <div className={styles.page}>
       <h1 className={styles.title}>設定</h1>
@@ -68,6 +118,7 @@ export default function SettingsPage() {
             }}
           />
           <button
+            type="button"
             className="btn"
             onClick={() => fileInput.current?.click()}
             disabled={importing}
@@ -80,6 +131,7 @@ export default function SettingsPage() {
         </div>
 
         <button
+          type="button"
           className="btn btn-primary"
           onClick={onImport}
           disabled={!csvFile || importing}
@@ -121,7 +173,12 @@ export default function SettingsPage() {
         <p className="muted">
           ライブラリルート直下のフォルダを走査し、作品の登録・リンク・サムネイル生成を行います。
         </p>
-        <button className="btn btn-primary" onClick={onScan} disabled={scanning}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={onScan}
+          disabled={scanning}
+        >
           {scanning ? 'スキャン中…' : 'スキャン実行'}
         </button>
 
@@ -144,6 +201,55 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+      </section>
+
+      {/* メンテナンス */}
+      <section className={styles.section}>
+        <h2 className={styles.heading}>メンテナンス</h2>
+        <p className="muted">
+          ライブラリの不要データの整理やサムネイルの更新を行います。
+        </p>
+
+        <div className={styles.maintRow}>
+          <button
+            type="button"
+            className="btn"
+            onClick={onCleanupTags}
+            disabled={cleaning}
+          >
+            {cleaning ? '削除中…' : '未使用タグを削除'}
+          </button>
+          {cleanupResult && (
+            <span className={styles.maintResult}>
+              削除 <b>{cleanupResult.deleted}</b> 件
+            </span>
+          )}
+        </div>
+        {cleanupError && <p className={styles.error}>{cleanupError}</p>}
+
+        <div className={styles.maintRow}>
+          <button
+            type="button"
+            className="btn"
+            onClick={onRebuildThumbnails}
+            disabled={rebuilding}
+          >
+            {rebuilding ? 'サムネイル再生成中…' : 'サムネイル再生成'}
+          </button>
+          {rebuilding && <span className="spinner" />}
+          {rebuildResult && (
+            <span className={styles.maintResult}>
+              確認 <b>{rebuildResult.checked}</b> / 再生成{' '}
+              <b>{rebuildResult.regenerated}</b>
+            </span>
+          )}
+        </div>
+        {rebuilding && (
+          <p className="faint" style={{ marginTop: 4 }}>
+            作品数によっては時間がかかります。
+          </p>
+        )}
+        {rebuildError && <p className={styles.error}>{rebuildError}</p>}
       </section>
     </div>
   );

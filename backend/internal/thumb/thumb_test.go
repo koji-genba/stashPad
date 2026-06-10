@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // createTestImage はテスト用 PNG 画像を作成する。
@@ -86,11 +87,12 @@ func TestGenerateNoImage(t *testing.T) {
 	}
 }
 
-// TestGenerateSkipExisting は生成済みサムネイルをスキップすることをテスト。
+// TestGenerateSkipExisting はソース画像の mtime がキャッシュより古い場合にスキップすることをテスト。
 func TestGenerateSkipExisting(t *testing.T) {
 	dir := t.TempDir()
 	thumbsDir := t.TempDir()
-	createTestImage(t, filepath.Join(dir, "cover.png"), 100, 100)
+	srcPath := filepath.Join(dir, "cover.png")
+	createTestImage(t, srcPath, 100, 100)
 
 	g := New(thumbsDir)
 
@@ -98,6 +100,12 @@ func TestGenerateSkipExisting(t *testing.T) {
 	path, err := g.Generate(4, dir)
 	if err != nil || path == "" {
 		t.Fatalf("初回 Generate 失敗: %v", err)
+	}
+
+	// キャッシュの mtime をソース画像より新しくする
+	future := time.Now().Add(10 * time.Second)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatal(err)
 	}
 
 	// ファイルの更新時刻を記録
@@ -174,48 +182,153 @@ func TestResizeLongEdge(t *testing.T) {
 func TestChooseBestImage(t *testing.T) {
 	cases := []struct {
 		name       string
+		rootPath   string
 		candidates []string
 		want       string
 	}{
 		{
 			name:       "cover が優先",
+			rootPath:   "/a",
 			candidates: []string{"/a/01.jpg", "/a/cover.jpg", "/a/02.jpg"},
 			want:       "/a/cover.jpg",
 		},
 		{
 			name:       "表紙 が優先",
+			rootPath:   "/a",
 			candidates: []string{"/a/01.jpg", "/a/表紙.jpg"},
 			want:       "/a/表紙.jpg",
 		},
 		{
 			name:       "jacket が優先",
+			rootPath:   "/a",
 			candidates: []string{"/a/jacket.png", "/a/01.png"},
 			want:       "/a/jacket.png",
 		},
 		{
 			name:       "main が優先",
+			rootPath:   "/a",
 			candidates: []string{"/a/01.png", "/a/main.png"},
 			want:       "/a/main.png",
 		},
 		{
 			name:       "COVER 大文字も優先",
+			rootPath:   "/a",
 			candidates: []string{"/a/01.jpg", "/a/COVER.jpg"},
 			want:       "/a/COVER.jpg",
 		},
 		{
 			name:       "優先なしは自然順最初",
+			rootPath:   "/a",
 			candidates: []string{"/a/page10.jpg", "/a/page02.jpg", "/a/page01.jpg"},
 			want:       "/a/page01.jpg",
+		},
+		{
+			name:       "thumbnail.jpg が最優先(cover より上)",
+			rootPath:   "/a",
+			candidates: []string{"/a/cover.jpg", "/a/thumbnail.jpg", "/a/01.jpg"},
+			want:       "/a/thumbnail.jpg",
+		},
+		{
+			name:       "THUMBNAIL.PNG 大文字も最優先",
+			rootPath:   "/a",
+			candidates: []string{"/a/cover.jpg", "/a/THUMBNAIL.PNG"},
+			want:       "/a/THUMBNAIL.PNG",
+		},
+		{
+			name:       "サブディレクトリの thumbnail は最優先対象外",
+			rootPath:   "/a",
+			candidates: []string{"/a/sub/thumbnail.jpg", "/a/cover.jpg"},
+			want:       "/a/cover.jpg",
+		},
+		{
+			name:       "thumbnail.webp も最優先",
+			rootPath:   "/a",
+			candidates: []string{"/a/01.jpg", "/a/thumbnail.webp"},
+			want:       "/a/thumbnail.webp",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := chooseBestImage(tc.candidates)
+			got := chooseBestImage(tc.rootPath, tc.candidates)
 			if got != tc.want {
 				t.Errorf("chooseBestImage() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestGenerateThumbnailPriority は作品ルート直下の thumbnail.* が最優先で選ばれることをテスト。
+func TestGenerateThumbnailPriority(t *testing.T) {
+	dir := t.TempDir()
+	thumbsDir := t.TempDir()
+
+	// cover.jpg と thumbnail.png を共存させる
+	createTestImage(t, filepath.Join(dir, "cover.jpg"), 100, 100)
+	createTestImage(t, filepath.Join(dir, "thumbnail.png"), 200, 200)
+
+	g := New(thumbsDir)
+	path, err := g.Generate(10, dir)
+	if err != nil {
+		t.Fatalf("Generate 失敗: %v", err)
+	}
+	if path == "" {
+		t.Fatal("サムネイルパスが空")
+	}
+	// 生成されること自体を確認(内部選択の検証は chooseBestImage のテストで担保)
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("サムネイルファイルが存在しない: %v", err)
+	}
+}
+
+// TestGenerateMtimeRegenerate はソース画像が更新されたらキャッシュを再生成することをテスト。
+func TestGenerateMtimeRegenerate(t *testing.T) {
+	dir := t.TempDir()
+	thumbsDir := t.TempDir()
+	srcPath := filepath.Join(dir, "cover.png")
+	createTestImage(t, srcPath, 100, 100)
+
+	g := New(thumbsDir)
+
+	// 初回生成
+	path, err := g.Generate(11, dir)
+	if err != nil || path == "" {
+		t.Fatalf("初回 Generate 失敗: %v", err)
+	}
+	stat1, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// キャッシュの mtime をソース画像より古く設定してからソース画像の mtime を更新
+	past := time.Now().Add(-10 * time.Second)
+	if err := os.Chtimes(path, past, past); err != nil {
+		t.Fatal(err)
+	}
+	// ソース画像の mtime をキャッシュより新しくする
+	now := time.Now()
+	if err := os.Chtimes(srcPath, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2回目: ソース画像の mtime がキャッシュより新しいので再生成される
+	path2, err := g.Generate(11, dir)
+	if err != nil {
+		t.Fatalf("2回目 Generate 失敗: %v", err)
+	}
+	if path2 != path {
+		t.Errorf("パスが変わった: %q → %q", path, path2)
+	}
+	stat2, err := os.Stat(path2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat2.ModTime().Equal(stat1.ModTime()) || stat2.ModTime().Before(stat1.ModTime()) {
+		// キャッシュが古い mtime に設定されていたので、再生成後は current time になるはず
+		// mtime が past より後になっていればよい
+		if !stat2.ModTime().After(past) {
+			t.Error("2回目でファイルが更新されなかった(再生成されていない)")
+		}
 	}
 }
 

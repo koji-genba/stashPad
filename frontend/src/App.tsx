@@ -41,8 +41,7 @@ export default function App() {
   return (
     <div className={styles.app}>
       <main
-        className={styles.main}
-        style={{ paddingBottom: hasPlayer ? 'var(--player-h)' : 0 }}
+        className={`${styles.main} ${hasPlayer ? styles.mainWithPlayer : ''}`}
       >
         <Routes>
           <Route path="/" element={<WorksListPage />} />

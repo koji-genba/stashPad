@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -440,6 +441,144 @@ func (s *Server) handleWorkThumbnail(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, st.Name(), st.ModTime(), f)
 }
 
+// handleRefreshThumbnail は POST /api/works/{id}/thumbnail/refresh を処理する。
+// mtime 判定でサムネイルを再生成し、結果を返す。
+func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) {
+	workID, err := parseWorkID(r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "不正な ID")
+		return
+	}
+
+	var rootPath sql.NullString
+	if err := s.db.QueryRow(
+		"SELECT root_path FROM works WHERE id=?", workID,
+	).Scan(&rootPath); err == sql.ErrNoRows {
+		respondError(w, http.StatusNotFound, "作品が見つかりません")
+		return
+	} else if err != nil {
+		respondError(w, http.StatusInternalServerError, "DB 取得失敗: "+err.Error())
+		return
+	}
+
+	if !rootPath.Valid {
+		respondJSON(w, http.StatusOK, map[string]any{"refreshed": false})
+		return
+	}
+
+	thumbsDir := filepath.Join(s.cfg.DataDir, "thumbs")
+	gen := thumb.New(thumbsDir)
+
+	regenerated, outPath, err := gen.Refresh(workID, rootPath.String)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "サムネイル再生成失敗: "+err.Error())
+		return
+	}
+
+	if regenerated && outPath != "" {
+		if _, uErr := s.db.Exec(
+			"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
+			outPath, workID,
+		); uErr != nil {
+			respondError(w, http.StatusInternalServerError, "thumbnail_path 更新失敗: "+uErr.Error())
+			return
+		}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{"refreshed": regenerated})
+}
+
+// handleRebuildThumbnails は POST /api/thumbnails/rebuild を処理する。
+// root_path がある全作品に対して mtime 判定付きサムネイル再生成を worker pool で並列実行する。
+func (s *Server) handleRebuildThumbnails(w http.ResponseWriter, r *http.Request) {
+	// root_path がある作品一覧を取得
+	rows, err := s.db.Query("SELECT id, root_path FROM works WHERE root_path IS NOT NULL")
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "作品一覧取得失敗: "+err.Error())
+		return
+	}
+
+	type workEntry struct {
+		id       int64
+		rootPath string
+	}
+	var works []workEntry
+	for rows.Next() {
+		var we workEntry
+		if err := rows.Scan(&we.id, &we.rootPath); err != nil {
+			rows.Close()
+			respondError(w, http.StatusInternalServerError, "行読み込み失敗: "+err.Error())
+			return
+		}
+		works = append(works, we)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		respondError(w, http.StatusInternalServerError, "クエリエラー: "+err.Error())
+		return
+	}
+
+	thumbsDir := filepath.Join(s.cfg.DataDir, "thumbs")
+	gen := thumb.New(thumbsDir)
+
+	type result struct {
+		id          int64
+		outPath     string
+		regenerated bool
+		err         error
+	}
+
+	numWorkers := runtime.NumCPU()
+	if numWorkers < 1 {
+		numWorkers = 1
+	}
+
+	jobs := make(chan workEntry, len(works))
+	results := make(chan result, len(works))
+
+	// ワーカー起動
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			for we := range jobs {
+				regen, outPath, err := gen.Refresh(we.id, we.rootPath)
+				results <- result{id: we.id, outPath: outPath, regenerated: regen, err: err}
+			}
+		}()
+	}
+
+	// ジョブ投入
+	for _, we := range works {
+		jobs <- we
+	}
+	close(jobs)
+
+	// 結果収集・DB 更新(SQLite は書き込みを直列化するためここで順次実行)
+	checked := len(works)
+	regenerated := 0
+	for range works {
+		res := <-results
+		if res.err != nil {
+			// ログには出力するが全体は継続
+			continue
+		}
+		if res.regenerated && res.outPath != "" {
+			regenerated++
+			if _, uErr := s.db.Exec(
+				"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
+				res.outPath, res.id,
+			); uErr != nil {
+				// 更新失敗はログのみ、継続
+				_ = uErr
+			}
+		}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"checked":     checked,
+		"regenerated": regenerated,
+	})
+}
+
 // ---- エントリ一覧 -----------------------------------------------------------
 
 // entryItem は /api/works/{id}/entries の 1 エントリ。
@@ -633,6 +772,14 @@ func (s *Server) handleWorkFile(w http.ResponseWriter, r *http.Request) {
 		ct = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", ct)
+
+	// media_kind が other のファイルはダウンロード扱い(Content-Disposition: attachment)
+	// RFC5987 に基づいて日本語ファイル名をエンコードする
+	if media.KindByExt(st.Name()) == "other" {
+		encoded := url.PathEscape(st.Name())
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf("attachment; filename*=UTF-8''%s", encoded))
+	}
 
 	// http.ServeContent が Range / 206 / HEAD を処理する
 	http.ServeContent(w, r, st.Name(), st.ModTime(), f)

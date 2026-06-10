@@ -34,6 +34,17 @@ export default function TagFacetPanel({ selected, onToggle }: Props) {
   const [tags, setTags] = useState<TagFacet[]>([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
+  // 折りたたみ中のカテゴリ。デフォルトは全て開。
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  const toggleCategory = (cat: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const ac = new AbortController();
@@ -85,29 +96,44 @@ export default function TagFacetPanel({ selected, onToggle }: Props) {
       ) : grouped.length === 0 ? (
         <p className="faint">タグがありません</p>
       ) : (
-        grouped.map((g) => (
-          <div key={g.category} className={styles.group}>
-            <h3 className={styles.groupTitle}>
-              {CATEGORY_LABELS[g.category] ?? g.category}
-            </h3>
-            <ul className={styles.tagList}>
-              {g.tags.map((tag) => {
-                const isSel = selected.includes(tag.id);
-                return (
-                  <li key={tag.id}>
-                    <button
-                      className={`${styles.tag} ${isSel ? styles.tagSel : ''}`}
-                      onClick={() => onToggle(tag.id)}
-                    >
-                      <span className={styles.tagName}>{tag.name}</span>
-                      <span className={styles.count}>{tag.work_count}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))
+        grouped.map((g) => {
+          const isCollapsed = collapsed.has(g.category);
+          const selCount = g.tags.filter((t) => selected.includes(t.id)).length;
+          return (
+            <div key={g.category} className={styles.group}>
+              <button
+                type="button"
+                className={styles.groupTitle}
+                onClick={() => toggleCategory(g.category)}
+                aria-expanded={!isCollapsed}
+              >
+                <span className={styles.caret}>{isCollapsed ? '▶' : '▼'}</span>
+                <span>{CATEGORY_LABELS[g.category] ?? g.category}</span>
+                <span className={styles.groupCount}>
+                  {selCount > 0 ? `${selCount}/${g.tags.length}` : g.tags.length}
+                </span>
+              </button>
+              {!isCollapsed && (
+                <ul className={styles.tagList}>
+                  {g.tags.map((tag) => {
+                    const isSel = selected.includes(tag.id);
+                    return (
+                      <li key={tag.id}>
+                        <button
+                          className={`${styles.tag} ${isSel ? styles.tagSel : ''}`}
+                          onClick={() => onToggle(tag.id)}
+                        >
+                          <span className={styles.tagName}>{tag.name}</span>
+                          <span className={styles.count}>{tag.work_count}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          );
+        })
       )}
     </div>
   );

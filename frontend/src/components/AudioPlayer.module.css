@@ -32,6 +32,23 @@
   padding: 0 10px;
 }
 
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+.nav:hover {
+  opacity: 0.85;
+}
+
 .thumb {
   width: 44px;
   height: 44px;
@@ -135,7 +152,7 @@
   .time {
     display: none;
   }
-  .meta {
+  .nav {
     flex: 1 1 30%;
   }
 }

@@ -6,8 +6,13 @@
 
 .main {
   flex: 1;
-  /* タブバー分の余白(プレイヤー分は inline style で追加) */
+  /* タブバー分の余白。プレイヤー表示中はさらにプレイヤー分を上乗せする。 */
   padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+}
+.mainWithPlayer {
+  padding-bottom: calc(
+    var(--tabbar-h) + var(--player-h) + env(safe-area-inset-bottom)
+  );
 }
 
 .tabbar {
