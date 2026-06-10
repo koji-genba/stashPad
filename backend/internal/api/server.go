@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/koji-genba/stashpad/backend/internal/config"
+	"github.com/koji-genba/stashpad/backend/internal/web"
 )
 
 // Server は依存オブジェクトを保持し、ハンドラをメソッドとして提供する。
@@ -69,6 +70,9 @@ func (s *Server) Router(middlewares ...func(http.Handler) http.Handler) http.Han
 		// 再生履歴
 		r.Get("/history", s.handleHistory)
 	})
+
+	// /api 以外は embed したフロントエンド(SPA フォールバック付き)
+	r.Handle("/*", web.Handler())
 
 	return r
 }

@@ -11,7 +11,7 @@
 
 ## ステータス
 
-設計完了・実装未着手(Phase 1 / MVP の実装からスタート)。
+Phase 1 (MVP) 実装済み。スキャン・CSV インポート・検索/ファセット・ファイルブラウズ・Range 配信・オーディオプレイヤー(連続再生 / ±10 秒 / 速度 / Media Session)・画像ビューア・履歴・Docker まで動作する。
 
 ## ドキュメント
 
@@ -21,12 +21,65 @@
 | [docs/implementation-notes.md](docs/implementation-notes.md) | 実装の具体的指針(環境変数・DDL・API 例・実装上の注意・完了条件) |
 | [CLAUDE.md](CLAUDE.md) | 開発セッション向けのプロジェクト概要と進め方 |
 
-## 技術スタック(予定)
+## 技術スタック
 
-- Backend: Go / chi / SQLite (modernc.org/sqlite)
-- Frontend: React / TypeScript / Vite
-- Deploy: コンテナ(Docker Compose / k8s)
+- Backend: Go / chi / SQLite (modernc.org/sqlite, pure Go)
+- Frontend: React / TypeScript / Vite(本番はビルド成果物を Go バイナリに `go:embed`)
+- Deploy: 単一コンテナ(Docker Compose / k8s)
+
+## 環境変数
+
+| 変数 | 必須 | 説明 |
+|------|------|------|
+| `STASHPAD_LIBRARY_ROOTS` | ✔ | ライブラリルート。カンマ区切りで複数指定可(例 `/media/voice,/media/comic`) |
+| `STASHPAD_DATA_DIR` | ✔ | SQLite DB とサムネイルキャッシュの置き場所(例 `/data`) |
+| `STASHPAD_ADDR` | | リッスンアドレス(デフォルト `:8080`) |
+| `STASHPAD_SCAN_ON_START` | | `true`/`1` で起動時にライブラリスキャンを自動実行(バックグラウンド) |
+
+## 開発
+
+backend と Vite dev server を並走させる。`/api` は Vite が :8080 へ proxy する。
+
+```bash
+# backend(:8080)
+cd backend
+STASHPAD_LIBRARY_ROOTS=/path/to/media STASHPAD_DATA_DIR=./data go run ./cmd/stashpad
+
+# frontend(:5173)
+cd frontend
+npm install
+npm run dev
+```
+
+テスト:
+
+```bash
+cd backend && go test ./...
+cd frontend && npm run typecheck
+```
+
+## 本番ビルド(単一バイナリ)
+
+frontend の成果物を `backend/internal/web/dist/` にコピーしてから go build すると、静的ファイルがバイナリに embed される。
+
+```bash
+cd frontend && npm run build
+cp -r frontend/dist/. backend/internal/web/dist/
+cd backend && CGO_ENABLED=0 go build -o stashpad ./cmd/stashpad
+```
+
+※ `backend/internal/web/dist/` は `.gitkeep` のみコミットされており、未コピーでもビルド・テストは通る(その場合 UI は 503 を返す)。
+
+## Docker
+
+```bash
+cd deploy
+# docker-compose.yml の volumes(メディアのマウント元)を環境に合わせて編集してから
+docker compose up -d
+```
+
+Dockerfile は multi-stage(node → golang → distroless)で、`docker compose up` だけでフロントエンドのビルドと embed まで完結する。メディアは必ず **read-only**(`:ro`)でマウントすること。
 
 ## 運用上の注意
 
-stashPad は家庭内 LAN での利用を前提としています。外出先から使う場合は VPN(Tailscale 等)経由でアクセスし、直接インターネットへ公開しないでください。
+stashPad は家庭内 LAN での利用を前提としています(認証なし)。外出先から使う場合は VPN(Tailscale 等)経由でアクセスし、直接インターネットへ公開しないでください。

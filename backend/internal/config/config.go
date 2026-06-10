@@ -15,6 +15,9 @@ type Config struct {
 	DataDir string
 	// Addr はリッスンアドレス(STASHPAD_ADDR、デフォルト :8080)。
 	Addr string
+	// ScanOnStart が true なら起動時にライブラリスキャンを自動実行する
+	// (STASHPAD_SCAN_ON_START=true/1)。
+	ScanOnStart bool
 }
 
 // Load は環境変数から設定を読み込む。
@@ -46,9 +49,16 @@ func Load() (*Config, error) {
 		addr = ":8080"
 	}
 
+	scanOnStart := false
+	switch strings.ToLower(os.Getenv("STASHPAD_SCAN_ON_START")) {
+	case "1", "true", "yes":
+		scanOnStart = true
+	}
+
 	return &Config{
 		LibraryRoots: libraryRoots,
 		DataDir:      dataDir,
 		Addr:         addr,
+		ScanOnStart:  scanOnStart,
 	}, nil
 }
