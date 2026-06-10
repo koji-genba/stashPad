@@ -168,7 +168,7 @@ erDiagram
 | file_format | TEXT NULL | CSV 由来の参考情報 |
 | file_size_text | TEXT NULL | CSV 由来の参考情報("4.91GB" 等そのまま) |
 | event | TEXT NULL | CSV 由来 |
-| root_path | TEXT NULL | ライブラリルートからの相対パス。NULL = CSV のみでフォルダ未発見 |
+| root_path | TEXT NULL | 作品フォルダの絶対パス(複数ライブラリルートに対応するため。implementation-notes.md §3 参照)。NULL = CSV のみでフォルダ未発見 |
 | thumbnail_path | TEXT NULL | サムネイルキャッシュへのパス |
 | created_at / updated_at | TEXT | |
 
