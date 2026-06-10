@@ -15,9 +15,9 @@
 
 ## 技術スタック(予定)
 
-- Backend: Python / FastAPI / SQLite
+- Backend: Go / chi / SQLite (modernc.org/sqlite)
 - Frontend: React / TypeScript / Vite
-- Deploy: Docker Compose
+- Deploy: コンテナ(Docker Compose / k8s)
 
 ## 運用上の注意
 
