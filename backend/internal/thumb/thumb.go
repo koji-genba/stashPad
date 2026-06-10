@@ -44,11 +44,16 @@ func (g *Generator) Generate(workID int64, rootPath string) (string, error) {
 	return outPath, err
 }
 
-// Refresh は mtime 判定を行い、ソース画像がキャッシュより新しい(またはキャッシュが無い)
-// 場合のみサムネイルを(再)生成する。再生成した場合は true、スキップした場合は false を返す。
+// Refresh は必要な場合のみサムネイルを(再)生成する。再生成した場合は true を返す。
 // 画像が見つからない場合は (false, "", nil)。
+//
+// 再生成の判定: キャッシュが無い / 選ばれたソース画像が前回生成時(サイドカー
+// {workID}.src に記録)と異なる / ソース画像の mtime がキャッシュより新しい。
+// ソース記録のおかげで、ユーザーが mtime の古い thumbnail.* をコピーで置いた
+// 場合でも確実に差し替わる。
 func (g *Generator) Refresh(workID int64, rootPath string) (regenerated bool, outPath string, err error) {
 	outPath = filepath.Join(g.ThumbsDir, fmt.Sprintf("%d.jpg", workID))
+	srcRecord := filepath.Join(g.ThumbsDir, fmt.Sprintf("%d.src", workID))
 
 	// 候補収集
 	candidates, err := collectImageCandidates(rootPath, 2)
@@ -61,24 +66,47 @@ func (g *Generator) Refresh(workID int64, rootPath string) (regenerated bool, ou
 
 	chosen := chooseBestImage(rootPath, candidates)
 
-	// ソース画像の mtime
 	srcStat, err := os.Stat(chosen)
 	if err != nil {
 		return false, "", fmt.Errorf("ソース画像 Stat 失敗: %w", err)
 	}
 
-	// キャッシュの mtime との比較
-	cacheStat, cacheErr := os.Stat(outPath)
-	if cacheErr == nil && !srcStat.ModTime().After(cacheStat.ModTime()) {
-		// キャッシュが新しい or 同時刻 → スキップ
+	if !needsRegenerate(rootPath, chosen, outPath, srcRecord, srcStat) {
+		// 旧バージョンで生成されたキャッシュには記録が無いので、次回の差し替え検出用に残す
+		if _, recErr := os.Stat(srcRecord); recErr != nil {
+			_ = os.WriteFile(srcRecord, []byte(chosen), 0o644)
+		}
 		return false, outPath, nil
 	}
 
-	// (再)生成
 	if err := generateThumbnail(chosen, outPath); err != nil {
 		return false, "", fmt.Errorf("サムネイル生成失敗 %q: %w", chosen, err)
 	}
+	_ = os.WriteFile(srcRecord, []byte(chosen), 0o644)
 	return true, outPath, nil
+}
+
+// needsRegenerate はサムネイルを作り直すべきかを判定する。
+func needsRegenerate(rootPath, chosen, outPath, srcRecord string, srcStat os.FileInfo) bool {
+	cacheStat, err := os.Stat(outPath)
+	if err != nil {
+		return true // キャッシュなし
+	}
+	rec, err := os.ReadFile(srcRecord)
+	if err != nil {
+		// 生成元の記録が無い旧キャッシュ。ユーザー指定の thumbnail.* が選ばれている
+		// 場合は差し替え検出ができないため mtime に関係なく作り直す
+		return isRootThumbnail(rootPath, chosen)
+	}
+	if strings.TrimSpace(string(rec)) != chosen {
+		return true // 生成元が変わった(thumbnail.* の設置・削除など)
+	}
+	return srcStat.ModTime().After(cacheStat.ModTime()) // 同一ソースの更新
+}
+
+// isRootThumbnail は path が作品ルート直下の thumbnail.(jpg|jpeg|png|webp) かを判定する。
+func isRootThumbnail(rootPath, path string) bool {
+	return filepath.Dir(path) == rootPath && thumbnailPattern.MatchString(filepath.Base(path))
 }
 
 // collectImageCandidates は rootPath から maxDepth の深さまで画像ファイルを収集する。
@@ -131,9 +159,7 @@ func isImageFile(name string) bool {
 func chooseBestImage(rootPath string, candidates []string) string {
 	// 最優先: ルート直下の thumbnail.*
 	for _, c := range candidates {
-		dir := filepath.Dir(c)
-		base := filepath.Base(c)
-		if dir == rootPath && thumbnailPattern.MatchString(base) {
+		if isRootThumbnail(rootPath, c) {
 			return c
 		}
 	}

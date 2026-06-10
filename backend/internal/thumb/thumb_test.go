@@ -368,3 +368,89 @@ func TestGenerateOutputIsJPEG(t *testing.T) {
 		t.Errorf("長辺 %d > 512", maxEdge)
 	}
 }
+
+// TestRefreshSourceChanged は mtime に関係なく、生成元が変わったら再生成されることをテスト。
+// 実機フィードバック: コピー等で mtime が古いまま thumbnail.* を置いても差し替わること。
+func TestRefreshSourceChanged(t *testing.T) {
+	dir := t.TempDir()
+	thumbsDir := t.TempDir()
+	createTestImage(t, filepath.Join(dir, "cover.png"), 100, 100)
+
+	g := New(thumbsDir)
+
+	// 初回: cover.png から生成
+	regen, path, err := g.Refresh(21, dir)
+	if err != nil || !regen || path == "" {
+		t.Fatalf("初回 Refresh = (%v, %q, %v)", regen, path, err)
+	}
+
+	// thumbnail.png を「キャッシュより古い mtime」で設置
+	thumbSrc := filepath.Join(dir, "thumbnail.png")
+	createTestImage(t, thumbSrc, 50, 50)
+	past := time.Now().Add(-1 * time.Hour)
+	if err := os.Chtimes(thumbSrc, past, past); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2回目: mtime が古くても生成元が thumbnail.png に変わったので再生成される
+	regen, _, err = g.Refresh(21, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regen {
+		t.Error("生成元が thumbnail.png に変わったのに再生成されなかった")
+	}
+
+	// 3回目: 生成元・mtime とも変化なし → スキップ
+	regen, _, err = g.Refresh(21, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regen {
+		t.Error("変化がないのに再生成された")
+	}
+
+	// thumbnail.png を消すと cover.png に戻る(これも生成元変更として再生成)
+	if err := os.Remove(thumbSrc); err != nil {
+		t.Fatal(err)
+	}
+	regen, _, err = g.Refresh(21, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regen {
+		t.Error("thumbnail.png 削除後に再生成されなかった")
+	}
+}
+
+// TestRefreshLegacyCacheWithRootThumbnail は .src 記録が無い旧キャッシュでも、
+// ルート直下の thumbnail.* が選ばれる場合は mtime に関係なく再生成されることをテスト。
+func TestRefreshLegacyCacheWithRootThumbnail(t *testing.T) {
+	dir := t.TempDir()
+	thumbsDir := t.TempDir()
+	thumbSrc := filepath.Join(dir, "thumbnail.png")
+	createTestImage(t, thumbSrc, 50, 50)
+
+	g := New(thumbsDir)
+
+	// 初回生成後、旧バージョン相当にするため .src 記録を削除し、
+	// ソースをキャッシュより古くする
+	if _, _, err := g.Refresh(22, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(thumbsDir, "22.src")); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-1 * time.Hour)
+	if err := os.Chtimes(thumbSrc, past, past); err != nil {
+		t.Fatal(err)
+	}
+
+	regen, _, err := g.Refresh(22, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regen {
+		t.Error("記録なしキャッシュ + thumbnail.* で再生成されなかった")
+	}
+}
