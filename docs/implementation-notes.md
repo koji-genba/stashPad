@@ -9,7 +9,7 @@
 
 ## 1. 開発環境
 
-- Go 1.22 以上(`net/http` の メソッド付きルーティング前提。ルーターは chi を採用)
+- Go 1.25 以上(modernc.org/sqlite v1.52 の要求。ルーターは chi を採用)
 - Node.js 20 以上 + npm
 - 主要 Go 依存(予定):
   - `github.com/go-chi/chi/v5` — ルーター
@@ -258,7 +258,7 @@ http.ServeContent(w, r, st.Name(), st.ModTime(), f)
 - タグ展開の区切り(design.md §4.4): genres=`,` / detail_genres=空白 / voice_actor・scenario・illustration・music=`/`。各要素は trim し空要素は捨てる
 - タグ再リンク: その作品の **CSV 由来カテゴリのタグ紐付けを一旦全削除して張り直す**。`custom` カテゴリは触らない
 - 1 ファイル分は単一トランザクションで処理
-- docs/samples/works.csv をテストフィクスチャとして使い、RJ404669 が design.md §4.3 のとおり 13 タグに展開されることをテストする
+- docs/samples/works.csv をテストフィクスチャとして使い、RJ404669 が design.md §4.3 のとおり 14 タグに展開されることをテストする(genre×2 + detail_genre×8 + scenario×1 + illustration×1 + voice_actor×2)
 
 ## 11. フロントエンド
 
@@ -274,7 +274,7 @@ http.ServeContent(w, r, st.Name(), st.ModTime(), f)
 multi-stage ビルド:
 
 1. `node:20` で frontend をビルド
-2. `golang:1.22` で dist を embed して `CGO_ENABLED=0 go build`
+2. `golang:1.25` で dist を embed して `CGO_ENABLED=0 go build`
 3. `gcr.io/distroless/static`(または alpine)へバイナリのみコピー
 
 compose 例は design.md §10 参照。
@@ -295,9 +295,9 @@ compose 例は design.md §10 参照。
 
 完了条件(Definition of Done):
 
-- [ ] 実フォルダ構成を模した testdata でスキャン・ブラウズ・配信の go test が通る
-- [ ] samples/works.csv のインポートで RJ404669 が 13 タグに展開される(テストあり)
-- [ ] パストラバーサルのテスト(§6 のケース)が通る
+- [x] 実フォルダ構成を模した testdata でスキャン・ブラウズ・配信の go test が通る
+- [x] samples/works.csv のインポートで RJ404669 が 14 タグに展開される(テストあり)
+- [x] パストラバーサルのテスト(§6 のケース)が通る
 - [ ] スマホブラウザで: 検索 → 作品選択 → フォルダ移動 → flac 再生(シーク・±10秒・連続再生・ロック画面操作)が動く
 - [ ] 画像のページ送り、mp4 再生が動く
 - [ ] 履歴画面に再生した作品が出る

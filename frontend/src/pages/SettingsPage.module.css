@@ -1,0 +1,99 @@
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 14px;
+}
+.title {
+  font-size: 18px;
+  margin: 0 0 14px;
+}
+
+.section {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.heading {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+.section p {
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+
+.fileRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.fileInput {
+  display: none;
+}
+.fileName {
+  font-size: 13px;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.result {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.summary b {
+  color: var(--accent);
+  font-size: 16px;
+  margin-left: 2px;
+}
+
+.errors {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.errors summary {
+  cursor: pointer;
+  color: var(--warn);
+}
+.errors ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+}
+
+.error {
+  margin-top: 12px;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.maintRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.maintRow:last-of-type {
+  margin-bottom: 0;
+}
+.maintResult {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.maintResult b {
+  color: var(--accent);
+  font-size: 15px;
+  margin: 0 2px;
+}

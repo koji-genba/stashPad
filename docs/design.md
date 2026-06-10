@@ -101,7 +101,7 @@ flowchart LR
 
 | レイヤ | 技術 | 選定理由 |
 |--------|------|----------|
-| バックエンド | **Go 1.22+**(net/http + chi) | `http.ServeContent` が Range/206 を標準でサポートしストリーミング配信に最適。単一静的バイナリでコンテナ/k8s と相性が良い。本アプリの実態は「ファイル配信 + SQLite CRUD」であり Go の得意領域 |
+| バックエンド | **Go 1.25+**(net/http + chi) | `http.ServeContent` が Range/206 を標準でサポートしストリーミング配信に最適。単一静的バイナリでコンテナ/k8s と相性が良い。本アプリの実態は「ファイル配信 + SQLite CRUD」であり Go の得意領域 |
 | DB | SQLite(modernc.org/sqlite, pure Go) | cgo 不要でクロスビルド容易。単一ファイルでバックアップ楽。想定規模(数千作品)に十分 |
 | サムネイル | golang.org/x/image + 標準 image | jpg/png/webp のデコード・縮小に対応(キャッシュ出力は jpeg) |
 | フロントエンド | React + TypeScript + Vite | SPA でプレイヤー/ビューアの状態管理がしやすい(ブラウズ中の再生継続) |
@@ -168,7 +168,7 @@ erDiagram
 | file_format | TEXT NULL | CSV 由来の参考情報 |
 | file_size_text | TEXT NULL | CSV 由来の参考情報("4.91GB" 等そのまま) |
 | event | TEXT NULL | CSV 由来 |
-| root_path | TEXT NULL | ライブラリルートからの相対パス。NULL = CSV のみでフォルダ未発見 |
+| root_path | TEXT NULL | 作品フォルダの絶対パス(複数ライブラリルートに対応するため。implementation-notes.md §3 参照)。NULL = CSV のみでフォルダ未発見 |
 | thumbnail_path | TEXT NULL | サムネイルキャッシュへのパス |
 | created_at / updated_at | TEXT | |
 
@@ -223,7 +223,7 @@ ASMR 癒し 淡白/あっさり バイノーラル/ダミヘ 耳かき ラブラ
 | file_size_text | 4.91GB |
 | age_rating | R-15 |
 
-**tags / work_tags へ(計 13 タグが紐づく):**
+**tags / work_tags へ(計 14 タグが紐づく):**
 
 | category | name | 由来カラムと区切り |
 |----------|------|--------------------|
@@ -475,18 +475,18 @@ services:
 
 ### Phase 1 — MVP
 
-- [ ] Go バックエンド骨格(chi + SQLite + マイグレーション + 設定)
-- [ ] ライブラリスキャン(複数ルート、`RJxxxxx_` プレフィクス抽出)
-- [ ] CSV インポート(upsert + タグ展開)
-- [ ] 作品一覧 API + 検索(キーワード / タグ AND)+ タグファセット
-- [ ] ディレクトリブラウズ API + Range 対応ファイル配信(パス検証・自然順ソート)
-- [ ] サムネイル生成・配信
-- [ ] 再生履歴(記録 + 一覧)
-- [ ] フロント: 一覧 / 詳細 / ファイルブラウザ / 履歴
-- [ ] オーディオプレイヤー ミニモード(連続再生・シーク・±10秒・速度・Media Session)
-- [ ] 画像ビューア(基本ページ送り)
-- [ ] 動画再生(HTML5 ネイティブ)
-- [ ] コンテナイメージ + Docker Compose
+- [x] Go バックエンド骨格(chi + SQLite + マイグレーション + 設定)
+- [x] ライブラリスキャン(複数ルート、`RJxxxxx_` プレフィクス抽出)
+- [x] CSV インポート(upsert + タグ展開)
+- [x] 作品一覧 API + 検索(キーワード / タグ AND)+ タグファセット
+- [x] ディレクトリブラウズ API + Range 対応ファイル配信(パス検証・自然順ソート)
+- [x] サムネイル生成・配信
+- [x] 再生履歴(記録 + 一覧)
+- [x] フロント: 一覧 / 詳細 / ファイルブラウザ / 履歴
+- [x] オーディオプレイヤー ミニモード(連続再生・シーク・±10秒・速度・Media Session)
+- [x] 画像ビューア(基本ページ送り)
+- [x] 動画再生(HTML5 ネイティブ)
+- [x] コンテナイメージ + Docker Compose
 
 ### Phase 2 — 使い勝手
 

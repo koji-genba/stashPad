@@ -1,0 +1,18 @@
+# stashPad — 開発・お試し用 compose(design.md §10)
+# メディアのマウント元パスは環境に合わせて変更すること。
+services:
+  stashpad:
+    build:
+      context: ..
+    image: stashpad:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - /mnt/fileserver/voice:/media/voice:ro # ライブラリルートは複数指定可
+      - /mnt/fileserver/comic:/media/comic:ro
+      - ./data:/data # SQLite + サムネイルキャッシュ
+    environment:
+      STASHPAD_LIBRARY_ROOTS: /media/voice,/media/comic
+      STASHPAD_DATA_DIR: /data
+      STASHPAD_SCAN_ON_START: "true"
+    restart: unless-stopped
