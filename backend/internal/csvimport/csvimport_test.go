@@ -464,3 +464,19 @@ func TestSplitTrim(t *testing.T) {
 		}
 	}
 }
+
+// TestImportErrorsAlwaysArray は errors が nil でなく常に配列で返ることをテスト。
+// nil だと JSON で "errors": null になりフロントエンドが落ちる(回帰テスト)。
+func TestImportErrorsAlwaysArray(t *testing.T) {
+	db := openTestDB(t)
+	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
+RJ555555,正常行,,,,,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
+`
+	res, err := Import(db, strings.NewReader(csvData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Errors == nil {
+		t.Error("Errors が nil(JSON で null になる)。空スライスであるべき")
+	}
+}

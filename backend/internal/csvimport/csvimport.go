@@ -32,6 +32,8 @@ var csvCategories = []string{
 // BOM は自動的に除去する。
 func Import(db *sql.DB, reader io.Reader) (Result, error) {
 	var res Result
+	// JSON で "errors": null ではなく [] を返す(フロントは配列前提)
+	res.Errors = []string{}
 
 	// BOM 除去
 	br := newBOMReader(reader)

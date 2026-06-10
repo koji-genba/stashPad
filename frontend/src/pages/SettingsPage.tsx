@@ -153,11 +153,11 @@ export default function SettingsPage() {
                 リンク <b>{importResult.linked}</b>
               </span>
             </div>
-            {importResult.errors.length > 0 && (
+            {(importResult.errors ?? []).length > 0 && (
               <details className={styles.errors}>
-                <summary>エラー {importResult.errors.length} 件</summary>
+                <summary>エラー {(importResult.errors ?? []).length} 件</summary>
                 <ul>
-                  {importResult.errors.map((err, i) => (
+                  {(importResult.errors ?? []).map((err, i) => (
                     <li key={i}>{err}</li>
                   ))}
                 </ul>
