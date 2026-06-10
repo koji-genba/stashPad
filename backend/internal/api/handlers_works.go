@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/koji-genba/stashpad/backend/internal/media"
+	"github.com/koji-genba/stashpad/backend/internal/thumb"
 )
 
 // ---- 作品一覧 ----------------------------------------------------------------
