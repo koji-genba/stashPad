@@ -11,7 +11,15 @@
 
 ## ステータス
 
-設計フェーズ。詳細は [docs/design.md](docs/design.md) を参照。
+設計完了・実装未着手(Phase 1 / MVP の実装からスタート)。
+
+## ドキュメント
+
+| ファイル | 内容 |
+|---------|------|
+| [docs/design.md](docs/design.md) | 設計の正本(要件・アーキテクチャ・データモデル・API・フェーズ計画・決定事項ログ) |
+| [docs/implementation-notes.md](docs/implementation-notes.md) | 実装の具体的指針(環境変数・DDL・API 例・実装上の注意・完了条件) |
+| [CLAUDE.md](CLAUDE.md) | 開発セッション向けのプロジェクト概要と進め方 |
 
 ## 技術スタック(予定)
 
