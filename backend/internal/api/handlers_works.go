@@ -34,6 +34,8 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 
 	keyword := q.Get("q")
 	tagsParam := q.Get("tags")
+	circleFilter := q.Get("circle")
+	seriesFilter := q.Get("series")
 	sortBy := q.Get("sort")
 	order := q.Get("order")
 	pageStr := q.Get("page")
@@ -52,11 +54,12 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ソートカラムのホワイトリスト
+	// ソートカラムのホワイトリスト(circle を追加)
 	allowedSort := map[string]string{
 		"purchase_date": "purchase_date",
 		"title":         "title",
 		"created_at":    "created_at",
+		"circle":        "circle",
 	}
 	sortCol, ok := allowedSort[sortBy]
 	if !ok {
@@ -85,6 +88,18 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 		whereClause += " AND (w.title LIKE ? OR w.circle LIKE ? OR w.rj_number LIKE ?)"
 		like := "%" + keyword + "%"
 		args = append(args, like, like, like)
+	}
+
+	// circle 完全一致フィルタ
+	if circleFilter != "" {
+		whereClause += " AND w.circle=?"
+		args = append(args, circleFilter)
+	}
+
+	// series_name 完全一致フィルタ
+	if seriesFilter != "" {
+		whereClause += " AND w.series_name=?"
+		args = append(args, seriesFilter)
 	}
 
 	for _, tid := range tagIDs {

@@ -30,6 +30,7 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN work_tags wt ON wt.tag_id=t.id
 		WHERE 1=1` + whereClause + `
 		GROUP BY t.id
+		HAVING COUNT(wt.work_id) > 0
 		ORDER BY work_count DESC, t.name ASC`
 
 	rows, err := s.db.Query(query, args...)
