@@ -1,0 +1,95 @@
+.page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 14px;
+}
+.title {
+  font-size: 18px;
+  margin: 0 0 14px;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  align-items: center;
+}
+.row:hover {
+  border-color: var(--accent-dim);
+}
+
+.thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--bg-elev2);
+  flex-shrink: 0;
+}
+
+.info {
+  flex: 1;
+  min-width: 0;
+}
+.workTitle {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.count {
+  background: var(--bg-elev2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin: 24px 0;
+}
+.pageInfo {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.center {
+  display: flex;
+  justify-content: center;
+  padding: 48px 0;
+}
+.empty {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 48px 0;
+}

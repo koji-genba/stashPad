@@ -1,0 +1,70 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(env(safe-area-inset-top) + 8px) 12px 8px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent);
+  z-index: 2;
+}
+.counter {
+  font-size: 13px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+.close {
+  background: rgba(0, 0, 0, 0.4);
+  border: none;
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  font-size: 16px;
+}
+
+.image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.tapPrev,
+.tapNext {
+  position: absolute;
+  top: 56px;
+  bottom: 0;
+  width: 30%;
+  background: transparent;
+  border: none;
+  z-index: 1;
+}
+.tapPrev {
+  left: 0;
+}
+.tapNext {
+  right: 0;
+}
+
+.preload {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}

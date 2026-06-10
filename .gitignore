@@ -1,0 +1,17 @@
+# backend
+backend/stashpad
+*.db
+*.db-wal
+*.db-shm
+
+# embed 用の frontend 成果物(.gitkeep のみコミット)
+backend/internal/web/dist/*
+!backend/internal/web/dist/.gitkeep
+
+# frontend
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# runtime data
+data/

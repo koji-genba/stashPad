@@ -4,7 +4,7 @@ stashPad — 自宅ファイルサーバ上のメディア(音声・動画・画
 
 ## 現在のステータス
 
-**設計完了・実装未着手。** コードはまだ 1 行も存在しない。これから Phase 1 (MVP) の実装を始める段階。
+**Phase 1 (MVP) 実装済み。** backend(スキャナ・CSV インポータ・検索/ファセット・ブラウズ・Range 配信・履歴)、frontend(一覧・詳細・プレイヤー・ビューア)、Docker まで揃っている。次は design.md §11 の Phase 2(フルスクリーンプレイヤー・k8s マニフェスト等)。
 
 ## ドキュメントマップ(実装前に必ず読むこと)
 
@@ -31,14 +31,17 @@ stashPad — 自宅ファイルサーバ上のメディア(音声・動画・画
 - スキャナ・CSV インポータ・パス検証(セキュリティ境界)にはユニットテストを書く
 - `path` パラメータを受けるエンドポイントは必ずパストラバーサル検証を通す(implementation-notes.md §6)
 
-## コマンド(実装後に整備)
+## コマンド
 
 ```bash
 # backend
-cd backend && go run ./cmd/stashpad     # 起動(要 STASHPAD_* 環境変数)
+cd backend && go run ./cmd/stashpad     # 起動(要 STASHPAD_* 環境変数。README 参照)
 cd backend && go test ./...             # テスト
 
 # frontend
 cd frontend && npm run dev              # Vite dev server(/api を :8080 へ proxy)
-cd frontend && npm run build            # 本番ビルド → backend へ embed
+cd frontend && npm run build            # 本番ビルド
+cd frontend && npm run typecheck        # 型チェック(npx tsc --noEmit は使わないこと)
+
+# 本番ビルド(embed): frontend/dist を backend/internal/web/dist へコピーして go build(README 参照)
 ```

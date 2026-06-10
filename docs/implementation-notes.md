@@ -258,7 +258,7 @@ http.ServeContent(w, r, st.Name(), st.ModTime(), f)
 - タグ展開の区切り(design.md §4.4): genres=`,` / detail_genres=空白 / voice_actor・scenario・illustration・music=`/`。各要素は trim し空要素は捨てる
 - タグ再リンク: その作品の **CSV 由来カテゴリのタグ紐付けを一旦全削除して張り直す**。`custom` カテゴリは触らない
 - 1 ファイル分は単一トランザクションで処理
-- docs/samples/works.csv をテストフィクスチャとして使い、RJ404669 が design.md §4.3 のとおり 13 タグに展開されることをテストする
+- docs/samples/works.csv をテストフィクスチャとして使い、RJ404669 が design.md §4.3 のとおり 14 タグに展開されることをテストする(genre×2 + detail_genre×8 + scenario×1 + illustration×1 + voice_actor×2)
 
 ## 11. フロントエンド
 
@@ -295,9 +295,9 @@ compose 例は design.md §10 参照。
 
 完了条件(Definition of Done):
 
-- [ ] 実フォルダ構成を模した testdata でスキャン・ブラウズ・配信の go test が通る
-- [ ] samples/works.csv のインポートで RJ404669 が 13 タグに展開される(テストあり)
-- [ ] パストラバーサルのテスト(§6 のケース)が通る
+- [x] 実フォルダ構成を模した testdata でスキャン・ブラウズ・配信の go test が通る
+- [x] samples/works.csv のインポートで RJ404669 が 14 タグに展開される(テストあり)
+- [x] パストラバーサルのテスト(§6 のケース)が通る
 - [ ] スマホブラウザで: 検索 → 作品選択 → フォルダ移動 → flac 再生(シーク・±10秒・連続再生・ロック画面操作)が動く
 - [ ] 画像のページ送り、mp4 再生が動く
 - [ ] 履歴画面に再生した作品が出る

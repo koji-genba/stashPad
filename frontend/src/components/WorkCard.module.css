@@ -1,0 +1,78 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color 0.12s, transform 0.12s;
+}
+.card:hover {
+  border-color: var(--accent-dim);
+}
+
+.thumbWrap {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  background: var(--bg-elev2);
+}
+.thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.thumbBroken {
+  visibility: hidden;
+}
+
+.notImported {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: var(--text-faint);
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.age {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.badge {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.info {
+  padding: 8px 10px;
+}
+.title {
+  font-size: 13px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.circle {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
