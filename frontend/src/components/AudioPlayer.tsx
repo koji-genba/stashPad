@@ -12,6 +12,7 @@ import {
   playerThumbUrl,
   usePlayerStore,
 } from '@/store/playerStore';
+import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
 import { formatTime } from '@/utils/format';
 import FullscreenPlayer from './FullscreenPlayer';
 import styles from './AudioPlayer.module.css';
@@ -20,6 +21,9 @@ export default function AudioPlayer() {
   const audioRef = useRef<HTMLAudioElement>(null);
   // ミニバー上方向スワイプ検知用 ref
   const barTouchStart = useRef<{ x: number; y: number } | null>(null);
+
+  // フルスクリーンプレイヤー/キュー画面の開閉(history 駆動)
+  const overlay = usePlayerOverlay();
 
   const index = useStore(usePlayerStore, (s) => s.index);
   const queueLen = useStore(usePlayerStore, (s) => s.queue.length);
@@ -128,6 +132,12 @@ export default function AudioPlayer() {
     }
   }, [isPlaying]);
 
+  // キューが空になったら、オーバーレイ用に積んだ history エントリを巻き戻す
+  // (再生キュー全削除など。畳み忘れると「戻る」が見かけ上の無反応になる)
+  useEffect(() => {
+    if (queueLen === 0) overlay.unwind();
+  }, [queueLen, overlay.playerOpen, overlay.queueOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!track) return null;
 
   const store = usePlayerStore.getState();
@@ -146,7 +156,7 @@ export default function AudioPlayer() {
     barTouchStart.current = null;
     // 縦移動 60px 超(上方向)かつ縦優位
     if (dy < -60 && Math.abs(dy) > Math.abs(dx)) {
-      store.setExpanded(true);
+      overlay.openPlayer();
     }
   };
 
@@ -200,7 +210,7 @@ export default function AudioPlayer() {
           <button
             type="button"
             className={styles.nav}
-            onClick={() => store.setExpanded(true)}
+            onClick={() => overlay.openPlayer()}
             aria-label="フルスクリーンプレイヤーを開く"
           >
             <img

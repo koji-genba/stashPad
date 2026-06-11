@@ -28,7 +28,6 @@ const initialState = {
   playbackRate: 1,
   seekRequest: null,
   loadNonce: 0,
-  expanded: false,
   volume: 1,
   nextUid: 1,
 };
@@ -497,8 +496,8 @@ describe('removeFromQueue', () => {
     expect(recordPlayMock).not.toHaveBeenCalled();
   });
 
-  it('i===index で除去後 0 件: 全クリアして expanded も畳む', () => {
-    usePlayerStore.setState({ queue: [{ uid: 1, workId: 1, workTitle: '作品A', name: 'only.mp3', path: 'only.mp3' }], index: 0, expanded: true, loadNonce: 7 });
+  it('i===index で除去後 0 件: 全クリアして停止する', () => {
+    usePlayerStore.setState({ queue: [{ uid: 1, workId: 1, workTitle: '作品A', name: 'only.mp3', path: 'only.mp3' }], index: 0, loadNonce: 7 });
     usePlayerStore.getState().removeFromQueue(0);
     const s = usePlayerStore.getState();
     expect(s.queue).toEqual([]);
@@ -506,7 +505,6 @@ describe('removeFromQueue', () => {
     expect(s.isPlaying).toBe(false);
     expect(s.currentTime).toBe(0);
     expect(s.duration).toBe(0);
-    expect(s.expanded).toBe(false);
     expect(s.loadNonce).toBe(7); // loadNonce は不変
   });
 
@@ -800,47 +798,8 @@ describe('playerThumbUrl', () => {
   });
 });
 
-describe('expanded / フルスクリーンモード', () => {
-  beforeEach(resetStore);
-
-  it('初期値は false', () => {
-    expect(usePlayerStore.getState().expanded).toBe(false);
-  });
-
-  it('setExpanded(true) で expanded が true になる', () => {
-    usePlayerStore.getState().setExpanded(true);
-    expect(usePlayerStore.getState().expanded).toBe(true);
-  });
-
-  it('setExpanded(false) で expanded が false に戻る', () => {
-    usePlayerStore.setState({ expanded: true });
-    usePlayerStore.getState().setExpanded(false);
-    expect(usePlayerStore.getState().expanded).toBe(false);
-  });
-
-  it('startFromEntries は expanded を変更しない', () => {
-    usePlayerStore.setState({ expanded: true });
-    usePlayerStore.getState().startFromEntries({
-      workId: 1,
-      workTitle: 'テスト',
-      dir: '',
-      entries: [{ name: 'a.mp3', is_dir: false, size: 0, media_kind: 'audio' }],
-      startName: 'a.mp3',
-    });
-    expect(usePlayerStore.getState().expanded).toBe(true);
-  });
-
-  it('playIndex は expanded を変更しない', () => {
-    usePlayerStore.setState({
-      expanded: true,
-      queue: [{ uid: 1, workId: 1, workTitle: 'テスト', name: 'a.mp3', path: 'a.mp3' }],
-      index: 0,
-      nextUid: 100,
-    });
-    usePlayerStore.getState().playIndex(0);
-    expect(usePlayerStore.getState().expanded).toBe(true);
-  });
-});
+// フルスクリーン表示の開閉は store ではなく history(usePlayerOverlay)が担う。
+// 開閉まわりのテストは usePlayerOverlay.test.tsx を参照。
 
 describe('volume / 音量', () => {
   beforeEach(resetStore);

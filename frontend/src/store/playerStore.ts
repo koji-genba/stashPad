@@ -29,8 +29,6 @@ interface PlayerState {
   currentTime: number;
   duration: number;
   playbackRate: number;
-  /** フルスクリーンプレイヤーを表示中か。初期値 false */
-  expanded: boolean;
   /** 音量 0..1。初期値 1 */
   volume: number;
   /** 次に採番する uid。トラックを積むたびに割り当てて加算する(キュー置換をまたいでもリセットしない) */
@@ -71,8 +69,6 @@ interface PlayerState {
   setDuration: (d: number) => void;
   /** トラック終了時の自動送り。次が無ければ停止 */
   handleEnded: () => void;
-  /** フルスクリーンモードの表示を切り替える */
-  setExpanded: (expanded: boolean) => void;
   /** 音量を [0, 1] にクランプして設定 */
   setVolume: (v: number) => void;
 
@@ -97,7 +93,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentTime: 0,
   duration: 0,
   playbackRate: 1,
-  expanded: false,
   volume: 1,
   nextUid: 1,
   seekRequest: null,
@@ -190,14 +185,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     // i === index(再生中トラックを除去)
     if (next.length === 0) {
-      // 全クリア。expanded を畳まないと次回再生開始時にフルスクリーンが勝手に開く
+      // 全クリア(フルスクリーン表示の後始末は history 側 = usePlayerOverlay の unwind が担う)
       set({
         queue: [],
         index: -1,
         isPlaying: false,
         currentTime: 0,
         duration: 0,
-        expanded: false,
       });
       return;
     }
@@ -262,7 +256,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setRate: (rate) => set({ playbackRate: rate }),
   setCurrentTime: (t) => set({ currentTime: t }),
   setDuration: (d) => set({ duration: d }),
-  setExpanded: (expanded) => set({ expanded }),
   setVolume: (v) => set({ volume: Math.max(0, Math.min(1, v)) }),
 
   handleEnded: () => {

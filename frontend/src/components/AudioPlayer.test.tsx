@@ -12,16 +12,6 @@ vi.mock('@/api/client', () => ({
   thumbnailUrl: (workId: number) => `/api/works/${workId}/thumbnail`,
 }));
 
-// react-router-dom の useNavigate をモック化
-const mockNavigate = vi.fn();
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
-  return {
-    ...actual,
-    useNavigate: () => mockNavigate,
-  };
-});
-
 // vi.mock はファイル先頭に巻き上げられるため、この import 時点でモックは適用済み
 import AudioPlayer from './AudioPlayer';
 
@@ -35,7 +25,6 @@ const initialState = {
   playbackRate: 1,
   seekRequest: null,
   loadNonce: 0,
-  expanded: false,
   volume: 1,
   nextUid: 1,
 };
@@ -56,9 +45,13 @@ function setupPlayingState() {
     isPlaying: true,
     currentTime: 30,
     duration: 120,
-    expanded: false,
     nextUid: 100,
   });
+}
+
+/** フルスクリーンプレイヤーが開いているか(閉じるボタンの有無で判定) */
+function fullscreenVisible(): boolean {
+  return screen.queryByRole('button', { name: 'ミニプレイヤーに戻る' }) !== null;
 }
 
 function renderPlayer() {
@@ -98,14 +91,14 @@ describe('AudioPlayer 描画条件', () => {
 describe('AudioPlayer フルスクリーン展開', () => {
   beforeEach(setupPlayingState);
 
-  it('サムネ/メタ領域ボタンクリックで store.expanded が true になる', () => {
+  it('サムネ/メタ領域ボタンクリックでフルスクリーンプレイヤーが開く', () => {
     renderPlayer();
     const btn = screen.getByRole('button', { name: 'フルスクリーンプレイヤーを開く' });
     fireEvent.click(btn);
-    expect(usePlayerStore.getState().expanded).toBe(true);
+    expect(fullscreenVisible()).toBe(true);
   });
 
-  it('ミニバーの上方向スワイプ(dy=-100, dx≈0)で expanded が true になる', () => {
+  it('ミニバーの上方向スワイプ(dy=-100, dx≈0)でフルスクリーンプレイヤーが開く', () => {
     const { container } = renderPlayer();
     const bar = queryBar(container);
     expect(bar).not.toBeNull();
@@ -115,10 +108,10 @@ describe('AudioPlayer フルスクリーン展開', () => {
     fireEvent.touchEnd(bar!, {
       changedTouches: [{ clientX: 102, clientY: 200 }],
     });
-    expect(usePlayerStore.getState().expanded).toBe(true);
+    expect(fullscreenVisible()).toBe(true);
   });
 
-  it('縦移動が 60px 以下のスワイプでは expanded が変わらない', () => {
+  it('縦移動が 60px 以下のスワイプでは開かない', () => {
     const { container } = renderPlayer();
     const bar = queryBar(container);
     expect(bar).not.toBeNull();
@@ -128,10 +121,10 @@ describe('AudioPlayer フルスクリーン展開', () => {
     fireEvent.touchEnd(bar!, {
       changedTouches: [{ clientX: 100, clientY: 260 }], // dy=-40
     });
-    expect(usePlayerStore.getState().expanded).toBe(false);
+    expect(fullscreenVisible()).toBe(false);
   });
 
-  it('横優位スワイプ(dx=-120, dy=-80)では expanded が変わらない', () => {
+  it('横優位スワイプ(dx=-120, dy=-80)では開かない', () => {
     const { container } = renderPlayer();
     const bar = queryBar(container);
     expect(bar).not.toBeNull();
@@ -141,7 +134,7 @@ describe('AudioPlayer フルスクリーン展開', () => {
     fireEvent.touchEnd(bar!, {
       changedTouches: [{ clientX: 80, clientY: 220 }], // dx=-120, dy=-80
     });
-    expect(usePlayerStore.getState().expanded).toBe(false);
+    expect(fullscreenVisible()).toBe(false);
   });
 });
 

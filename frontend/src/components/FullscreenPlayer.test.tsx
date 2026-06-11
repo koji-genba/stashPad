@@ -1,8 +1,9 @@
 // FullscreenPlayer コンポーネントのテスト。
-// playerStore に状態を仕込んで描画・操作を検証する。
+// playerStore に再生状態を、MemoryRouter(location.state)に表示状態を仕込んで
+// 描画・操作を検証する。閉じる操作 = history が 1 段戻ること。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { usePlayerStore } from '@/store/playerStore';
 
 // API クライアントをモック化(playerStore.test.ts と同様)
@@ -12,17 +13,6 @@ vi.mock('@/api/client', () => ({
   thumbnailUrl: (workId: number) => `/api/works/${workId}/thumbnail`,
 }));
 
-// react-router-dom の useNavigate をモック化
-const mockNavigate = vi.fn();
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
-  return {
-    ...actual,
-    useNavigate: () => mockNavigate,
-  };
-});
-
-// vi.mock はファイル先頭に巻き上げられるため、この import 時点でモックは適用済み
 import FullscreenPlayer from './FullscreenPlayer';
 
 // ストアの初期状態リセット用
@@ -35,7 +25,6 @@ const initialState = {
   playbackRate: 1,
   seekRequest: null,
   loadNonce: 0,
-  expanded: false,
   volume: 1,
   nextUid: 1,
 };
@@ -56,15 +45,36 @@ function setupPlayingState() {
     isPlaying: true,
     currentTime: 30,
     duration: 120,
-    expanded: true,
     nextUid: 100,
   });
 }
 
-function renderPlayer() {
+// 現在の location(パスとオーバーレイフラグ)を観測するテスト用プローブ
+function LocationProbe() {
+  const location = useLocation();
+  const s = (location.state ?? {}) as { fsPlayer?: boolean; fsQueue?: boolean };
+  return (
+    <div data-testid="location-probe">
+      {`path=${location.pathname} player=${s.fsPlayer === true} queue=${s.fsQueue === true}`}
+    </div>
+  );
+}
+
+const probeText = () => screen.getByTestId('location-probe').textContent ?? '';
+/** プレイヤー本体が描画されているか(閉じるボタンの有無で判定) */
+const playerVisible = () =>
+  screen.queryByRole('button', { name: 'ミニプレイヤーに戻る' }) !== null;
+
+/** プレイヤーを開いた状態(フラグ付きエントリを積んだ history)で描画する */
+function renderPlayer(opts: { open?: boolean } = {}) {
+  const open = opts.open ?? true;
+  const entries = open
+    ? [{ pathname: '/' }, { pathname: '/', state: { fsPlayer: true } }]
+    : [{ pathname: '/' }];
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={entries} initialIndex={entries.length - 1}>
       <FullscreenPlayer />
+      <LocationProbe />
     </MemoryRouter>,
   );
 }
@@ -73,24 +83,23 @@ describe('FullscreenPlayer 描画条件', () => {
   beforeEach(resetStore);
   afterEach(cleanup);
 
-  it('expanded=false のとき何も描画しない', () => {
+  it('プレイヤーを開いていない(history にフラグなし)とき何も描画しない', () => {
     usePlayerStore.setState({
       queue: [{ uid: 1, workId: 1, workTitle: 'テスト', name: 'a.mp3', path: 'a.mp3' }],
       index: 0,
-      expanded: false,
       nextUid: 100,
     });
-    const { container } = renderPlayer();
-    expect(container.firstChild).toBeNull();
+    renderPlayer({ open: false });
+    expect(playerVisible()).toBe(false);
   });
 
   it('現在トラックが無い(キューが空)のとき何も描画しない', () => {
-    usePlayerStore.setState({ queue: [], index: -1, expanded: true });
-    const { container } = renderPlayer();
-    expect(container.firstChild).toBeNull();
+    usePlayerStore.setState({ queue: [], index: -1 });
+    renderPlayer();
+    expect(playerVisible()).toBe(false);
   });
 
-  it('expanded=true かつ 現在トラックがあるとき描画される', () => {
+  it('開いていて現在トラックがあるとき描画される', () => {
     setupPlayingState();
     renderPlayer();
     // トラック名はトラック情報エリアとキュー一覧の両方に表示されるので getAllByText を使う
@@ -138,19 +147,22 @@ describe('FullscreenPlayer 操作', () => {
   });
   afterEach(cleanup);
 
-  it('閉じるボタンで expanded が false になる', () => {
+  it('閉じるボタンでプレイヤーが閉じる(history が 1 段戻る)', () => {
     renderPlayer();
     const closeBtn = screen.getByRole('button', { name: 'ミニプレイヤーに戻る' });
     fireEvent.click(closeBtn);
-    expect(usePlayerStore.getState().expanded).toBe(false);
+    expect(playerVisible()).toBe(false);
+    expect(probeText()).toContain('player=false');
+    expect(probeText()).toContain('path=/');
   });
 
-  it('作品タイトルボタンクリックで navigate と setExpanded(false) が呼ばれる', () => {
+  it('作品タイトルボタンクリックで作品ページへ遷移し、プレイヤーが閉じる', () => {
     renderPlayer();
     const titleBtn = screen.getByRole('button', { name: 'テスト作品タイトル の作品ページを開く' });
     fireEvent.click(titleBtn);
-    expect(mockNavigate).toHaveBeenCalledWith('/works/42');
-    expect(usePlayerStore.getState().expanded).toBe(false);
+    expect(probeText()).toContain('path=/works/42');
+    // 遷移先エントリにはフラグが無いのでプレイヤーは閉じる
+    expect(playerVisible()).toBe(false);
   });
 
   it('キュー行クリックで playIndex が呼ばれる', () => {
@@ -198,21 +210,32 @@ describe('FullscreenPlayer キーボード', () => {
   });
   afterEach(cleanup);
 
-  it('Escape キーで expanded が false になる', () => {
+  it('Escape キーでプレイヤーが閉じる', () => {
     renderPlayer();
-    expect(usePlayerStore.getState().expanded).toBe(true);
+    expect(playerVisible()).toBe(true);
     fireEvent.keyDown(window, { key: 'Escape' });
-    expect(usePlayerStore.getState().expanded).toBe(false);
+    expect(playerVisible()).toBe(false);
+    expect(probeText()).toContain('player=false');
   });
 
-  it('アンマウント後は Escape キーを無視する', () => {
-    const { unmount } = renderPlayer();
-    unmount();
-    // expanded を再び true に設定
-    usePlayerStore.setState({ expanded: true });
+  it('アンマウント後は Escape キーを無視する(リスナーがクリーンアップされる)', () => {
+    const entries = [{ pathname: '/' }, { pathname: '/', state: { fsPlayer: true } }];
+    const { rerender } = render(
+      <MemoryRouter initialEntries={entries} initialIndex={1}>
+        <FullscreenPlayer />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+    expect(playerVisible()).toBe(true);
+    // FullscreenPlayer だけ外す(MemoryRouter と history はそのまま)
+    rerender(
+      <MemoryRouter initialEntries={entries} initialIndex={1}>
+        <LocationProbe />
+      </MemoryRouter>,
+    );
     fireEvent.keyDown(window, { key: 'Escape' });
-    // クリーンアップ済みなので expanded は true のまま
-    expect(usePlayerStore.getState().expanded).toBe(true);
+    // リスナーがクリーンアップ済みなので history は戻らない
+    expect(probeText()).toContain('player=true');
   });
 });
 
@@ -317,7 +340,7 @@ describe('FullscreenPlayer スワイプ操作', () => {
   });
   afterEach(cleanup);
 
-  it('ヘッダ領域の下方向スワイプ(dy=+100, dx≈0)で expanded が false になる', () => {
+  it('ヘッダ領域の下方向スワイプ(dy=+100, dx≈0)でプレイヤーが閉じる', () => {
     renderPlayer();
     // ヘッダ要素: 閉じるボタンの親要素を辿る
     const closeBtn = screen.getByRole('button', { name: 'ミニプレイヤーに戻る' });
@@ -328,7 +351,7 @@ describe('FullscreenPlayer スワイプ操作', () => {
     fireEvent.touchEnd(header, {
       changedTouches: [{ clientX: 102, clientY: 150 }], // dy=+100
     });
-    expect(usePlayerStore.getState().expanded).toBe(false);
+    expect(playerVisible()).toBe(false);
   });
 
   it('横優位スワイプ(dx=120, dy=80)では閉じない', () => {
@@ -341,7 +364,7 @@ describe('FullscreenPlayer スワイプ操作', () => {
     fireEvent.touchEnd(header, {
       changedTouches: [{ clientX: 220, clientY: 130 }], // dx=120, dy=80
     });
-    expect(usePlayerStore.getState().expanded).toBe(true);
+    expect(playerVisible()).toBe(true);
   });
 
   it('縦 60px 以下のスワイプでは閉じない', () => {
@@ -354,7 +377,7 @@ describe('FullscreenPlayer スワイプ操作', () => {
     fireEvent.touchEnd(header, {
       changedTouches: [{ clientX: 100, clientY: 90 }], // dy=40(60px 未満)
     });
-    expect(usePlayerStore.getState().expanded).toBe(true);
+    expect(playerVisible()).toBe(true);
   });
 });
 
@@ -369,19 +392,17 @@ describe('FullscreenPlayer body スクロールロック', () => {
   });
 
   it('表示中は document.body.style.overflow が "hidden" になる', () => {
-    setupPlayingState(); // expanded=true
+    setupPlayingState();
     renderPlayer();
     expect(document.body.style.overflow).toBe('hidden');
   });
 
-  it('setExpanded(false) にすると overflow が元に戻る', () => {
-    setupPlayingState(); // expanded=true
+  it('閉じると overflow が元に戻る', () => {
+    setupPlayingState();
     renderPlayer();
     expect(document.body.style.overflow).toBe('hidden');
-    // store 更新による再レンダーで effect のクリーンアップが走る
-    act(() => {
-      usePlayerStore.getState().setExpanded(false);
-    });
+    // 閉じる(history が戻る)→ 再レンダーで effect のクリーンアップが走る
+    fireEvent.click(screen.getByRole('button', { name: 'ミニプレイヤーに戻る' }));
     expect(document.body.style.overflow).not.toBe('hidden');
   });
 });
