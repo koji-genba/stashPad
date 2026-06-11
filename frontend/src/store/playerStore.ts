@@ -6,6 +6,9 @@ import type { Entry } from '@/api/types';
 import { fileUrl, recordPlay, thumbnailUrl } from '@/api/client';
 import { joinPath } from '@/utils/format';
 
+/** 再生速度の選択肢。AudioPlayer / FullscreenPlayer で共用 */
+export const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+
 export interface QueueTrack {
   /** 作品ルートからの相対パス(file API / plays API に渡す) */
   path: string;
@@ -27,6 +30,10 @@ interface PlayerState {
   currentTime: number;
   duration: number;
   playbackRate: number;
+  /** フルスクリーンプレイヤーを表示中か。初期値 false */
+  expanded: boolean;
+  /** 音量 0..1。初期値 1 */
+  volume: number;
 
   /** ディレクトリの entries から audio キューを構築し、指定ファイルから再生開始 */
   startFromEntries: (
@@ -52,6 +59,10 @@ interface PlayerState {
   setDuration: (d: number) => void;
   /** トラック終了時の自動送り。次が無ければ停止 */
   handleEnded: () => void;
+  /** フルスクリーンモードの表示を切り替える */
+  setExpanded: (expanded: boolean) => void;
+  /** 音量を [0, 1] にクランプして設定 */
+  setVolume: (v: number) => void;
 
   // ---- 以下は AudioPlayer コンポーネントが <audio> を操作するための命令キュー ----
   // 数値を増やすことで「シーク/レート反映/ロードして再生」を要求する。
@@ -75,6 +86,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentTime: 0,
   duration: 0,
   playbackRate: 1,
+  expanded: false,
+  volume: 1,
   seekRequest: null,
   loadNonce: 0,
 
@@ -145,6 +158,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setRate: (rate) => set({ playbackRate: rate }),
   setCurrentTime: (t) => set({ currentTime: t }),
   setDuration: (d) => set({ duration: d }),
+  setExpanded: (expanded) => set({ expanded }),
+  setVolume: (v) => set({ volume: Math.max(0, Math.min(1, v)) }),
 
   handleEnded: () => {
     const { index, queue } = get();
