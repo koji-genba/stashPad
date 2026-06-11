@@ -507,17 +507,20 @@ func TestListWorksKeyword(t *testing.T) {
 		{"RJ888003", 1},      // rj_number ヒット
 	}
 	for _, tc := range cases {
-		w := doGet(t, h, "/api/works?q="+url.QueryEscape(tc.q))
-		if w.Code != http.StatusOK {
-			t.Fatalf("q=%q status = %d", tc.q, w.Code)
-		}
-		var body struct {
-			Total int `json:"total"`
-		}
-		json.Unmarshal(w.Body.Bytes(), &body)
-		if body.Total != tc.want {
-			t.Errorf("q=%q total = %d, want %d", tc.q, body.Total, tc.want)
-		}
+		tc := tc
+		t.Run(tc.q, func(t *testing.T) {
+			w := doGet(t, h, "/api/works?q="+url.QueryEscape(tc.q))
+			if w.Code != http.StatusOK {
+				t.Fatalf("q=%q status = %d", tc.q, w.Code)
+			}
+			var body struct {
+				Total int `json:"total"`
+			}
+			json.Unmarshal(w.Body.Bytes(), &body)
+			if body.Total != tc.want {
+				t.Errorf("total = %d, want %d", body.Total, tc.want)
+			}
+		})
 	}
 }
 

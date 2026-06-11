@@ -454,16 +454,19 @@ func TestSplitTrim(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		got := splitTrim(tc.s, tc.sep)
-		if len(got) != len(tc.want) {
-			t.Errorf("splitTrim(%q, %q) = %v, want %v", tc.s, tc.sep, got, tc.want)
-			continue
-		}
-		for i := range got {
-			if got[i] != tc.want[i] {
-				t.Errorf("splitTrim(%q, %q)[%d] = %q, want %q", tc.s, tc.sep, i, got[i], tc.want[i])
+		tc := tc
+		t.Run(tc.s+"/"+tc.sep, func(t *testing.T) {
+			got := splitTrim(tc.s, tc.sep)
+			if len(got) != len(tc.want) {
+				t.Errorf("splitTrim(%q, %q) = %v, want %v", tc.s, tc.sep, got, tc.want)
+				return
 			}
-		}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("splitTrim(%q, %q)[%d] = %q, want %q", tc.s, tc.sep, i, got[i], tc.want[i])
+				}
+			}
+		})
 	}
 }
 
