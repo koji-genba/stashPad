@@ -473,7 +473,6 @@ func TestSplitTrim(t *testing.T) {
 // TestBOMReaderShortRead は bomReader を 1 バイトずつ読んでも全データが正しく読めることを確認する。
 // len(p) < len(b.buf) の場合に copy の戻り値ではなく len(b.buf) を返していたバグの回帰テスト。
 func TestBOMReaderShortRead(t *testing.T) {
-	t.Helper()
 	// BOM(3バイト) + 'a' + 'b' の 5 バイト入力
 	input := []byte{0xEF, 0xBB, 0xBF, 'a', 'b'}
 	br := &bomReader{r: bytes.NewReader(input)}

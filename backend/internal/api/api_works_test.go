@@ -909,7 +909,6 @@ func TestListTagsFilters(t *testing.T) {
 // last_file_path が最新の再生履歴のファイルパスを返すことを確認する。
 // 同一作品に古いファイルと新しいファイルを記録し、last_file_path が新しい方であることを検証。
 func TestHistoryLastFilePathIsLatest(t *testing.T) {
-	t.Helper()
 	h, database, id := newTestServer(t)
 
 	// 古い再生履歴を挿入
