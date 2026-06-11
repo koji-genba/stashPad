@@ -48,6 +48,15 @@ export default function WorksListPage() {
     setQInput(q);
   }, [q]);
 
+  // setParams の関数形式を使い、タイマー発火時に最新の params を参照する
+  const update = useCallback((mut: (p: URLSearchParams) => void) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      mut(next);
+      return next;
+    }, { replace: false });
+  }, [setParams]);
+
   // 入力を 300ms デバウンスして URL に反映(リアルタイム検索)
   useEffect(() => {
     if (qInput === qRef.current) return;
@@ -91,15 +100,6 @@ export default function WorksListPage() {
       });
     return () => ac.abort();
   }, [q, tags, circle, series, sort, page]);
-
-  // setParams の関数形式を使い、タイマー発火時に最新の params を参照する
-  const update = useCallback((mut: (p: URLSearchParams) => void) => {
-    setParams((prev) => {
-      const next = new URLSearchParams(prev);
-      mut(next);
-      return next;
-    }, { replace: false });
-  }, [setParams]);
 
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();
