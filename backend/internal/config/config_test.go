@@ -1,0 +1,153 @@
+package config
+
+import (
+	"testing"
+)
+
+// TestLoadLibraryRootsNotSet は STASHPAD_LIBRARY_ROOTS 未設定でエラーになることをテスト。
+func TestLoadLibraryRootsNotSet(t *testing.T) {
+	t.Setenv("STASHPAD_LIBRARY_ROOTS", "")
+	t.Setenv("STASHPAD_DATA_DIR", "/tmp/data")
+
+	_, err := Load()
+	if err == nil {
+		t.Error("STASHPAD_LIBRARY_ROOTS 未設定なのにエラーにならなかった")
+	}
+}
+
+// TestLoadLibraryRootsMultiple はカンマ区切り複数パス+空白トリムが正しく処理されることをテスト。
+func TestLoadLibraryRootsMultiple(t *testing.T) {
+	t.Setenv("STASHPAD_LIBRARY_ROOTS", " /media/audio , /media/manga , /media/video ")
+	t.Setenv("STASHPAD_DATA_DIR", "/tmp/data")
+	t.Setenv("STASHPAD_ADDR", "")
+	t.Setenv("STASHPAD_SCAN_ON_START", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 失敗: %v", err)
+	}
+	want := []string{"/media/audio", "/media/manga", "/media/video"}
+	if len(cfg.LibraryRoots) != len(want) {
+		t.Fatalf("LibraryRoots 件数 = %d, want %d", len(cfg.LibraryRoots), len(want))
+	}
+	for i, w := range want {
+		if cfg.LibraryRoots[i] != w {
+			t.Errorf("LibraryRoots[%d] = %q, want %q", i, cfg.LibraryRoots[i], w)
+		}
+	}
+}
+
+// TestLoadLibraryRootsOnlyCommasAndSpaces はカンマと空白だけ(",, ")でエラーになることをテスト。
+func TestLoadLibraryRootsOnlyCommasAndSpaces(t *testing.T) {
+	t.Setenv("STASHPAD_LIBRARY_ROOTS", ",, ")
+	t.Setenv("STASHPAD_DATA_DIR", "/tmp/data")
+
+	_, err := Load()
+	if err == nil {
+		t.Error("有効なパスがないのにエラーにならなかった")
+	}
+}
+
+// TestLoadDataDirNotSet は STASHPAD_DATA_DIR 未設定でエラーになることをテスト。
+func TestLoadDataDirNotSet(t *testing.T) {
+	t.Setenv("STASHPAD_LIBRARY_ROOTS", "/media/audio")
+	t.Setenv("STASHPAD_DATA_DIR", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Error("STASHPAD_DATA_DIR 未設定なのにエラーにならなかった")
+	}
+}
+
+// TestLoadAddrDefault は STASHPAD_ADDR 未設定のデフォルト値が ":8080" であることをテスト。
+func TestLoadAddrDefault(t *testing.T) {
+	t.Setenv("STASHPAD_LIBRARY_ROOTS", "/media/audio")
+	t.Setenv("STASHPAD_DATA_DIR", "/tmp/data")
+	t.Setenv("STASHPAD_ADDR", "")
+	t.Setenv("STASHPAD_SCAN_ON_START", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 失敗: %v", err)
+	}
+	if cfg.Addr != ":8080" {
+		t.Errorf("Addr = %q, want :8080", cfg.Addr)
+	}
+}
+
+// TestLoadAddrCustom は STASHPAD_ADDR が設定されている場合にその値が使われることをテスト。
+func TestLoadAddrCustom(t *testing.T) {
+	t.Setenv("STASHPAD_LIBRARY_ROOTS", "/media/audio")
+	t.Setenv("STASHPAD_DATA_DIR", "/tmp/data")
+	t.Setenv("STASHPAD_ADDR", ":9090")
+	t.Setenv("STASHPAD_SCAN_ON_START", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 失敗: %v", err)
+	}
+	if cfg.Addr != ":9090" {
+		t.Errorf("Addr = %q, want :9090", cfg.Addr)
+	}
+}
+
+// TestLoadScanOnStartTrue は STASHPAD_SCAN_ON_START が true になるパターンをテスト。
+func TestLoadScanOnStartTrue(t *testing.T) {
+	cases := []string{"1", "true", "TRUE", "yes"}
+	for _, v := range cases {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("STASHPAD_LIBRARY_ROOTS", "/media/audio")
+			t.Setenv("STASHPAD_DATA_DIR", "/tmp/data")
+			t.Setenv("STASHPAD_ADDR", "")
+			t.Setenv("STASHPAD_SCAN_ON_START", v)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load 失敗: %v", err)
+			}
+			if !cfg.ScanOnStart {
+				t.Errorf("STASHPAD_SCAN_ON_START=%q → ScanOnStart = false, want true", v)
+			}
+		})
+	}
+}
+
+// TestLoadScanOnStartFalse は STASHPAD_SCAN_ON_START が false になるパターンをテスト。
+func TestLoadScanOnStartFalse(t *testing.T) {
+	cases := []string{"", "0", "false", "no", "other"}
+	for _, v := range cases {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("STASHPAD_LIBRARY_ROOTS", "/media/audio")
+			t.Setenv("STASHPAD_DATA_DIR", "/tmp/data")
+			t.Setenv("STASHPAD_ADDR", "")
+			t.Setenv("STASHPAD_SCAN_ON_START", v)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load 失敗: %v", err)
+			}
+			if cfg.ScanOnStart {
+				t.Errorf("STASHPAD_SCAN_ON_START=%q → ScanOnStart = true, want false", v)
+			}
+		})
+	}
+}
+
+// TestLoadSingleRoot は単一パスが正しく読み込まれることをテスト。
+func TestLoadSingleRoot(t *testing.T) {
+	t.Setenv("STASHPAD_LIBRARY_ROOTS", "/single/path")
+	t.Setenv("STASHPAD_DATA_DIR", "/data")
+	t.Setenv("STASHPAD_ADDR", "")
+	t.Setenv("STASHPAD_SCAN_ON_START", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 失敗: %v", err)
+	}
+	if len(cfg.LibraryRoots) != 1 || cfg.LibraryRoots[0] != "/single/path" {
+		t.Errorf("LibraryRoots = %v, want [/single/path]", cfg.LibraryRoots)
+	}
+	if cfg.DataDir != "/data" {
+		t.Errorf("DataDir = %q, want /data", cfg.DataDir)
+	}
+}
