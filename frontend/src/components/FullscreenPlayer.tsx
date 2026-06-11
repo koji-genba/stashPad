@@ -16,7 +16,6 @@ import styles from './FullscreenPlayer.module.css';
 export default function FullscreenPlayer() {
   const navigate = useNavigate();
 
-  const ctx = useStore(usePlayerStore, (s) => s.ctx);
   const queue = useStore(usePlayerStore, (s) => s.queue);
   const index = useStore(usePlayerStore, (s) => s.index);
   const isPlaying = useStore(usePlayerStore, (s) => s.isPlaying);
@@ -79,10 +78,10 @@ export default function FullscreenPlayer() {
     }
   };
 
-  if (!expanded || !ctx) return null;
+  if (!expanded || !track) return null;
 
   const store = usePlayerStore.getState();
-  const thumbUrl = playerThumbUrl(ctx);
+  const thumbUrl = playerThumbUrl(track);
   // シークバーの進捗表示用パーセント
   const progressPct = duration ? (currentTime / duration) * 100 : 0;
 
@@ -114,12 +113,12 @@ export default function FullscreenPlayer() {
           type="button"
           className={styles.titleBtn}
           onClick={() => {
-            navigate(`/works/${ctx.workId}`);
+            navigate(`/works/${track.workId}`);
             store.setExpanded(false);
           }}
-          aria-label={`${ctx.workTitle} の作品ページを開く`}
+          aria-label={`${track.workTitle} の作品ページを開く`}
         >
-          {ctx.workTitle}
+          {track.workTitle}
         </button>
         {/* ヘッダの右側の空白スペーサー(閉じるボタンと対称) */}
         <div className={styles.headerSpacer} aria-hidden />
@@ -145,11 +144,11 @@ export default function FullscreenPlayer() {
 
       {/* トラック名 + 作品タイトル */}
       <div className={styles.trackInfo}>
-        <div className={styles.trackName} title={track?.name}>
-          {track?.name}
+        <div className={styles.trackName} title={track.name}>
+          {track.name}
         </div>
-        <div className={styles.workTitle} title={ctx.workTitle}>
-          {ctx.workTitle}
+        <div className={styles.workTitle} title={track.workTitle}>
+          {track.workTitle}
         </div>
       </div>
 
@@ -308,7 +307,7 @@ export default function FullscreenPlayer() {
             const isCurrent = i === index;
             return (
               <button
-                key={t.path}
+                key={t.uid}
                 type="button"
                 ref={isCurrent ? currentQueueRef : null}
                 className={`${styles.queueItem} ${isCurrent ? styles.queueItemCurrent : ''}`}

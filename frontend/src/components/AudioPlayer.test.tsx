@@ -27,7 +27,6 @@ import AudioPlayer from './AudioPlayer';
 
 // ストアの初期状態リセット用
 const initialState = {
-  ctx: null,
   queue: [],
   index: -1,
   isPlaying: false,
@@ -38,6 +37,7 @@ const initialState = {
   loadNonce: 0,
   expanded: false,
   volume: 1,
+  nextUid: 1,
 };
 
 function resetStore() {
@@ -47,17 +47,17 @@ function resetStore() {
 // テスト用の最低限の状態を設定するヘルパ
 function setupPlayingState() {
   usePlayerStore.setState({
-    ctx: { workId: 42, workTitle: 'テスト作品タイトル', dir: '' },
     queue: [
-      { name: 'track01.mp3', path: 'track01.mp3' },
-      { name: 'track02.mp3', path: 'track02.mp3' },
-      { name: 'track03.mp3', path: 'track03.mp3' },
+      { uid: 1, workId: 42, workTitle: 'テスト作品タイトル', name: 'track01.mp3', path: 'track01.mp3' },
+      { uid: 2, workId: 42, workTitle: 'テスト作品タイトル', name: 'track02.mp3', path: 'track02.mp3' },
+      { uid: 3, workId: 42, workTitle: 'テスト作品タイトル', name: 'track03.mp3', path: 'track03.mp3' },
     ],
     index: 1,
     isPlaying: true,
     currentTime: 30,
     duration: 120,
     expanded: false,
+    nextUid: 100,
   });
 }
 
@@ -87,10 +87,10 @@ function queryBar(container: HTMLElement): HTMLElement | null {
 }
 
 describe('AudioPlayer 描画条件', () => {
-  it('ctx=null のとき何も描画しない', () => {
-    usePlayerStore.setState({ ctx: null });
+  it('キューが空(現在トラックなし)のとき何も描画しない', () => {
+    usePlayerStore.setState({ queue: [], index: -1 });
     const { container } = renderPlayer();
-    // ctx=null なのでミニバー自体がレンダーされない(<audio> は残る)
+    // 現在トラックが無いのでミニバー自体がレンダーされない(<audio> は残る)
     expect(container.querySelector('[aria-label="フルスクリーンプレイヤーを開く"]')).toBeNull();
   });
 });
@@ -172,9 +172,9 @@ describe('AudioPlayer <audio> 要素へのストア反映', () => {
 describe('AudioPlayer トラック操作ボタン', () => {
   it('「前のトラック」ボタンは queue が 1 件以下で disabled', () => {
     usePlayerStore.setState({
-      ctx: { workId: 1, workTitle: 'テスト', dir: '' },
-      queue: [{ name: 'a.mp3', path: 'a.mp3' }],
+      queue: [{ uid: 1, workId: 1, workTitle: 'テスト', name: 'a.mp3', path: 'a.mp3' }],
       index: 0,
+      nextUid: 100,
     });
     renderPlayer();
     const prevBtn = screen.getByRole('button', { name: '前のトラック' });
@@ -183,12 +183,12 @@ describe('AudioPlayer トラック操作ボタン', () => {
 
   it('「次のトラック」ボタンは末尾 index で disabled', () => {
     usePlayerStore.setState({
-      ctx: { workId: 1, workTitle: 'テスト', dir: '' },
       queue: [
-        { name: 'a.mp3', path: 'a.mp3' },
-        { name: 'b.mp3', path: 'b.mp3' },
+        { uid: 1, workId: 1, workTitle: 'テスト', name: 'a.mp3', path: 'a.mp3' },
+        { uid: 2, workId: 1, workTitle: 'テスト', name: 'b.mp3', path: 'b.mp3' },
       ],
       index: 1, // 末尾
+      nextUid: 100,
     });
     renderPlayer();
     const nextBtn = screen.getByRole('button', { name: '次のトラック' });

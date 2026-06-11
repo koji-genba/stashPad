@@ -27,7 +27,6 @@ import FullscreenPlayer from './FullscreenPlayer';
 
 // ストアの初期状態リセット用
 const initialState = {
-  ctx: null,
   queue: [],
   index: -1,
   isPlaying: false,
@@ -38,6 +37,7 @@ const initialState = {
   loadNonce: 0,
   expanded: false,
   volume: 1,
+  nextUid: 1,
 };
 
 function resetStore() {
@@ -47,17 +47,17 @@ function resetStore() {
 // テスト用の最低限の状態を設定するヘルパ
 function setupPlayingState() {
   usePlayerStore.setState({
-    ctx: { workId: 42, workTitle: 'テスト作品タイトル', dir: '' },
     queue: [
-      { name: 'track01.mp3', path: 'track01.mp3' },
-      { name: 'track02.mp3', path: 'track02.mp3' },
-      { name: 'track03.mp3', path: 'track03.mp3' },
+      { uid: 1, workId: 42, workTitle: 'テスト作品タイトル', name: 'track01.mp3', path: 'track01.mp3' },
+      { uid: 2, workId: 42, workTitle: 'テスト作品タイトル', name: 'track02.mp3', path: 'track02.mp3' },
+      { uid: 3, workId: 42, workTitle: 'テスト作品タイトル', name: 'track03.mp3', path: 'track03.mp3' },
     ],
     index: 1,
     isPlaying: true,
     currentTime: 30,
     duration: 120,
     expanded: true,
+    nextUid: 100,
   });
 }
 
@@ -75,22 +75,22 @@ describe('FullscreenPlayer 描画条件', () => {
 
   it('expanded=false のとき何も描画しない', () => {
     usePlayerStore.setState({
-      ctx: { workId: 1, workTitle: 'テスト', dir: '' },
-      queue: [{ name: 'a.mp3', path: 'a.mp3' }],
+      queue: [{ uid: 1, workId: 1, workTitle: 'テスト', name: 'a.mp3', path: 'a.mp3' }],
       index: 0,
       expanded: false,
+      nextUid: 100,
     });
     const { container } = renderPlayer();
     expect(container.firstChild).toBeNull();
   });
 
-  it('ctx=null のとき何も描画しない', () => {
-    usePlayerStore.setState({ ctx: null, expanded: true });
+  it('現在トラックが無い(キューが空)のとき何も描画しない', () => {
+    usePlayerStore.setState({ queue: [], index: -1, expanded: true });
     const { container } = renderPlayer();
     expect(container.firstChild).toBeNull();
   });
 
-  it('expanded=true かつ ctx があるとき描画される', () => {
+  it('expanded=true かつ 現在トラックがあるとき描画される', () => {
     setupPlayingState();
     renderPlayer();
     // トラック名はトラック情報エリアとキュー一覧の両方に表示されるので getAllByText を使う
@@ -253,7 +253,7 @@ describe('FullscreenPlayer 操作系(追加)', () => {
 
   it('「前のトラック」: queue 1 件以下で disabled', () => {
     usePlayerStore.setState({
-      queue: [{ name: 'only.mp3', path: 'only.mp3' }],
+      queue: [{ uid: 1, workId: 42, workTitle: 'テスト作品タイトル', name: 'only.mp3', path: 'only.mp3' }],
       index: 0,
     });
     renderPlayer();
