@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { SortKey, WorksResponse } from '@/api/types';
 import { fetchTags, fetchWorks } from '@/api/client';
@@ -33,6 +33,10 @@ export default function WorksListPage() {
   const page = Number(params.get('page') ?? '1') || 1;
 
   const [qInput, setQInput] = useState(q);
+  // 毎レンダーで最新の q を ref に書き込む。デバウンスエフェクトの deps に
+  // q を入れると URL 更新直後に無駄な再実行が生じるため、ref 経由で参照する。
+  const qRef = useRef(q);
+  qRef.current = q;
   const [data, setData] = useState<WorksResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +50,7 @@ export default function WorksListPage() {
 
   // 入力を 300ms デバウンスして URL に反映(リアルタイム検索)
   useEffect(() => {
-    if (qInput === q) return;
+    if (qInput === qRef.current) return;
     const t = setTimeout(() => {
       update((p) => {
         if (qInput) p.set('q', qInput);
@@ -55,7 +59,7 @@ export default function WorksListPage() {
       });
     }, 300);
     return () => clearTimeout(t);
-  }, [qInput, q, update]);
+  }, [qInput, update]);
 
   // 選択タグのラベル表示用に、全タグ名を一度だけ取得してキャッシュ
   useEffect(() => {
