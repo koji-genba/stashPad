@@ -26,9 +26,12 @@ func TestNaturalLess(t *testing.T) {
 		{"99999999999999999998", "99999999999999999999", true},
 	}
 	for _, c := range cases {
-		if got := NaturalLess(c.a, c.b); got != c.want {
-			t.Errorf("NaturalLess(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
-		}
+		c := c
+		t.Run(c.a+"<"+c.b, func(t *testing.T) {
+			if got := NaturalLess(c.a, c.b); got != c.want {
+				t.Errorf("NaturalLess(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+			}
+		})
 	}
 }
 
