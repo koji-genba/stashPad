@@ -507,17 +507,20 @@ func TestListWorksKeyword(t *testing.T) {
 		{"RJ888003", 1},      // rj_number ヒット
 	}
 	for _, tc := range cases {
-		w := doGet(t, h, "/api/works?q="+url.QueryEscape(tc.q))
-		if w.Code != http.StatusOK {
-			t.Fatalf("q=%q status = %d", tc.q, w.Code)
-		}
-		var body struct {
-			Total int `json:"total"`
-		}
-		json.Unmarshal(w.Body.Bytes(), &body)
-		if body.Total != tc.want {
-			t.Errorf("q=%q total = %d, want %d", tc.q, body.Total, tc.want)
-		}
+		tc := tc
+		t.Run(tc.q, func(t *testing.T) {
+			w := doGet(t, h, "/api/works?q="+url.QueryEscape(tc.q))
+			if w.Code != http.StatusOK {
+				t.Fatalf("q=%q status = %d", tc.q, w.Code)
+			}
+			var body struct {
+				Total int `json:"total"`
+			}
+			json.Unmarshal(w.Body.Bytes(), &body)
+			if body.Total != tc.want {
+				t.Errorf("total = %d, want %d", body.Total, tc.want)
+			}
+		})
 	}
 }
 
@@ -900,6 +903,49 @@ func TestListTagsFilters(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &body)
 	if len(body.Items) != 1 || body.Items[0].Name != "声優太郎" {
 		t.Errorf("q=声優 = %+v", body.Items)
+	}
+}
+
+// last_file_path が最新の再生履歴のファイルパスを返すことを確認する。
+// 同一作品に古いファイルと新しいファイルを記録し、last_file_path が新しい方であることを検証。
+func TestHistoryLastFilePathIsLatest(t *testing.T) {
+	h, database, id := newTestServer(t)
+
+	// 古い再生履歴を挿入
+	if _, err := database.Exec(
+		"INSERT INTO play_history (work_id, file_path, played_at) VALUES (?, 'a.mp3', '2026-01-01 00:00:00')", id,
+	); err != nil {
+		t.Fatal(err)
+	}
+	// 新しい再生履歴を挿入
+	if _, err := database.Exec(
+		"INSERT INTO play_history (work_id, file_path, played_at) VALUES (?, 'b.mp3', '2026-01-02 00:00:00')", id,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, "/api/history")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Items []struct {
+			LastFilePath string `json:"last_file_path"`
+			Work         struct {
+				ID int64 `json:"id"`
+			} `json:"work"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("items 数 = %d, want 1", len(body.Items))
+	}
+	// last_file_path は最新の再生履歴のファイルパス(b.mp3)であること
+	if body.Items[0].LastFilePath != "b.mp3" {
+		t.Errorf("last_file_path = %q, want b.mp3", body.Items[0].LastFilePath)
 	}
 }
 

@@ -64,7 +64,7 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 			foundPaths[absPath] = true
 			res.WorksFound++
 
-			n, linked, err := upsertWorkNoThumb(db, absPath, dirName)
+			n, linked, workID, err := upsertWorkNoThumb(db, absPath, dirName)
 			if err != nil {
 				log.Printf("スキャン: upsert 失敗 %q: %v", absPath, err)
 				continue
@@ -77,11 +77,8 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 			}
 
 			// サムネイル生成ジョブを積む
-			if thumbGen != nil {
-				workID, qErr := getWorkIDByPath(db, absPath)
-				if qErr == nil && workID > 0 {
-					thumbJobs = append(thumbJobs, thumbJob{workID: workID, absPath: absPath})
-				}
+			if thumbGen != nil && workID > 0 {
+				thumbJobs = append(thumbJobs, thumbJob{workID: workID, absPath: absPath})
 			}
 		}
 	}
@@ -151,17 +148,17 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 }
 
 // upsertWorkNoThumb は 1 つのフォルダを works テーブルに upsert する(サムネイル生成なし)。
-// 返り値は (新規作成されたか, CSV 既存行に root_path がリンクされたか, エラー)。
-func upsertWorkNoThumb(db *sql.DB, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, err error) {
+// 返り値は (新規作成されたか, CSV 既存行に root_path がリンクされたか, 作成/更新された work の ID, エラー)。
+func upsertWorkNoThumb(db *sql.DB, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, workID int64, err error) {
 	m := rjPattern.FindStringSubmatch(dirName)
 
 	if m != nil {
 		// RJ 番号あり
 		rjNumber := m[1]
-		newlyRegistered, linkedToCSV, err = upsertByRJ(db, rjNumber, absPath, dirName)
+		newlyRegistered, linkedToCSV, workID, err = upsertByRJ(db, rjNumber, absPath, dirName)
 	} else {
 		// RJ 番号なし → フォルダ名全体をタイトルとして登録
-		newlyRegistered, err = upsertByPath(db, absPath, dirName)
+		newlyRegistered, workID, err = upsertByPath(db, absPath, dirName)
 	}
 	return
 }
@@ -169,7 +166,7 @@ func upsertWorkNoThumb(db *sql.DB, absPath, dirName string) (newlyRegistered boo
 // upsertByRJ は RJ 番号でワークを upsert する。
 // 既存の CSV 行(rj_number 一致、root_path が NULL)があればリンクする。
 // 既存の root_path が同一であればスキップ(何も変えない)。
-func upsertByRJ(db *sql.DB, rjNumber, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, err error) {
+func upsertByRJ(db *sql.DB, rjNumber, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, workID int64, err error) {
 	// タイトル候補: "RJxxxxxx_" 以降の文字列。アンダースコアがなければフォルダ名全体
 	title := dirName
 	if idx := firstUnderscoreAfterRJ(dirName); idx >= 0 {
@@ -197,19 +194,22 @@ func upsertByRJ(db *sql.DB, rjNumber, absPath, dirName string) (newlyRegistered 
 			rjNumber, title, absPath,
 		)
 		if insErr != nil {
-			return false, false, fmt.Errorf("works INSERT 失敗: %w", insErr)
+			return false, false, 0, fmt.Errorf("works INSERT 失敗: %w", insErr)
 		}
-		_ = res
-		return true, false, nil
+		newID, lErr := res.LastInsertId()
+		if lErr != nil {
+			return false, false, 0, fmt.Errorf("LastInsertId 取得失敗: %w", lErr)
+		}
+		return true, false, newID, nil
 	}
 	if scanErr != nil {
-		return false, false, fmt.Errorf("works SELECT 失敗: %w", scanErr)
+		return false, false, 0, fmt.Errorf("works SELECT 失敗: %w", scanErr)
 	}
 
 	// 既存行あり
 	if currentRootPath.Valid && currentRootPath.String == absPath {
 		// 同一パスなので何もしない
-		return false, false, nil
+		return false, false, id, nil
 	}
 
 	// root_path を更新(NULL → パス の場合は「CSV 行にリンク」と判定)
@@ -218,34 +218,38 @@ func upsertByRJ(db *sql.DB, rjNumber, absPath, dirName string) (newlyRegistered 
 		"UPDATE works SET root_path=?, updated_at=datetime('now') WHERE id=?",
 		absPath, id,
 	); uErr != nil {
-		return false, false, fmt.Errorf("works UPDATE 失敗: %w", uErr)
+		return false, false, 0, fmt.Errorf("works UPDATE 失敗: %w", uErr)
 	}
-	return false, wasNull, nil
+	return false, wasNull, id, nil
 }
 
 // upsertByPath は RJ 番号なしフォルダをフォルダ名全体をタイトルとして登録する。
 // 既存判定は root_path の一致で行う。
-func upsertByPath(db *sql.DB, absPath, dirName string) (newlyRegistered bool, err error) {
+func upsertByPath(db *sql.DB, absPath, dirName string) (newlyRegistered bool, workID int64, err error) {
 	var id int64
 	row := db.QueryRow("SELECT id FROM works WHERE root_path=?", absPath)
 	scanErr := row.Scan(&id)
 
 	if scanErr == sql.ErrNoRows {
-		_, insErr := db.Exec(
+		res, insErr := db.Exec(
 			`INSERT INTO works (title, root_path, updated_at)
 			 VALUES (?, ?, datetime('now'))`,
 			dirName, absPath,
 		)
 		if insErr != nil {
-			return false, fmt.Errorf("works INSERT 失敗: %w", insErr)
+			return false, 0, fmt.Errorf("works INSERT 失敗: %w", insErr)
 		}
-		return true, nil
+		newID, lErr := res.LastInsertId()
+		if lErr != nil {
+			return false, 0, fmt.Errorf("LastInsertId 取得失敗: %w", lErr)
+		}
+		return true, newID, nil
 	}
 	if scanErr != nil {
-		return false, fmt.Errorf("works SELECT 失敗: %w", scanErr)
+		return false, 0, fmt.Errorf("works SELECT 失敗: %w", scanErr)
 	}
 	// 既存 — 何もしない
-	return false, nil
+	return false, id, nil
 }
 
 // markMissingPaths は DB にある root_path のうち、foundPaths に含まれないものを NULL に戻す。
@@ -284,16 +288,6 @@ func markMissingPaths(db *sql.DB, foundPaths map[string]bool) (int, error) {
 		}
 	}
 	return len(toNull), nil
-}
-
-// getWorkIDByPath は root_path から work の id を取得する。
-func getWorkIDByPath(db *sql.DB, absPath string) (int64, error) {
-	var id int64
-	err := db.QueryRow("SELECT id FROM works WHERE root_path=?", absPath).Scan(&id)
-	if err != nil {
-		return 0, err
-	}
-	return id, nil
 }
 
 // firstUnderscoreAfterRJ は "RJxxxxxx_" の最初の "_" のインデックスを返す。

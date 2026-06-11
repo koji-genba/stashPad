@@ -1,7 +1,9 @@
 package csvimport
 
 import (
+	"bytes"
 	"database/sql"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -452,16 +454,49 @@ func TestSplitTrim(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		got := splitTrim(tc.s, tc.sep)
-		if len(got) != len(tc.want) {
-			t.Errorf("splitTrim(%q, %q) = %v, want %v", tc.s, tc.sep, got, tc.want)
-			continue
-		}
-		for i := range got {
-			if got[i] != tc.want[i] {
-				t.Errorf("splitTrim(%q, %q)[%d] = %q, want %q", tc.s, tc.sep, i, got[i], tc.want[i])
+		tc := tc
+		t.Run(tc.s+"/"+tc.sep, func(t *testing.T) {
+			got := splitTrim(tc.s, tc.sep)
+			if len(got) != len(tc.want) {
+				t.Errorf("splitTrim(%q, %q) = %v, want %v", tc.s, tc.sep, got, tc.want)
+				return
 			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("splitTrim(%q, %q)[%d] = %q, want %q", tc.s, tc.sep, i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestBOMReaderShortRead は bomReader を 1 バイトずつ読んでも全データが正しく読めることを確認する。
+// len(p) < len(b.buf) の場合に copy の戻り値ではなく len(b.buf) を返していたバグの回帰テスト。
+func TestBOMReaderShortRead(t *testing.T) {
+	// BOM(3バイト) + 'a' + 'b' の 5 バイト入力
+	input := []byte{0xEF, 0xBB, 0xBF, 'a', 'b'}
+	br := &bomReader{r: bytes.NewReader(input)}
+
+	// 1バイトずつ読んで結果を連結する
+	var result []byte
+	buf := make([]byte, 1)
+	for {
+		n, err := br.Read(buf)
+		if n > 0 {
+			result = append(result, buf[:n]...)
 		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Read エラー: %v", err)
+		}
+	}
+
+	// BOM を除いた 'a', 'b' が読めること
+	want := []byte{'a', 'b'}
+	if !bytes.Equal(result, want) {
+		t.Errorf("読み込み結果 = %v, want %v", result, want)
 	}
 }
 

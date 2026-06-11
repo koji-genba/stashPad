@@ -289,17 +289,20 @@ func TestScanTitleExtraction(t *testing.T) {
 	}
 
 	for _, tc := range testDirs {
-		var title string
-		err := db.QueryRow(
-			"SELECT title FROM works WHERE root_path=?",
-			filepath.Join(lib, tc.dirName),
-		).Scan(&title)
-		if err != nil {
-			t.Errorf("タイトル取得失敗 %q: %v", tc.dirName, err)
-			continue
-		}
-		if title != tc.expectedTitle {
-			t.Errorf("フォルダ %q のタイトル = %q, want %q", tc.dirName, title, tc.expectedTitle)
-		}
+		tc := tc
+		t.Run(tc.dirName, func(t *testing.T) {
+			var title string
+			err := db.QueryRow(
+				"SELECT title FROM works WHERE root_path=?",
+				filepath.Join(lib, tc.dirName),
+			).Scan(&title)
+			if err != nil {
+				t.Errorf("タイトル取得失敗 %q: %v", tc.dirName, err)
+				return
+			}
+			if title != tc.expectedTitle {
+				t.Errorf("フォルダ %q のタイトル = %q, want %q", tc.dirName, title, tc.expectedTitle)
+			}
+		})
 	}
 }
