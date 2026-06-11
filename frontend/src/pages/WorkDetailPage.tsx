@@ -32,6 +32,7 @@ export default function WorkDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [newTag, setNewTag] = useState('');
   const [busy, setBusy] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
   // サムネ再生成が走ったら src にクエリを足して再読込させる
   const [thumbBust, setThumbBust] = useState<number | null>(null);
 
@@ -79,6 +80,7 @@ export default function WorkDetailPage() {
     const name = newTag.trim();
     if (!name || !work) return;
     setBusy(true);
+    setTagError(null);
     try {
       const created = await addCustomTag(work.id, name);
       // 重複追加を防ぎつつ反映
@@ -89,7 +91,7 @@ export default function WorkDetailPage() {
       );
       setNewTag('');
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'タグ追加に失敗しました');
+      setTagError(err instanceof Error ? err.message : 'タグ追加に失敗しました');
     } finally {
       setBusy(false);
     }
@@ -97,11 +99,12 @@ export default function WorkDetailPage() {
 
   const onRemoveTag = async (tag: Tag) => {
     if (!work) return;
+    setTagError(null);
     try {
       await removeTag(work.id, tag.id);
       setWork((w) => (w ? { ...w, tags: w.tags.filter((t) => t.id !== tag.id) } : w));
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'タグ削除に失敗しました');
+      setTagError(err instanceof Error ? err.message : 'タグ削除に失敗しました');
     }
   };
 
@@ -229,6 +232,7 @@ export default function WorkDetailPage() {
             追加
           </button>
         </form>
+        {tagError && <p className="error">{tagError}</p>}
       </section>
 
       {work.has_folder ? (

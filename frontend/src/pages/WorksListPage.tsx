@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { SortKey, WorksResponse } from '@/api/types';
 import { fetchTags, fetchWorks } from '@/api/client';
@@ -55,9 +55,7 @@ export default function WorksListPage() {
       });
     }, 300);
     return () => clearTimeout(t);
-    // update / q / params は最新を参照したいが、トリガは qInput のみ
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qInput]);
+  }, [qInput, q, update]);
 
   // 選択タグのラベル表示用に、全タグ名を一度だけ取得してキャッシュ
   useEffect(() => {
@@ -90,11 +88,14 @@ export default function WorksListPage() {
     return () => ac.abort();
   }, [q, tags, circle, series, sort, page]);
 
-  const update = (mut: (p: URLSearchParams) => void) => {
-    const next = new URLSearchParams(params);
-    mut(next);
-    setParams(next, { replace: false });
-  };
+  // setParams の関数形式を使い、タイマー発火時に最新の params を参照する
+  const update = useCallback((mut: (p: URLSearchParams) => void) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      mut(next);
+      return next;
+    }, { replace: false });
+  }, [setParams]);
 
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();

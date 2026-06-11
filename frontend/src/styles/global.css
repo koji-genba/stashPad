@@ -138,3 +138,6 @@ img {
 .faint {
   color: var(--text-faint);
 }
+.error {
+  color: var(--danger);
+}

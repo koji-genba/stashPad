@@ -19,8 +19,7 @@ export default function HistoryPage() {
     fetchHistory(page, ac.signal)
       .then((d) => {
         setItems(d.items);
-        // バックエンドは page のみ返すので、満杯なら次がある可能性ありと見なす
-        setHasMore(d.items.length >= 40);
+        setHasMore(d.items.length >= d.limit);
         setLoading(false);
       })
       .catch((e: unknown) => {

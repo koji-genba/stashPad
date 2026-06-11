@@ -76,6 +76,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{
 		"items": items,
 		"page":  page,
+		"limit": limit,
 	})
 }
 
