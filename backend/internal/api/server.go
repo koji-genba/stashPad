@@ -56,10 +56,14 @@ func (s *Server) Router(middlewares ...func(http.Handler) http.Handler) http.Han
 		r.Route("/works/{id}", func(r chi.Router) {
 			r.Get("/", s.handleGetWork)
 			r.Patch("/", s.handlePatchWork)
+			// thumbnail / file は http.ServeContent を使うため HEAD も受け付ける
+			// (プレイヤーが Content-Length を事前取得するケースに対応)
 			r.Get("/thumbnail", s.handleWorkThumbnail)
+			r.Head("/thumbnail", s.handleWorkThumbnail)
 			r.Post("/thumbnail/refresh", s.handleRefreshThumbnail)
 			r.Get("/entries", s.handleWorkEntries)
 			r.Get("/file", s.handleWorkFile)
+			r.Head("/file", s.handleWorkFile)
 			r.Post("/tags", s.handleAddTag)
 			r.Delete("/tags/{tag_id}", s.handleDeleteTag)
 			r.Post("/plays", s.handleRecordPlay)

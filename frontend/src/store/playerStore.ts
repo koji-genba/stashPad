@@ -134,7 +134,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   seekTo: (time) => {
-    set({ currentTime: time, seekRequest: { time, nonce: get().loadNonce + Date.now() } });
+    // nonce はシーク要求ごとの単調増加カウンタ。同じ time への連続シークでも
+    // AudioPlayer 側が新しい要求として区別できるようにする
+    set((s) => ({
+      currentTime: time,
+      seekRequest: { time, nonce: (s.seekRequest?.nonce ?? 0) + 1 },
+    }));
   },
 
   setRate: (rate) => set({ playbackRate: rate }),
