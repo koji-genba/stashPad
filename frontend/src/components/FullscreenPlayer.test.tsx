@@ -1,7 +1,7 @@
 // FullscreenPlayer コンポーネントのテスト。
 // playerStore に状態を仕込んで描画・操作を検証する。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { usePlayerStore } from '@/store/playerStore';
 
@@ -213,5 +213,175 @@ describe('FullscreenPlayer キーボード', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     // クリーンアップ済みなので expanded は true のまま
     expect(usePlayerStore.getState().expanded).toBe(true);
+  });
+});
+
+describe('FullscreenPlayer 操作系(追加)', () => {
+  beforeEach(() => {
+    resetStore();
+    setupPlayingState();
+  });
+  afterEach(cleanup);
+
+  it('再生/一時停止ボタンクリックで isPlaying がトグルする', () => {
+    renderPlayer();
+    // 初期状態は isPlaying=true → ボタンは「一時停止」
+    const pauseBtn = screen.getByRole('button', { name: '一時停止' });
+    fireEvent.click(pauseBtn);
+    expect(usePlayerStore.getState().isPlaying).toBe(false);
+    // 再度クリックで再生に戻る
+    const playBtn = screen.getByRole('button', { name: '再生' });
+    fireEvent.click(playBtn);
+    expect(usePlayerStore.getState().isPlaying).toBe(true);
+  });
+
+  it('−10 ボタンで currentTime が 10 秒戻る', () => {
+    renderPlayer();
+    const btn = screen.getByRole('button', { name: '10秒戻る' });
+    fireEvent.click(btn);
+    // currentTime=30 → 30-10=20
+    expect(usePlayerStore.getState().currentTime).toBe(20);
+  });
+
+  it('+10 ボタンで currentTime が 10 秒進む', () => {
+    renderPlayer();
+    const btn = screen.getByRole('button', { name: '10秒進む' });
+    fireEvent.click(btn);
+    // currentTime=30 → 30+10=40
+    expect(usePlayerStore.getState().currentTime).toBe(40);
+  });
+
+  it('「前のトラック」: queue 1 件以下で disabled', () => {
+    usePlayerStore.setState({
+      queue: [{ name: 'only.mp3', path: 'only.mp3' }],
+      index: 0,
+    });
+    renderPlayer();
+    const prevBtn = screen.getByRole('button', { name: '前のトラック' });
+    expect(prevBtn).toBeDisabled();
+  });
+
+  it('「次のトラック」: 末尾 index で disabled', () => {
+    // setupPlayingState では queue.length=3, index=1 なので末尾に変更
+    usePlayerStore.setState({ index: 2 });
+    renderPlayer();
+    const nextBtn = screen.getByRole('button', { name: '次のトラック' });
+    expect(nextBtn).toBeDisabled();
+  });
+
+  it('currentTime > 3 で「前のトラック」を押すと index は変わらず currentTime が 0 になる', () => {
+    // setupPlayingState: index=1, currentTime=30
+    renderPlayer();
+    const prevBtn = screen.getByRole('button', { name: '前のトラック' });
+    fireEvent.click(prevBtn);
+    const state = usePlayerStore.getState();
+    expect(state.index).toBe(1); // index は変わらない
+    expect(state.currentTime).toBe(0); // 先頭へシーク
+  });
+
+  it('音量スライダーの change で store.volume が反映される', () => {
+    renderPlayer();
+    const slider = screen.getByRole('slider', { name: '音量' });
+    fireEvent.change(slider, { target: { value: '0.3' } });
+    expect(usePlayerStore.getState().volume).toBeCloseTo(0.3);
+  });
+
+  it('再生速度 select の change で store.playbackRate が反映される', () => {
+    renderPlayer();
+    const select = screen.getByRole('combobox', { name: '再生速度' });
+    fireEvent.change(select, { target: { value: '1.5' } });
+    expect(usePlayerStore.getState().playbackRate).toBe(1.5);
+  });
+
+  it('シークバーの change で store.currentTime と seekRequest が更新される', () => {
+    renderPlayer();
+    const seekBar = screen.getByRole('slider', { name: '再生位置' });
+    fireEvent.change(seekBar, { target: { value: '60' } });
+    const state = usePlayerStore.getState();
+    expect(state.currentTime).toBe(60);
+    expect(state.seekRequest).not.toBeNull();
+    expect(state.seekRequest!.time).toBe(60);
+  });
+
+  it('キュー見出しに「キュー(2/3)」のように現在番号/総数が表示される', () => {
+    // setupPlayingState: index=1(表示は 2), queue.length=3
+    renderPlayer();
+    expect(screen.getByText('キュー(2/3)')).toBeInTheDocument();
+  });
+});
+
+describe('FullscreenPlayer スワイプ操作', () => {
+  beforeEach(() => {
+    resetStore();
+    setupPlayingState();
+  });
+  afterEach(cleanup);
+
+  it('ヘッダ領域の下方向スワイプ(dy=+100, dx≈0)で expanded が false になる', () => {
+    renderPlayer();
+    // ヘッダ要素: 閉じるボタンの親要素を辿る
+    const closeBtn = screen.getByRole('button', { name: 'ミニプレイヤーに戻る' });
+    const header = closeBtn.parentElement!;
+    fireEvent.touchStart(header, {
+      touches: [{ clientX: 100, clientY: 50 }],
+    });
+    fireEvent.touchEnd(header, {
+      changedTouches: [{ clientX: 102, clientY: 150 }], // dy=+100
+    });
+    expect(usePlayerStore.getState().expanded).toBe(false);
+  });
+
+  it('横優位スワイプ(dx=120, dy=80)では閉じない', () => {
+    renderPlayer();
+    const closeBtn = screen.getByRole('button', { name: 'ミニプレイヤーに戻る' });
+    const header = closeBtn.parentElement!;
+    fireEvent.touchStart(header, {
+      touches: [{ clientX: 100, clientY: 50 }],
+    });
+    fireEvent.touchEnd(header, {
+      changedTouches: [{ clientX: 220, clientY: 130 }], // dx=120, dy=80
+    });
+    expect(usePlayerStore.getState().expanded).toBe(true);
+  });
+
+  it('縦 60px 以下のスワイプでは閉じない', () => {
+    renderPlayer();
+    const closeBtn = screen.getByRole('button', { name: 'ミニプレイヤーに戻る' });
+    const header = closeBtn.parentElement!;
+    fireEvent.touchStart(header, {
+      touches: [{ clientX: 100, clientY: 50 }],
+    });
+    fireEvent.touchEnd(header, {
+      changedTouches: [{ clientX: 100, clientY: 90 }], // dy=40(60px 未満)
+    });
+    expect(usePlayerStore.getState().expanded).toBe(true);
+  });
+});
+
+describe('FullscreenPlayer body スクロールロック', () => {
+  beforeEach(() => {
+    resetStore();
+  });
+  afterEach(() => {
+    cleanup();
+    // body.style.overflow をリセット
+    document.body.style.overflow = '';
+  });
+
+  it('表示中は document.body.style.overflow が "hidden" になる', () => {
+    setupPlayingState(); // expanded=true
+    renderPlayer();
+    expect(document.body.style.overflow).toBe('hidden');
+  });
+
+  it('setExpanded(false) にすると overflow が元に戻る', () => {
+    setupPlayingState(); // expanded=true
+    renderPlayer();
+    expect(document.body.style.overflow).toBe('hidden');
+    // store 更新による再レンダーで effect のクリーンアップが走る
+    act(() => {
+      usePlayerStore.getState().setExpanded(false);
+    });
+    expect(document.body.style.overflow).not.toBe('hidden');
   });
 });
