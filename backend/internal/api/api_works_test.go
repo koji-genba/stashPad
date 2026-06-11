@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -58,9 +60,9 @@ func TestHandlersReturn500OnDBError(t *testing.T) {
 	}
 }
 
-// EXISTS チェックで DB エラーが起きるハンドラは 404 にフォールバックすること
-// (err != nil || !exists の分岐)。
-func TestExistsCheckErrorFallsBackTo404(t *testing.T) {
+// EXISTS チェックで DB エラーが起きるハンドラは 500 を返すこと
+// (不存在の 404 と区別される)。
+func TestExistsCheckErrorReturns500(t *testing.T) {
 	h, database, id := newTestServer(t)
 	database.Close()
 
@@ -77,8 +79,8 @@ func TestExistsCheckErrorFallsBackTo404(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := doJSON(t, h, tc.method, tc.path, tc.body)
-			if w.Code != http.StatusNotFound {
-				t.Errorf("%s: status = %d, want 404", tc.name, w.Code)
+			if w.Code != http.StatusInternalServerError {
+				t.Errorf("%s: status = %d, want 500", tc.name, w.Code)
 			}
 		})
 	}
@@ -742,17 +744,46 @@ func TestFileContentType(t *testing.T) {
 	}
 }
 
-// HEAD リクエストはルート未登録のため 405 になる(現状の挙動の確認)。
-// 本来 Range/HEAD は http.ServeContent が処理できるが、ルーターが
-// r.Get のみ登録しているため HEAD はハンドラに到達しない。最終報告参照。
-func TestFileHeadNotAllowed(t *testing.T) {
+// HEAD リクエストで Content-Length 付き・ボディなしの応答が返ること
+// (http.ServeContent が HEAD を処理する。プレイヤーの事前メタデータ取得に対応)
+func TestFileHead(t *testing.T) {
 	h, _, id := newTestServer(t)
 	req := httptest.NewRequest(http.MethodHead,
 		urlf("/api/works/%d/file?path=", id)+url.QueryEscape("mp3/01_intro.mp3"), nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("HEAD status = %d, want 405(ルート未登録)", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HEAD status = %d, want 200", rec.Code)
+	}
+	if cl := rec.Header().Get("Content-Length"); cl != "10" {
+		t.Errorf("Content-Length = %q, want 10", cl)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("HEAD のボディが空でない: %q", rec.Body.String())
+	}
+}
+
+// HEAD はサムネイルエンドポイントでも受け付けること
+func TestThumbnailHead(t *testing.T) {
+	h, database, id := newTestServer(t)
+	tmp := t.TempDir()
+	thumbFile := filepath.Join(tmp, "thumb.jpg")
+	if err := os.WriteFile(thumbFile, []byte("jpegdata"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(
+		"UPDATE works SET thumbnail_path=? WHERE id=?", thumbFile, id); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodHead, urlf("/api/works/%d/thumbnail", id), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HEAD thumbnail status = %d, want 200", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("HEAD のボディが空でない: %q", rec.Body.String())
 	}
 }
 

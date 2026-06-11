@@ -305,6 +305,14 @@ describe('seekBy / seekTo', () => {
     expect(s.seekRequest?.time).toBe(60);
   });
 
+  it('seekTo を連続で呼ぶと nonce が単調増加する(同じ time でも新しい要求として区別)', () => {
+    usePlayerStore.getState().seekTo(60);
+    const n1 = usePlayerStore.getState().seekRequest!.nonce;
+    usePlayerStore.getState().seekTo(60);
+    const n2 = usePlayerStore.getState().seekRequest!.nonce;
+    expect(n2).toBe(n1 + 1);
+  });
+
   it('seekBy で currentTime をデルタ分変化させる', () => {
     usePlayerStore.getState().seekBy(10);
     expect(usePlayerStore.getState().currentTime).toBe(40);

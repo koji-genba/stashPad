@@ -198,6 +198,12 @@ func generateThumbnail(src, dst string) error {
 
 	resized := resizeLongEdge(img, 512)
 
+	// 出力先ディレクトリ({DataDir}/thumbs)が無ければ作成する。
+	// main.go の起動時 MkdirAll に依存せず、生成経路自身で保証する
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("出力ディレクトリ作成失敗: %w", err)
+	}
+
 	out, err := os.Create(dst)
 	if err != nil {
 		return fmt.Errorf("出力ファイル作成失敗: %w", err)

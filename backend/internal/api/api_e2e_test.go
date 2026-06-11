@@ -35,10 +35,7 @@ func TestE2EFullFlow(t *testing.T) {
 	if err := os.MkdirAll(libRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// 本番 main.go と同様に DataDir/thumbs を用意する
-	if err := os.MkdirAll(filepath.Join(tmp, "thumbs"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	// DataDir/thumbs は事前に作らない(サムネイル生成側が自動作成することの検証を兼ねる)
 
 	// RJ 形式フォルダ: 音声ファイル + 表紙画像
 	rjDir := filepath.Join(libRoot, "RJ123456_素敵な作品")

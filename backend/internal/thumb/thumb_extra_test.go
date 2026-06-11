@@ -324,18 +324,22 @@ func TestGenerateThumbnailInvalidImage(t *testing.T) {
 	}
 }
 
-// TestGenerateThumbnailOutputDirNotExist は出力ディレクトリが存在しない場合にエラーになることをテスト。
-func TestGenerateThumbnailOutputDirNotExist(t *testing.T) {
+// TestGenerateThumbnailCreatesOutputDir は出力ディレクトリが存在しない場合に
+// 自動作成して生成が成功することをテスト(main.go の起動時 MkdirAll に依存しない)。
+func TestGenerateThumbnailCreatesOutputDir(t *testing.T) {
 	dir := t.TempDir()
+	base := t.TempDir()
 
 	src := filepath.Join(dir, "cover.png")
 	createTestImage(t, src, 100, 100)
 
-	// 存在しないディレクトリへ出力
-	outPath := "/nonexistent/dir/out.jpg"
-	err := generateThumbnail(src, outPath)
-	if err == nil {
-		t.Error("存在しない出力ディレクトリなのにエラーにならなかった")
+	// 存在しないネストしたディレクトリへ出力
+	outPath := filepath.Join(base, "not", "yet", "created", "out.jpg")
+	if err := generateThumbnail(src, outPath); err != nil {
+		t.Fatalf("generateThumbnail 失敗(出力先を自動作成すべき): %v", err)
+	}
+	if _, err := os.Stat(outPath); err != nil {
+		t.Errorf("出力ファイルが存在しない: %v", err)
 	}
 }
 

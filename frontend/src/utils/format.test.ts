@@ -29,9 +29,8 @@ describe('formatBytes', () => {
     expect(formatBytes(999)).toBe('999B');
   });
 
-  it('1024 バイトは "1.0KB" を返す(value=1 で 10 未満かつ i!=0 なので小数 1 桁)', () => {
-    // value=1, i=1 → toFixed(1) → "1.0KB"
-    expect(formatBytes(1024)).toBe('1.0KB');
+  it('1024 バイトは "1KB" を返す(割り切れる値に ".0" を付けない)', () => {
+    expect(formatBytes(1024)).toBe('1KB');
   });
 
   it('1535 バイトは "1.5KB" を返す', () => {
@@ -44,17 +43,16 @@ describe('formatBytes', () => {
     expect(formatBytes(10 * 1024)).toBe('10KB');
   });
 
-  it('1MB は "1.0MB" を返す', () => {
-    // value=1, i=2 → toFixed(1) → "1.0MB"
-    expect(formatBytes(1024 * 1024)).toBe('1.0MB');
+  it('1MB は "1MB" を返す', () => {
+    expect(formatBytes(1024 * 1024)).toBe('1MB');
   });
 
-  it('1GB は "1.0GB" を返す', () => {
-    expect(formatBytes(1024 ** 3)).toBe('1.0GB');
+  it('1GB は "1GB" を返す', () => {
+    expect(formatBytes(1024 ** 3)).toBe('1GB');
   });
 
-  it('1TB は "1.0TB" を返す', () => {
-    expect(formatBytes(1024 ** 4)).toBe('1.0TB');
+  it('1TB は "1TB" を返す', () => {
+    expect(formatBytes(1024 ** 4)).toBe('1TB');
   });
 
   it('TB を超える巨大値でも TB 単位で返す(上限は TB)', () => {

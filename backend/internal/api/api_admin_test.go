@@ -48,22 +48,6 @@ func makeWorkDir(t *testing.T, database *sql.DB, rjNumber string, files map[stri
 	return root
 }
 
-// ensureThumbsDir は本番の main.go と同様に DataDir/thumbs を作成する。
-// newTestServer は DataDir=tmp(= 作品フォルダの親)を使うため、既存作品の
-// root_path の親から DataDir を割り出して thumbs ディレクトリを掘る。
-func ensureThumbsDir(t *testing.T, database *sql.DB) {
-	t.Helper()
-	var existing string
-	if err := database.QueryRow(
-		"SELECT root_path FROM works WHERE root_path IS NOT NULL LIMIT 1").Scan(&existing); err != nil {
-		t.Fatalf("既存 root_path 取得失敗: %v", err)
-	}
-	dataDir := filepath.Dir(existing)
-	if err := os.MkdirAll(filepath.Join(dataDir, "thumbs"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // writePNG は path に実際にデコード可能な PNG 画像を書き込む。
 func writePNG(t *testing.T, path string, w, h int) {
 	t.Helper()
@@ -166,7 +150,6 @@ func TestRefreshThumbnailRootNull(t *testing.T) {
 // 表紙画像のある作品 → refreshed true + thumbnail_path 更新
 func TestRefreshThumbnailWithCover(t *testing.T) {
 	h, database, _ := newTestServer(t)
-	ensureThumbsDir(t, database)
 	root := makeWorkDir(t, database, "RJ820000", nil)
 	writePNG(t, filepath.Join(root, "cover.png"), 100, 100)
 	var id int64
@@ -200,7 +183,6 @@ func TestRefreshThumbnailWithCover(t *testing.T) {
 // root_path はあるが画像がない作品 → 200 {"refreshed": false}
 func TestRefreshThumbnailNoImage(t *testing.T) {
 	h, database, _ := newTestServer(t)
-	ensureThumbsDir(t, database)
 	makeWorkDir(t, database, "RJ825000", map[string]string{"readme.txt": "x"})
 	var id int64
 	database.QueryRow("SELECT id FROM works WHERE rj_number='RJ825000'").Scan(&id)
@@ -235,7 +217,6 @@ func TestRefreshThumbnailWorkNotFound(t *testing.T) {
 
 func TestRebuildThumbnails(t *testing.T) {
 	h, database, baseID := newTestServer(t)
-	ensureThumbsDir(t, database)
 
 	// 表紙ありの作品
 	rootWith := makeWorkDir(t, database, "RJ830001", nil)
@@ -359,7 +340,6 @@ func TestImportCSVNoFile(t *testing.T) {
 
 func TestScan(t *testing.T) {
 	h, database, _ := newTestServer(t)
-	ensureThumbsDir(t, database)
 
 	// LibraryRoots 配下(= 既存 root_path の親)に新しい RJ フォルダを作る
 	var existing string

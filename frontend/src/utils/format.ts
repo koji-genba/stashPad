@@ -1,6 +1,7 @@
 // 表示用フォーマッタ群。
 
 export function formatBytes(bytes: number): string {
+  // 0 以下は空文字を返す(FileBrowser でディレクトリ(size=0)にサイズを表示しないため)
   if (!bytes || bytes <= 0) return '';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let value = bytes;
@@ -9,7 +10,9 @@ export function formatBytes(bytes: number): string {
     value /= 1024;
     i += 1;
   }
-  return `${value.toFixed(value >= 10 || i === 0 ? 0 : 1)}${units[i]}`;
+  // ちょうど割り切れる値("1KB" 等)に ".0" を付けない
+  const digits = value >= 10 || i === 0 || Number.isInteger(value) ? 0 : 1;
+  return `${value.toFixed(digits)}${units[i]}`;
 }
 
 export function formatTime(seconds: number): string {

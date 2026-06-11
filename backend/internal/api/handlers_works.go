@@ -285,9 +285,13 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 存在確認
+	// 存在確認(DB エラーは 500、不存在は 404 を返す)
 	var exists bool
-	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id=?)", workID).Scan(&exists); err != nil || !exists {
+	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id=?)", workID).Scan(&exists); err != nil {
+		respondError(w, http.StatusInternalServerError, "DB エラー: "+err.Error())
+		return
+	}
+	if !exists {
 		respondError(w, http.StatusNotFound, "作品が見つかりません")
 		return
 	}
@@ -336,9 +340,13 @@ func (s *Server) handleAddTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 作品存在確認
+	// 作品存在確認(DB エラーは 500、不存在は 404 を返す)
 	var exists bool
-	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id=?)", workID).Scan(&exists); err != nil || !exists {
+	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id=?)", workID).Scan(&exists); err != nil {
+		respondError(w, http.StatusInternalServerError, "DB エラー: "+err.Error())
+		return
+	}
+	if !exists {
 		respondError(w, http.StatusNotFound, "作品が見つかりません")
 		return
 	}
@@ -807,9 +815,13 @@ func (s *Server) handleRecordPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 作品存在確認
+	// 作品存在確認(DB エラーは 500、不存在は 404 を返す)
 	var exists bool
-	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id=?)", workID).Scan(&exists); err != nil || !exists {
+	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id=?)", workID).Scan(&exists); err != nil {
+		respondError(w, http.StatusInternalServerError, "DB エラー: "+err.Error())
+		return
+	}
+	if !exists {
 		respondError(w, http.StatusNotFound, "作品が見つかりません")
 		return
 	}
