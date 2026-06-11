@@ -95,6 +95,7 @@ export interface HistoryItem {
 export interface HistoryResponse {
   items: HistoryItem[];
   page: number;
+  limit: number;
 }
 
 /** POST /api/import/csv のレスポンス */
