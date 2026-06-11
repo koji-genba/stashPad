@@ -903,6 +903,50 @@ func TestListTagsFilters(t *testing.T) {
 	}
 }
 
+// last_file_path が最新の再生履歴のファイルパスを返すことを確認する。
+// 同一作品に古いファイルと新しいファイルを記録し、last_file_path が新しい方であることを検証。
+func TestHistoryLastFilePathIsLatest(t *testing.T) {
+	t.Helper()
+	h, database, id := newTestServer(t)
+
+	// 古い再生履歴を挿入
+	if _, err := database.Exec(
+		"INSERT INTO play_history (work_id, file_path, played_at) VALUES (?, 'a.mp3', '2026-01-01 00:00:00')", id,
+	); err != nil {
+		t.Fatal(err)
+	}
+	// 新しい再生履歴を挿入
+	if _, err := database.Exec(
+		"INSERT INTO play_history (work_id, file_path, played_at) VALUES (?, 'b.mp3', '2026-01-02 00:00:00')", id,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, "/api/history")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Items []struct {
+			LastFilePath string `json:"last_file_path"`
+			Work         struct {
+				ID int64 `json:"id"`
+			} `json:"work"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("items 数 = %d, want 1", len(body.Items))
+	}
+	// last_file_path は最新の再生履歴のファイルパス(b.mp3)であること
+	if body.Items[0].LastFilePath != "b.mp3" {
+		t.Errorf("last_file_path = %q, want b.mp3", body.Items[0].LastFilePath)
+	}
+}
+
 // history の page パラメータ(不正値はデフォルト 1)
 func TestHistoryPageParam(t *testing.T) {
 	h, _, _ := newTestServer(t)

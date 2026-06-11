@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -567,6 +568,7 @@ func (s *Server) handleRebuildThumbnails(w http.ResponseWriter, r *http.Request)
 		res := <-results
 		if res.err != nil {
 			// ログには出力するが全体は継続
+			log.Printf("サムネイル再生成失敗 work_id=%d: %v", res.id, res.err)
 			continue
 		}
 		if res.regenerated && res.outPath != "" {

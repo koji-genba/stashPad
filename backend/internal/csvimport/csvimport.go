@@ -366,10 +366,13 @@ func (b *bomReader) Read(p []byte) (int, error) {
 		}
 		if err == io.ErrUnexpectedEOF || err == io.EOF {
 			// ファイルが 3 バイト未満
-			copy(p, b.buf)
-			ret := len(b.buf)
-			b.buf = nil
-			return ret, io.EOF
+			n := copy(p, b.buf)
+			b.buf = b.buf[n:]
+			if len(b.buf) == 0 {
+				b.buf = nil
+				return n, io.EOF
+			}
+			return n, nil
 		}
 		if err != nil {
 			return 0, err
