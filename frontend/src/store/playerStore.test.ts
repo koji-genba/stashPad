@@ -24,6 +24,8 @@ const initialState = {
   playbackRate: 1,
   seekRequest: null,
   loadNonce: 0,
+  expanded: false,
+  volume: 1,
 };
 
 function resetStore() {
@@ -396,5 +398,80 @@ describe('playerThumbUrl', () => {
   it('ctx がある場合はサムネ URL を返す', () => {
     const ctx = { workId: 5, workTitle: 'テスト', dir: '' };
     expect(playerThumbUrl(ctx)).toBe('/api/works/5/thumbnail');
+  });
+});
+
+describe('expanded / フルスクリーンモード', () => {
+  beforeEach(resetStore);
+
+  it('初期値は false', () => {
+    expect(usePlayerStore.getState().expanded).toBe(false);
+  });
+
+  it('setExpanded(true) で expanded が true になる', () => {
+    usePlayerStore.getState().setExpanded(true);
+    expect(usePlayerStore.getState().expanded).toBe(true);
+  });
+
+  it('setExpanded(false) で expanded が false に戻る', () => {
+    usePlayerStore.setState({ expanded: true });
+    usePlayerStore.getState().setExpanded(false);
+    expect(usePlayerStore.getState().expanded).toBe(false);
+  });
+
+  it('startFromEntries は expanded を変更しない', () => {
+    usePlayerStore.setState({ expanded: true });
+    usePlayerStore.getState().startFromEntries({
+      workId: 1,
+      workTitle: 'テスト',
+      dir: '',
+      entries: [{ name: 'a.mp3', is_dir: false, size: 0, media_kind: 'audio' }],
+      startName: 'a.mp3',
+    });
+    expect(usePlayerStore.getState().expanded).toBe(true);
+  });
+
+  it('playIndex は expanded を変更しない', () => {
+    usePlayerStore.setState({
+      expanded: true,
+      ctx: { workId: 1, workTitle: 'テスト', dir: '' },
+      queue: [{ name: 'a.mp3', path: 'a.mp3' }],
+      index: 0,
+    });
+    usePlayerStore.getState().playIndex(0);
+    expect(usePlayerStore.getState().expanded).toBe(true);
+  });
+});
+
+describe('volume / 音量', () => {
+  beforeEach(resetStore);
+
+  it('初期値は 1', () => {
+    expect(usePlayerStore.getState().volume).toBe(1);
+  });
+
+  it('setVolume で通常値を設定できる', () => {
+    usePlayerStore.getState().setVolume(0.5);
+    expect(usePlayerStore.getState().volume).toBe(0.5);
+  });
+
+  it('setVolume(-0.5) → 0 にクランプされる', () => {
+    usePlayerStore.getState().setVolume(-0.5);
+    expect(usePlayerStore.getState().volume).toBe(0);
+  });
+
+  it('setVolume(1.5) → 1 にクランプされる', () => {
+    usePlayerStore.getState().setVolume(1.5);
+    expect(usePlayerStore.getState().volume).toBe(1);
+  });
+
+  it('setVolume(0) → 0 が設定できる(ミュート)', () => {
+    usePlayerStore.getState().setVolume(0);
+    expect(usePlayerStore.getState().volume).toBe(0);
+  });
+
+  it('setVolume(1) → 1 が設定できる(最大)', () => {
+    usePlayerStore.getState().setVolume(1);
+    expect(usePlayerStore.getState().volume).toBe(1);
   });
 });

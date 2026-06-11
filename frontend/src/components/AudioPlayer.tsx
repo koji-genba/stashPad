@@ -1,24 +1,25 @@
 // 画面下部固定のミニプレイヤー。<audio> 要素を ref で保持し、
 // ページ遷移しても unmount されない(App ルート直下に常駐)。
 // 再生状態は playerStore が単一の真実。ここは store の命令(loadNonce / seekRequest /
-// isPlaying / playbackRate)を <audio> に反映し、<audio> のイベントを store へ返す。
+// isPlaying / playbackRate / volume)を <audio> に反映し、<audio> のイベントを store へ返す。
+// ミニプレイヤーのサムネ/メタ領域タップ、または上方向スワイプで FullscreenPlayer を開く。
 import { useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useStore } from 'zustand';
 import {
   currentSrc,
   currentTrack,
+  PLAYBACK_RATES,
   playerThumbUrl,
   usePlayerStore,
 } from '@/store/playerStore';
 import { formatTime } from '@/utils/format';
+import FullscreenPlayer from './FullscreenPlayer';
 import styles from './AudioPlayer.module.css';
-
-const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
 export default function AudioPlayer() {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const navigate = useNavigate();
+  // ミニバー上方向スワイプ検知用 ref
+  const barTouchStart = useRef<{ x: number; y: number } | null>(null);
 
   const ctx = useStore(usePlayerStore, (s) => s.ctx);
   const index = useStore(usePlayerStore, (s) => s.index);
@@ -27,6 +28,7 @@ export default function AudioPlayer() {
   const currentTime = useStore(usePlayerStore, (s) => s.currentTime);
   const duration = useStore(usePlayerStore, (s) => s.duration);
   const playbackRate = useStore(usePlayerStore, (s) => s.playbackRate);
+  const volume = useStore(usePlayerStore, (s) => s.volume);
   const loadNonce = useStore(usePlayerStore, (s) => s.loadNonce);
   const seekRequest = useStore(usePlayerStore, (s) => s.seekRequest);
   const src = useStore(usePlayerStore, currentSrc);
@@ -65,6 +67,12 @@ export default function AudioPlayer() {
     const el = audioRef.current;
     if (el) el.playbackRate = playbackRate;
   }, [playbackRate]);
+
+  // ---- store -> <audio>: 音量 ----
+  useEffect(() => {
+    const el = audioRef.current;
+    if (el) el.volume = volume;
+  }, [volume]);
 
   // ---- store -> <audio>: シーク要求 ----
   useEffect(() => {
@@ -128,6 +136,21 @@ export default function AudioPlayer() {
     store.seekTo(Number(e.target.value));
   };
 
+  // ミニバー上方向スワイプでフルスクリーンを開く
+  const onBarTouchStart = (e: React.TouchEvent) => {
+    barTouchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+  const onBarTouchEnd = (e: React.TouchEvent) => {
+    if (!barTouchStart.current) return;
+    const dx = e.changedTouches[0].clientX - barTouchStart.current.x;
+    const dy = e.changedTouches[0].clientY - barTouchStart.current.y;
+    barTouchStart.current = null;
+    // 縦移動 60px 超(上方向)かつ縦優位
+    if (dy < -60 && Math.abs(dy) > Math.abs(dx)) {
+      store.setExpanded(true);
+    }
+  };
+
   return (
     <>
       <audio
@@ -146,7 +169,14 @@ export default function AudioPlayer() {
         onEnded={() => usePlayerStore.getState().handleEnded()}
       />
 
-      <div className={styles.bar}>
+      {/* フルスクリーンプレイヤー(expanded=true のときオーバーレイで表示) */}
+      <FullscreenPlayer />
+
+      <div
+        className={styles.bar}
+        onTouchStart={onBarTouchStart}
+        onTouchEnd={onBarTouchEnd}
+      >
         <div
           className={styles.seek}
           style={{
@@ -167,11 +197,12 @@ export default function AudioPlayer() {
         </div>
 
         <div className={styles.body}>
+          {/* サムネ/メタ領域タップでフルスクリーンを開く */}
           <button
             type="button"
             className={styles.nav}
-            onClick={() => navigate(`/works/${ctx.workId}`)}
-            aria-label={`${ctx.workTitle} の作品ページを開く`}
+            onClick={() => store.setExpanded(true)}
+            aria-label="フルスクリーンプレイヤーを開く"
           >
             <img
               className={styles.thumb}
@@ -241,7 +272,7 @@ export default function AudioPlayer() {
               onChange={(e) => store.setRate(Number(e.target.value))}
               aria-label="再生速度"
             >
-              {RATES.map((r) => (
+              {PLAYBACK_RATES.map((r) => (
                 <option key={r} value={r}>
                   {r}x
                 </option>
