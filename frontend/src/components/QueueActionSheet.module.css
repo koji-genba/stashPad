@@ -1,0 +1,63 @@
+/* ボトムシート式キュー操作メニュー。
+   z-index: 90(ミニプレイヤー 45 / フルスクリーン 60 / キュー画面 70 より上、
+   ファイル系オーバーレイ 100 より下) */
+
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.panel {
+  position: relative;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 16px 0 calc(16px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+}
+
+/* パネル先頭のファイル名(1 行 ellipsis) */
+.fileName {
+  margin: 0 0 8px;
+  padding: 0 20px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* アクションボタン共通 */
+.action {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 15px;
+  text-align: left;
+  padding: 14px 20px;
+  width: 100%;
+  transition: background 0.1s;
+}
+.action:hover {
+  background: var(--bg-hover);
+}
+
+/* キャンセルボタン: 上に区切り線・色を薄く */
+.cancel {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+}

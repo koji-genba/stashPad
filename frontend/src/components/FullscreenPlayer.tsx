@@ -1,6 +1,8 @@
 // フルスクリーンオーディオプレイヤー。
-// ミニプレイヤーバーをタップ(setExpanded(true))したときに表示される全画面オーバーレイ。
-// 大きなアートワーク・トランスポート・スキップ・速度/音量スライダー・キュー一覧を持つ。
+// ミニプレイヤーバーをタップ(usePlayerOverlay.openPlayer)したときに表示される
+// 全画面オーバーレイ。表示状態は history(location.state)が持ち、Android の
+// 「戻る」やスワイプ・Escape で 1 段ずつ閉じる。
+// 大きなアートワーク・トランスポート・スキップ・速度/音量スライダーを持つ。
 import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from 'zustand';
@@ -10,13 +12,15 @@ import {
   playerThumbUrl,
   usePlayerStore,
 } from '@/store/playerStore';
+import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
 import { formatTime } from '@/utils/format';
+import QueueScreen from './QueueScreen';
 import styles from './FullscreenPlayer.module.css';
 
 export default function FullscreenPlayer() {
   const navigate = useNavigate();
+  const overlay = usePlayerOverlay();
 
-  const ctx = useStore(usePlayerStore, (s) => s.ctx);
   const queue = useStore(usePlayerStore, (s) => s.queue);
   const index = useStore(usePlayerStore, (s) => s.index);
   const isPlaying = useStore(usePlayerStore, (s) => s.isPlaying);
@@ -24,40 +28,30 @@ export default function FullscreenPlayer() {
   const duration = useStore(usePlayerStore, (s) => s.duration);
   const playbackRate = useStore(usePlayerStore, (s) => s.playbackRate);
   const volume = useStore(usePlayerStore, (s) => s.volume);
-  const expanded = useStore(usePlayerStore, (s) => s.expanded);
   const track = useStore(usePlayerStore, currentTrack);
 
-  // キュー内の現在再生行を自動スクロール
-  const currentQueueRef = useRef<HTMLButtonElement | null>(null);
+  // Escape キーで 1 段閉じる(キュー画面 → プレイヤー → ミニプレイヤーの順)
   useEffect(() => {
-    if (!expanded) return;
-    // scrollIntoView が未対応の環境(テスト環境)ではガード
-    if (currentQueueRef.current && typeof currentQueueRef.current.scrollIntoView === 'function') {
-      currentQueueRef.current.scrollIntoView({ block: 'nearest' });
-    }
-  }, [expanded, index]);
-
-  // Escape キーで閉じる
-  useEffect(() => {
-    if (!expanded) return;
+    if (!overlay.playerOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        usePlayerStore.getState().setExpanded(false);
-      }
+      if (e.key !== 'Escape') return;
+      if (overlay.queueOpen) overlay.closeQueue();
+      else overlay.closePlayer();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [expanded]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlay.playerOpen, overlay.queueOpen]);
 
   // body スクロールロック(ImageViewer と同じイディオム)
   useEffect(() => {
-    if (!expanded) return;
+    if (!overlay.playerOpen) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [expanded]);
+  }, [overlay.playerOpen]);
 
   // スワイプで閉じる(ヘッダ〜アートワーク領域に touchstart/touchend を設置)
   const touchStartX = useRef<number | null>(null);
@@ -75,14 +69,14 @@ export default function FullscreenPlayer() {
     touchStartY.current = null;
     // 縦移動 60px 超かつ縦優位の下方向スワイプで閉じる
     if (dy > 60 && Math.abs(dy) > Math.abs(dx)) {
-      usePlayerStore.getState().setExpanded(false);
+      overlay.closePlayer();
     }
   };
 
-  if (!expanded || !ctx) return null;
+  if (!overlay.playerOpen || !track) return null;
 
   const store = usePlayerStore.getState();
-  const thumbUrl = playerThumbUrl(ctx);
+  const thumbUrl = playerThumbUrl(track);
   // シークバーの進捗表示用パーセント
   const progressPct = duration ? (currentTime / duration) * 100 : 0;
 
@@ -105,7 +99,7 @@ export default function FullscreenPlayer() {
         <button
           type="button"
           className={styles.closeBtn}
-          onClick={() => store.setExpanded(false)}
+          onClick={() => overlay.closePlayer()}
           aria-label="ミニプレイヤーに戻る"
         >
           ⌄
@@ -114,12 +108,13 @@ export default function FullscreenPlayer() {
           type="button"
           className={styles.titleBtn}
           onClick={() => {
-            navigate(`/works/${ctx.workId}`);
-            store.setExpanded(false);
+            // 新しいエントリにはオーバーレイのフラグが無いため、プレイヤーは自然に閉じる
+            // (「戻る」で作品ページからプレイヤーへ戻れる)
+            navigate(`/works/${track.workId}`);
           }}
-          aria-label={`${ctx.workTitle} の作品ページを開く`}
+          aria-label={`${track.workTitle} の作品ページを開く`}
         >
-          {ctx.workTitle}
+          {track.workTitle}
         </button>
         {/* ヘッダの右側の空白スペーサー(閉じるボタンと対称) */}
         <div className={styles.headerSpacer} aria-hidden />
@@ -145,11 +140,11 @@ export default function FullscreenPlayer() {
 
       {/* トラック名 + 作品タイトル */}
       <div className={styles.trackInfo}>
-        <div className={styles.trackName} title={track?.name}>
-          {track?.name}
+        <div className={styles.trackName} title={track.name}>
+          {track.name}
         </div>
-        <div className={styles.workTitle} title={ctx.workTitle}>
-          {ctx.workTitle}
+        <div className={styles.workTitle} title={track.workTitle}>
+          {track.workTitle}
         </div>
       </div>
 
@@ -298,30 +293,20 @@ export default function FullscreenPlayer() {
         </label>
       </div>
 
-      {/* キュー一覧 */}
-      <div className={styles.queueSection}>
-        <div className={styles.queueHeader}>
-          キュー({index + 1}/{queue.length})
-        </div>
-        <div className={styles.queueList}>
-          {queue.map((t, i) => {
-            const isCurrent = i === index;
-            return (
-              <button
-                key={t.path}
-                type="button"
-                ref={isCurrent ? currentQueueRef : null}
-                className={`${styles.queueItem} ${isCurrent ? styles.queueItemCurrent : ''}`}
-                onClick={() => store.playIndex(i)}
-                aria-label={t.name}
-              >
-                {isCurrent && <span className={styles.queueNowPlaying} aria-hidden>♪</span>}
-                <span className={styles.queueName}>{t.name}</span>
-              </button>
-            );
-          })}
-        </div>
+      {/* キュー画面を開く */}
+      <div className={styles.queueBtnRow}>
+        <button
+          type="button"
+          className={styles.queueOpenBtn}
+          onClick={() => overlay.openQueue()}
+          aria-label="再生キューを表示"
+        >
+          <span aria-hidden>☰</span> キュー({index + 1}/{queue.length})
+        </button>
       </div>
+
+      {/* 再生キュー画面(このオーバーレイのさらに上に重なる) */}
+      {overlay.queueOpen && <QueueScreen />}
     </div>
   );
 }

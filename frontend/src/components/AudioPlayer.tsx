@@ -12,6 +12,7 @@ import {
   playerThumbUrl,
   usePlayerStore,
 } from '@/store/playerStore';
+import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
 import { formatTime } from '@/utils/format';
 import FullscreenPlayer from './FullscreenPlayer';
 import styles from './AudioPlayer.module.css';
@@ -21,7 +22,9 @@ export default function AudioPlayer() {
   // ミニバー上方向スワイプ検知用 ref
   const barTouchStart = useRef<{ x: number; y: number } | null>(null);
 
-  const ctx = useStore(usePlayerStore, (s) => s.ctx);
+  // フルスクリーンプレイヤー/キュー画面の開閉(history 駆動)
+  const overlay = usePlayerOverlay();
+
   const index = useStore(usePlayerStore, (s) => s.index);
   const queueLen = useStore(usePlayerStore, (s) => s.queue.length);
   const isPlaying = useStore(usePlayerStore, (s) => s.isPlaying);
@@ -84,13 +87,13 @@ export default function AudioPlayer() {
 
   // ---- Media Session API ----
   useEffect(() => {
-    if (!('mediaSession' in navigator) || !ctx || !track) return;
+    if (!('mediaSession' in navigator) || !track) return;
     const ms = navigator.mediaSession;
-    const thumb = playerThumbUrl(ctx);
+    const thumb = playerThumbUrl(track);
     ms.metadata = new MediaMetadata({
       title: track.name,
-      artist: ctx.workTitle,
-      album: ctx.workTitle,
+      artist: track.workTitle,
+      album: track.workTitle,
       artwork: thumb
         ? [{ src: absoluteUrl(thumb), sizes: '512x512', type: 'image/jpeg' }]
         : [],
@@ -121,7 +124,7 @@ export default function AudioPlayer() {
         ] as MediaSessionAction[]
       ).forEach((a) => set(a, null));
     };
-  }, [ctx, track]);
+  }, [track]);
 
   useEffect(() => {
     if ('mediaSession' in navigator) {
@@ -129,7 +132,13 @@ export default function AudioPlayer() {
     }
   }, [isPlaying]);
 
-  if (!ctx) return null;
+  // キューが空になったら、オーバーレイ用に積んだ history エントリを巻き戻す
+  // (再生キュー全削除など。畳み忘れると「戻る」が見かけ上の無反応になる)
+  useEffect(() => {
+    if (queueLen === 0) overlay.unwind();
+  }, [queueLen, overlay.playerOpen, overlay.queueOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!track) return null;
 
   const store = usePlayerStore.getState();
   const onSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -147,7 +156,7 @@ export default function AudioPlayer() {
     barTouchStart.current = null;
     // 縦移動 60px 超(上方向)かつ縦優位
     if (dy < -60 && Math.abs(dy) > Math.abs(dx)) {
-      store.setExpanded(true);
+      overlay.openPlayer();
     }
   };
 
@@ -201,23 +210,23 @@ export default function AudioPlayer() {
           <button
             type="button"
             className={styles.nav}
-            onClick={() => store.setExpanded(true)}
+            onClick={() => overlay.openPlayer()}
             aria-label="フルスクリーンプレイヤーを開く"
           >
             <img
               className={styles.thumb}
-              src={playerThumbUrl(ctx) ?? ''}
+              src={playerThumbUrl(track) ?? ''}
               alt=""
               onError={(e) => {
                 e.currentTarget.style.visibility = 'hidden';
               }}
             />
             <div className={styles.meta}>
-              <div className={styles.trackName} title={track?.name}>
-                {track?.name}
+              <div className={styles.trackName} title={track.name}>
+                {track.name}
               </div>
-              <div className={styles.workName} title={ctx.workTitle}>
-                {ctx.workTitle}
+              <div className={styles.workName} title={track.workTitle}>
+                {track.workTitle}
               </div>
             </div>
           </button>

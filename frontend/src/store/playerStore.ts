@@ -10,30 +10,29 @@ import { joinPath } from '@/utils/format';
 export const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 
 export interface QueueTrack {
+  /** キュー内アイテムの一意 ID(重複追加・並び替えに耐える React key / ドラッグ識別用) */
+  uid: number;
+  workId: number;
+  workTitle: string;
   /** 作品ルートからの相対パス(file API / plays API に渡す) */
   path: string;
   name: string;
 }
 
-export interface PlayerContext {
-  workId: number;
-  workTitle: string;
-  /** キュー元ディレクトリ(相対パス。空文字=ルート) */
-  dir: string;
-}
+/** キューに積む際の入力。uid は store が採番する */
+export type EnqueueInput = Omit<QueueTrack, 'uid'>;
 
 interface PlayerState {
-  ctx: PlayerContext | null;
   queue: QueueTrack[];
   index: number;
   isPlaying: boolean;
   currentTime: number;
   duration: number;
   playbackRate: number;
-  /** フルスクリーンプレイヤーを表示中か。初期値 false */
-  expanded: boolean;
   /** 音量 0..1。初期値 1 */
   volume: number;
+  /** 次に採番する uid。トラックを積むたびに割り当てて加算する(キュー置換をまたいでもリセットしない) */
+  nextUid: number;
 
   /** ディレクトリの entries から audio キューを構築し、指定ファイルから再生開始 */
   startFromEntries: (
@@ -45,6 +44,17 @@ interface PlayerState {
       startName: string;
     },
   ) => void;
+
+  /** 「今の曲が終わったら再生」: 現在トラックの直後に挿入。空なら再生開始 */
+  playTrackNext: (input: EnqueueInput) => void;
+  /** 「キューを置き換えて再生」: 常にその 1 曲だけにして再生開始 */
+  replaceQueueWith: (input: EnqueueInput) => void;
+  /** 「キューの最後に追加」: 末尾に push。空なら再生開始 */
+  appendToQueue: (input: EnqueueInput) => void;
+  /** キュー内のアイテムを from から to へ移動(再生は中断しない) */
+  moveInQueue: (from: number, to: number) => void;
+  /** キューから i 番目を除去 */
+  removeFromQueue: (i: number) => void;
 
   /** index のトラックを再生(キュー内移動・自動送りで使用) */
   playIndex: (index: number, opts?: { record?: boolean }) => void;
@@ -59,8 +69,6 @@ interface PlayerState {
   setDuration: (d: number) => void;
   /** トラック終了時の自動送り。次が無ければ停止 */
   handleEnded: () => void;
-  /** フルスクリーンモードの表示を切り替える */
-  setExpanded: (expanded: boolean) => void;
   /** 音量を [0, 1] にクランプして設定 */
   setVolume: (v: number) => void;
 
@@ -75,38 +83,128 @@ export const currentTrack = (s: PlayerState): QueueTrack | null =>
 
 export const currentSrc = (s: PlayerState): string | null => {
   const t = currentTrack(s);
-  return s.ctx && t ? fileUrl(s.ctx.workId, t.path) : null;
+  return t ? fileUrl(t.workId, t.path) : null;
 };
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
-  ctx: null,
   queue: [],
   index: -1,
   isPlaying: false,
   currentTime: 0,
   duration: 0,
   playbackRate: 1,
-  expanded: false,
   volume: 1,
+  nextUid: 1,
   seekRequest: null,
   loadNonce: 0,
 
   startFromEntries: ({ workId, workTitle, dir, entries, startName }) => {
-    const queue: QueueTrack[] = entries
-      .filter((e) => !e.is_dir && e.media_kind === 'audio')
-      .map((e) => ({ name: e.name, path: joinPath(dir, e.name) }));
-    const index = queue.findIndex((t) => t.name === startName);
-    if (index < 0) return;
+    const audio = entries.filter((e) => !e.is_dir && e.media_kind === 'audio');
+    const startIdx = audio.findIndex((e) => e.name === startName);
+    if (startIdx < 0) return;
+    let uid = get().nextUid;
+    const queue: QueueTrack[] = audio.map((e) => ({
+      uid: uid++,
+      workId,
+      workTitle,
+      name: e.name,
+      path: joinPath(dir, e.name),
+    }));
     set({
-      ctx: { workId, workTitle, dir },
       queue,
-      index,
+      index: startIdx,
+      nextUid: uid,
       currentTime: 0,
       duration: 0,
       isPlaying: true,
       loadNonce: get().loadNonce + 1,
     });
-    void recordPlayFor(get(), index);
+    void recordPlayFor(get(), startIdx);
+  },
+
+  playTrackNext: (input) => {
+    const { queue, index, nextUid } = get();
+    const track: QueueTrack = { uid: nextUid, ...input };
+    if (queue.length === 0) {
+      startSingle(set, get, track);
+      return;
+    }
+    // 現在トラックの直後に挿入するのみ(再生状態は不変・履歴記録なし)
+    const next = queue.slice();
+    next.splice(index + 1, 0, track);
+    set({ queue: next, nextUid: nextUid + 1 });
+  },
+
+  replaceQueueWith: (input) => {
+    const { nextUid } = get();
+    // 既存キュー・再生状態によらず常に置き換えて再生開始扱い
+    startSingle(set, get, { uid: nextUid, ...input });
+  },
+
+  appendToQueue: (input) => {
+    const { queue, nextUid } = get();
+    const track: QueueTrack = { uid: nextUid, ...input };
+    if (queue.length === 0) {
+      startSingle(set, get, track);
+      return;
+    }
+    // 末尾に push のみ(再生状態は不変・履歴記録なし)
+    set({ queue: [...queue, track], nextUid: nextUid + 1 });
+  },
+
+  moveInQueue: (from, to) => {
+    const { queue, index } = get();
+    const len = queue.length;
+    if (from < 0 || from >= len || to < 0 || to >= len || from === to) return;
+    const next = queue.slice();
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    // 再生中トラックの index 追従(再生は中断しない)
+    let nextIndex = index;
+    if (from === index) nextIndex = to;
+    else if (from < index && to >= index) nextIndex = index - 1;
+    else if (from > index && to <= index) nextIndex = index + 1;
+    set({ queue: next, index: nextIndex });
+  },
+
+  removeFromQueue: (i) => {
+    const { queue, index } = get();
+    if (i < 0 || i >= queue.length) return;
+    const next = queue.slice();
+    next.splice(i, 1);
+
+    if (i < index) {
+      // 再生中より前を除去 → index を 1 詰めるだけ(再生継続)
+      set({ queue: next, index: index - 1 });
+      return;
+    }
+    if (i > index) {
+      // 再生中より後を除去 → 除去のみ
+      set({ queue: next });
+      return;
+    }
+    // i === index(再生中トラックを除去)
+    if (next.length === 0) {
+      // 全クリア(フルスクリーン表示の後始末は history 側 = usePlayerOverlay の unwind が担う)
+      set({
+        queue: [],
+        index: -1,
+        isPlaying: false,
+        currentTime: 0,
+        duration: 0,
+      });
+      return;
+    }
+    // 他にトラックあり → handleEnded の自動送りと同等(次トラックをロード)
+    const newIndex = Math.min(i, next.length - 1);
+    set({
+      queue: next,
+      index: newIndex,
+      currentTime: 0,
+      duration: 0,
+      loadNonce: get().loadNonce + 1,
+    });
+    void recordPlayFor(get(), newIndex);
   },
 
   playIndex: (index, opts) => {
@@ -158,7 +256,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setRate: (rate) => set({ playbackRate: rate }),
   setCurrentTime: (t) => set({ currentTime: t }),
   setDuration: (d) => set({ duration: d }),
-  setExpanded: (expanded) => set({ expanded }),
   setVolume: (v) => set({ volume: Math.max(0, Math.min(1, v)) }),
 
   handleEnded: () => {
@@ -171,17 +268,39 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 }));
 
+// zustand の set / get の型エイリアス(ヘルパで使う)
+type SetState = (partial: Partial<PlayerState>) => void;
+type GetState = () => PlayerState;
+
+/**
+ * 共通「再生開始扱い」: キューを単一トラックに置き換えて先頭から再生開始する。
+ * queue=[track], index=0, isPlaying=true, currentTime=0, duration=0, loadNonce+1。
+ * uid 採番のため nextUid を加算し、recordPlay を記録する(startFromEntries と同じ扱い)。
+ */
+function startSingle(set: SetState, get: GetState, track: QueueTrack) {
+  set({
+    queue: [track],
+    index: 0,
+    nextUid: get().nextUid + 1,
+    currentTime: 0,
+    duration: 0,
+    isPlaying: true,
+    loadNonce: get().loadNonce + 1,
+  });
+  void recordPlayFor(get(), 0);
+}
+
 async function recordPlayFor(state: PlayerState, index: number) {
   const t = state.queue[index];
-  if (!state.ctx || !t) return;
+  if (!t) return;
   try {
-    await recordPlay(state.ctx.workId, t.path);
+    await recordPlay(t.workId, t.path);
   } catch {
     // 履歴記録の失敗は再生を止めない
   }
 }
 
 /** Media Session のサムネ URL を組み立てるためのヘルパ */
-export function playerThumbUrl(ctx: PlayerContext | null): string | null {
-  return ctx ? thumbnailUrl(ctx.workId) : null;
+export function playerThumbUrl(track: QueueTrack | null): string | null {
+  return track ? thumbnailUrl(track.workId) : null;
 }

@@ -36,7 +36,7 @@ function TabBar() {
 
 export default function App() {
   // プレイヤーがアクティブなときだけ本文下端にプレイヤー分の余白を足す。
-  const hasPlayer = useStore(usePlayerStore, (s) => s.ctx !== null);
+  const hasPlayer = useStore(usePlayerStore, (s) => s.queue.length > 0);
 
   return (
     <div className={styles.app}>
