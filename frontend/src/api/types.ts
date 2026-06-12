@@ -137,3 +137,13 @@ export interface ApiError {
 
 export type SortKey = 'purchase_date' | 'title' | 'created_at' | 'circle';
 export type SortOrder = 'asc' | 'desc';
+
+/** GET /api/circles の items 要素 */
+export interface CircleFacet {
+  name: string;
+  work_count: number;
+}
+
+export interface CirclesResponse {
+  items: CircleFacet[];
+}

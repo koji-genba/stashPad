@@ -7,6 +7,8 @@ import styles from './TagFacetPanel.module.css';
 
 interface Props {
   selected: number[];
+  /** 除外中のタグ ID リスト */
+  excluded: number[];
   onToggle: (tagId: number) => void;
 }
 
@@ -30,7 +32,7 @@ const CATEGORY_ORDER = [
   'music',
 ];
 
-export default function TagFacetPanel({ selected, onToggle }: Props) {
+export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
   const [tags, setTags] = useState<TagFacet[]>([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
@@ -99,6 +101,8 @@ export default function TagFacetPanel({ selected, onToggle }: Props) {
         grouped.map((g) => {
           const isCollapsed = collapsed.has(g.category);
           const selCount = g.tags.filter((t) => selected.includes(t.id)).length;
+          const exclCount = g.tags.filter((t) => excluded.includes(t.id)).length;
+          const activeCount = selCount + exclCount;
           return (
             <div key={g.category} className={styles.group}>
               <button
@@ -110,19 +114,22 @@ export default function TagFacetPanel({ selected, onToggle }: Props) {
                 <span className={styles.caret}>{isCollapsed ? '▶' : '▼'}</span>
                 <span>{CATEGORY_LABELS[g.category] ?? g.category}</span>
                 <span className={styles.groupCount}>
-                  {selCount > 0 ? `${selCount}/${g.tags.length}` : g.tags.length}
+                  {activeCount > 0 ? `${activeCount}/${g.tags.length}` : g.tags.length}
                 </span>
               </button>
               {!isCollapsed && (
                 <ul className={styles.tagList}>
                   {g.tags.map((tag) => {
                     const isSel = selected.includes(tag.id);
+                    const isExcl = excluded.includes(tag.id);
                     return (
                       <li key={tag.id}>
                         <button
-                          className={`${styles.tag} ${isSel ? styles.tagSel : ''}`}
+                          className={`${styles.tag} ${isSel ? styles.tagSel : ''} ${isExcl ? styles.tagExcluded : ''}`}
                           onClick={() => onToggle(tag.id)}
+                          title={isSel ? '含む(クリックで除外)' : isExcl ? '除外中(クリックで解除)' : 'クリックで絞り込み'}
                         >
+                          {isExcl && <span className={styles.excludePrefix}>−</span>}
                           <span className={styles.tagName}>{tag.name}</span>
                           <span className={styles.count}>{tag.work_count}</span>
                         </button>

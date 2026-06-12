@@ -1,6 +1,7 @@
 // API クライアント。全レスポンス型は ./types に定義。
 // エラーは一律 {"error": "..."} なので ApiRequestError に正規化する。
 import type {
+  CirclesResponse,
   EntriesResponse,
   HistoryResponse,
   ImportResult,
@@ -65,6 +66,8 @@ async function sendJson<T>(
 export interface WorksQuery {
   q?: string;
   tags?: number[];
+  /** 除外するタグ ID リスト。これらのタグを持つ作品を結果から除く */
+  excludeTags?: number[];
   /** サークル名の完全一致フィルタ */
   circle?: string;
   /** シリーズ名の完全一致フィルタ */
@@ -79,6 +82,8 @@ export function fetchWorks(query: WorksQuery, signal?: AbortSignal): Promise<Wor
   const params = new URLSearchParams();
   if (query.q) params.set('q', query.q);
   if (query.tags && query.tags.length > 0) params.set('tags', query.tags.join(','));
+  if (query.excludeTags && query.excludeTags.length > 0)
+    params.set('exclude_tags', query.excludeTags.join(','));
   if (query.circle) params.set('circle', query.circle);
   if (query.series) params.set('series', query.series);
   if (query.sort) params.set('sort', query.sort);
@@ -112,6 +117,18 @@ export function fetchTags(
   if (opts.q) params.set('q', opts.q);
   const qs = params.toString();
   return getJson<TagsResponse>(`${API_BASE}/tags${qs ? `?${qs}` : ''}`, signal);
+}
+
+// ---- サークル ----
+
+export function fetchCircles(
+  opts: { q?: string } = {},
+  signal?: AbortSignal,
+): Promise<CirclesResponse> {
+  const params = new URLSearchParams();
+  if (opts.q) params.set('q', opts.q);
+  const qs = params.toString();
+  return getJson<CirclesResponse>(`${API_BASE}/circles${qs ? `?${qs}` : ''}`, signal);
 }
 
 // ---- ファイルブラウズ・配信 ----

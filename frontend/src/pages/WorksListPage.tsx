@@ -4,6 +4,8 @@ import type { SortKey, WorksResponse } from '@/api/types';
 import { fetchTags, fetchWorks } from '@/api/client';
 import WorkCard from '@/components/WorkCard';
 import TagFacetPanel from '@/components/TagFacetPanel';
+import CircleFacetPanel from '@/components/CircleFacetPanel';
+import { saveListSearch } from '@/lib/listSearchMemory';
 import styles from './WorksListPage.module.css';
 
 const LIMIT = 40;
@@ -27,6 +29,8 @@ export default function WorksListPage() {
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
   const tags = useMemo(() => parseTags(params.get('tags')), [params]);
+  // 除外タグ ID リスト
+  const excludeTags = useMemo(() => parseTags(params.get('exclude_tags')), [params]);
   const circle = params.get('circle') ?? '';
   const series = params.get('series') ?? '';
   const sort = (params.get('sort') as SortKey) || 'purchase_date';
@@ -86,7 +90,16 @@ export default function WorksListPage() {
     setLoading(true);
     setError(null);
     fetchWorks(
-      { q, tags, circle: circle || undefined, series: series || undefined, sort, page, limit: LIMIT },
+      {
+        q,
+        tags,
+        excludeTags,
+        circle: circle || undefined,
+        series: series || undefined,
+        sort,
+        page,
+        limit: LIMIT,
+      },
       ac.signal,
     )
       .then((d) => {
@@ -99,7 +112,12 @@ export default function WorksListPage() {
         setLoading(false);
       });
     return () => ac.abort();
-  }, [q, tags, circle, series, sort, page]);
+  }, [q, tags, excludeTags, circle, series, sort, page]);
+
+  // URL が変わるたびに検索クエリを sessionStorage に保存(詳細→一覧の戻り先に使う)
+  useEffect(() => {
+    saveListSearch(params.toString());
+  }, [params]);
 
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,13 +128,47 @@ export default function WorksListPage() {
     });
   };
 
+  // タグの 3 状態サイクル: 未選択 → 含む → 除外 → 未選択
   const toggleTag = (tagId: number) => {
     update((p) => {
-      const set = new Set(parseTags(p.get('tags')));
-      if (set.has(tagId)) set.delete(tagId);
-      else set.add(tagId);
-      if (set.size > 0) p.set('tags', [...set].join(','));
+      const selSet = new Set(parseTags(p.get('tags')));
+      const exclSet = new Set(parseTags(p.get('exclude_tags')));
+      if (selSet.has(tagId)) {
+        // 含む → 除外
+        selSet.delete(tagId);
+        exclSet.add(tagId);
+      } else if (exclSet.has(tagId)) {
+        // 除外 → 未選択
+        exclSet.delete(tagId);
+      } else {
+        // 未選択 → 含む
+        selSet.add(tagId);
+        // 念のため除外側にあれば削除
+        exclSet.delete(tagId);
+      }
+      if (selSet.size > 0) p.set('tags', [...selSet].join(','));
       else p.delete('tags');
+      if (exclSet.size > 0) p.set('exclude_tags', [...exclSet].join(','));
+      else p.delete('exclude_tags');
+      p.delete('page');
+    });
+  };
+
+  // 除外タグチップのクリック: 除外 → 未選択に直接戻す
+  const clearExcludeTag = (tagId: number) => {
+    update((p) => {
+      const exclSet = new Set(parseTags(p.get('exclude_tags')));
+      exclSet.delete(tagId);
+      if (exclSet.size > 0) p.set('exclude_tags', [...exclSet].join(','));
+      else p.delete('exclude_tags');
+      p.delete('page');
+    });
+  };
+
+  const setCircle = (name: string) => {
+    update((p) => {
+      if (name) p.set('circle', name);
+      else p.delete('circle');
       p.delete('page');
     });
   };
@@ -141,13 +193,17 @@ export default function WorksListPage() {
   };
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
+  // タグ絞り込みボタンのバッジ: 含む + 除外の合計
+  const tagFilterCount = tags.length + excludeTags.length;
 
   return (
     <div className={styles.layout}>
       {/* PC: 左サイドパネル / スマホ: 非表示 */}
       <aside className={styles.sidebar}>
-        <h2 className={styles.sidebarTitle}>タグ</h2>
-        <TagFacetPanel selected={tags} onToggle={toggleTag} />
+        <h2 className={styles.sidebarTitle}>サークル</h2>
+        <CircleFacetPanel selected={circle} onSelect={setCircle} />
+        <h2 className={`${styles.sidebarTitle} ${styles.sidebarTitleSpaced}`}>タグ</h2>
+        <TagFacetPanel selected={tags} excluded={excludeTags} onToggle={toggleTag} />
       </aside>
 
       <div className={styles.content}>
@@ -156,7 +212,7 @@ export default function WorksListPage() {
             <input
               className="input"
               type="search"
-              placeholder="タイトル・サークル・RJ番号で検索"
+              placeholder="タイトル・サークル・RJ番号(スペース区切り、-語 で除外)"
               value={qInput}
               onChange={(e) => setQInput(e.target.value)}
             />
@@ -170,7 +226,7 @@ export default function WorksListPage() {
               className={`btn ${styles.filterBtn}`}
               onClick={() => setDrawerOpen(true)}
             >
-              タグ絞り込み{tags.length > 0 ? ` (${tags.length})` : ''}
+              タグ絞り込み{tagFilterCount > 0 ? ` (${tagFilterCount})` : ''}
             </button>
             <select
               className={styles.sortSelect}
@@ -186,7 +242,7 @@ export default function WorksListPage() {
             </select>
           </div>
 
-          {(tags.length > 0 || circle || series) && (
+          {(tags.length > 0 || excludeTags.length > 0 || circle || series) && (
             <div className={styles.chips}>
               {circle && (
                 <button
@@ -218,6 +274,17 @@ export default function WorksListPage() {
                   title="クリックで解除"
                 >
                   {tagNames.get(id) ?? `#${id}`}
+                  <span className={styles.chipX}>✕</span>
+                </button>
+              ))}
+              {excludeTags.map((id) => (
+                <button
+                  key={`excl-${id}`}
+                  className={`${styles.chip} ${styles.chipExcluded}`}
+                  onClick={() => clearExcludeTag(id)}
+                  title="クリックで解除"
+                >
+                  −{tagNames.get(id) ?? `#${id}`}
                   <span className={styles.chipX}>✕</span>
                 </button>
               ))}
@@ -294,7 +361,7 @@ export default function WorksListPage() {
         <div className={styles.drawerOverlay} onClick={() => setDrawerOpen(false)}>
           <div className={styles.drawer} onClick={(e) => e.stopPropagation()}>
             <div className={styles.drawerHead}>
-              <h2 className={styles.sidebarTitle}>タグで絞り込み</h2>
+              <h2 className={styles.sidebarTitle}>絞り込み</h2>
               <button
                 className={styles.drawerClose}
                 onClick={() => setDrawerOpen(false)}
@@ -303,7 +370,10 @@ export default function WorksListPage() {
                 ✕
               </button>
             </div>
-            <TagFacetPanel selected={tags} onToggle={toggleTag} />
+            <h3 className={styles.sidebarTitle}>サークル</h3>
+            <CircleFacetPanel selected={circle} onSelect={(name) => { setCircle(name); setDrawerOpen(false); }} />
+            <h3 className={`${styles.sidebarTitle} ${styles.sidebarTitleSpaced}`}>タグ</h3>
+            <TagFacetPanel selected={tags} excluded={excludeTags} onToggle={toggleTag} />
           </div>
         </div>
       )}
