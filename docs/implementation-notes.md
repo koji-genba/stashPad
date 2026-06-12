@@ -86,7 +86,7 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
 
 エラーは一律 `{"error": "メッセージ"}` + 適切なステータスコード。
 
-### GET /api/works?q=&tags=1,5&sort=purchase_date&order=desc&page=1&limit=40
+### GET /api/works?q=&tags=1,5&exclude_tags=7&sort=purchase_date&order=desc&page=1&limit=40
 
 ```json
 {
@@ -107,8 +107,9 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
 }
 ```
 
-- `tags` は AND 条件(指定タグを全部持つ作品のみ)
-- `sort`: `purchase_date`(デフォルト) / `title` / `created_at`
+- `q` は空白(半角・全角・タブ)区切りで複数語の AND。各語はタイトル・サークル・RJ 番号への部分一致。`-語` で除外(`-` 単体は無視)
+- `tags` は AND 条件(指定タグを全部持つ作品のみ)。`exclude_tags` は指定タグを 1 つでも持つ作品を除外(`NOT EXISTS`)
+- `sort`: `purchase_date`(デフォルト) / `title` / `created_at` / `circle`
 - `has_folder` = `root_path IS NOT NULL`。false の作品は一覧で「未取込」表示
 
 ### GET /api/works/12
@@ -159,6 +160,18 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
   ]
 }
 ```
+
+### GET /api/circles?q=ランドセル
+
+```json
+{
+  "items": [
+    {"name": "チームランドセル", "work_count": 5}
+  ]
+}
+```
+
+- `circle` が NULL・空文字の作品は集計から除外。`work_count` 降順 → サークル名昇順
 
 ### POST /api/works/12/tags
 

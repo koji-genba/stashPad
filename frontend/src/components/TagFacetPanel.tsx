@@ -7,6 +7,8 @@ import styles from './TagFacetPanel.module.css';
 
 interface Props {
   selected: number[];
+  /** 除外中のタグ ID リスト */
+  excluded: number[];
   onToggle: (tagId: number) => void;
 }
 
@@ -30,10 +32,11 @@ const CATEGORY_ORDER = [
   'music',
 ];
 
-export default function TagFacetPanel({ selected, onToggle }: Props) {
+export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
   const [tags, setTags] = useState<TagFacet[]>([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
   // 折りたたみ中のカテゴリ。デフォルトは全て開。
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
@@ -50,13 +53,16 @@ export default function TagFacetPanel({ selected, onToggle }: Props) {
     const ac = new AbortController();
     const t = setTimeout(() => {
       setLoading(true);
+      setFailed(false);
       fetchTags(q ? { q } : {}, ac.signal)
         .then((d) => {
           setTags(d.items);
           setLoading(false);
         })
         .catch(() => {
-          if (!ac.signal.aborted) setLoading(false);
+          if (ac.signal.aborted) return;
+          setFailed(true);
+          setLoading(false);
         });
     }, q ? 250 : 0);
     return () => {
@@ -93,12 +99,16 @@ export default function TagFacetPanel({ selected, onToggle }: Props) {
         <div className={styles.center}>
           <div className="spinner" />
         </div>
+      ) : failed ? (
+        <p className="error">タグ一覧の読み込みに失敗しました</p>
       ) : grouped.length === 0 ? (
         <p className="faint">タグがありません</p>
       ) : (
         grouped.map((g) => {
           const isCollapsed = collapsed.has(g.category);
           const selCount = g.tags.filter((t) => selected.includes(t.id)).length;
+          const exclCount = g.tags.filter((t) => excluded.includes(t.id)).length;
+          const activeCount = selCount + exclCount;
           return (
             <div key={g.category} className={styles.group}>
               <button
@@ -110,19 +120,22 @@ export default function TagFacetPanel({ selected, onToggle }: Props) {
                 <span className={styles.caret}>{isCollapsed ? '▶' : '▼'}</span>
                 <span>{CATEGORY_LABELS[g.category] ?? g.category}</span>
                 <span className={styles.groupCount}>
-                  {selCount > 0 ? `${selCount}/${g.tags.length}` : g.tags.length}
+                  {activeCount > 0 ? `${activeCount}/${g.tags.length}` : g.tags.length}
                 </span>
               </button>
               {!isCollapsed && (
                 <ul className={styles.tagList}>
                   {g.tags.map((tag) => {
                     const isSel = selected.includes(tag.id);
+                    const isExcl = excluded.includes(tag.id);
                     return (
                       <li key={tag.id}>
                         <button
-                          className={`${styles.tag} ${isSel ? styles.tagSel : ''}`}
+                          className={`${styles.tag} ${isSel ? styles.tagSel : ''} ${isExcl ? styles.tagExcluded : ''}`}
                           onClick={() => onToggle(tag.id)}
+                          title={isSel ? '含む(クリックで除外)' : isExcl ? '除外中(クリックで解除)' : 'クリックで絞り込み'}
                         >
+                          {isExcl && <span className={styles.excludePrefix}>−</span>}
                           <span className={styles.tagName}>{tag.name}</span>
                           <span className={styles.count}>{tag.work_count}</span>
                         </button>

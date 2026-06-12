@@ -10,6 +10,7 @@ import {
 } from '@/api/client';
 import FileBrowser from '@/components/FileBrowser';
 import { formatDateTime } from '@/utils/format';
+import { listBackPath } from '@/lib/listSearchMemory';
 import styles from './WorkDetailPage.module.css';
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -118,7 +119,7 @@ export default function WorkDetailPage() {
   if (error || !work) {
     return (
       <div className={styles.page}>
-        <Link to="/" className={styles.back}>
+        <Link to={listBackPath()} className={styles.back}>
           ← ライブラリ
         </Link>
         <p className="muted">{error ?? '作品が見つかりません'}</p>
@@ -153,7 +154,7 @@ export default function WorkDetailPage() {
 
   return (
     <div className={styles.page}>
-      <Link to="/" className={styles.back}>
+      <Link to={listBackPath()} className={styles.back}>
         ← ライブラリ
       </Link>
 

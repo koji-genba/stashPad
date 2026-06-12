@@ -13,7 +13,6 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/koji-genba/stashpad/backend/internal/media"
@@ -74,21 +73,31 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	// タグ AND フィルタ
 	var tagIDs []int64
 	if tagsParam != "" {
-		for _, ts := range strings.Split(tagsParam, ",") {
-			ts = strings.TrimSpace(ts)
-			if id, err := strconv.ParseInt(ts, 10, 64); err == nil {
-				tagIDs = append(tagIDs, id)
-			}
-		}
+		tagIDs = parseTagIDs(tagsParam)
+	}
+
+	// タグ NOT フィルタ(exclude_tags パラメータ)
+	var excludeTagIDs []int64
+	if excludeTagsParam := q.Get("exclude_tags"); excludeTagsParam != "" {
+		excludeTagIDs = parseTagIDs(excludeTagsParam)
 	}
 
 	// クエリ組み立て
 	args := []any{}
 	whereClause := ""
 
-	if keyword != "" {
+	// キーワードをターム分割してAND/NOT検索に変換
+	includeTerms, excludeTerms := parseSearchTerms(keyword)
+	for _, term := range includeTerms {
+		like := "%" + term + "%"
 		whereClause += " AND (w.title LIKE ? OR w.circle LIKE ? OR w.rj_number LIKE ?)"
-		like := "%" + keyword + "%"
+		args = append(args, like, like, like)
+	}
+	for _, term := range excludeTerms {
+		like := "%" + term + "%"
+		// circle は NULL の可能性があるため COALESCE で空文字に変換して NOT 判定する
+		// (NULL LIKE ? は NULL になり NOT NULL = NULL → 行が除外されてしまうため)
+		whereClause += " AND NOT (w.title LIKE ? OR COALESCE(w.circle, '') LIKE ? OR w.rj_number LIKE ?)"
 		args = append(args, like, like, like)
 	}
 
@@ -106,6 +115,12 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 
 	for _, tid := range tagIDs {
 		whereClause += " AND EXISTS(SELECT 1 FROM work_tags wt WHERE wt.work_id=w.id AND wt.tag_id=?)"
+		args = append(args, tid)
+	}
+
+	// exclude_tags: 指定タグを持つ作品を除外
+	for _, tid := range excludeTagIDs {
+		whereClause += " AND NOT EXISTS(SELECT 1 FROM work_tags wt WHERE wt.work_id=w.id AND wt.tag_id=?)"
 		args = append(args, tid)
 	}
 

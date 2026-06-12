@@ -77,6 +77,27 @@
   border-color: var(--accent);
   color: #fff;
 }
+/* 除外中タグ: 赤系背景 + 打ち消し線 */
+.tagExcluded {
+  background: rgba(220, 38, 38, 0.18);
+  border-color: rgba(220, 38, 38, 0.6);
+  color: #fca5a5;
+}
+.tagExcluded:hover {
+  background: rgba(220, 38, 38, 0.28);
+}
+.tagExcluded .tagName {
+  text-decoration: line-through;
+  text-decoration-color: rgba(252, 165, 165, 0.7);
+}
+.tagExcluded .count {
+  color: rgba(252, 165, 165, 0.7);
+}
+.excludePrefix {
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
 .tagName {
   overflow: hidden;
   text-overflow: ellipsis;
