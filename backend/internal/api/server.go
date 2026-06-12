@@ -76,6 +76,9 @@ func (s *Server) Router(middlewares ...func(http.Handler) http.Handler) http.Han
 		r.Get("/tags", s.handleListTags)
 		r.Post("/tags/cleanup", s.handleCleanupTags)
 
+		// サークル
+		r.Get("/circles", s.handleListCircles)
+
 		// 再生履歴
 		r.Get("/history", s.handleHistory)
 	})
