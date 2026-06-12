@@ -15,12 +15,8 @@ type searchTerm struct {
 // 半角スペース・全角スペース・タブで分割し、`-` で始まる語は除外語とする。
 // `-` のみの語・空語は無視する。
 func parseSearchTerms(q string) (include, exclude []string) {
-	// 全角スペースを半角スペースに正規化してから分割
-	q = strings.ReplaceAll(q, "　", " ")
-	q = strings.ReplaceAll(q, "\t", " ")
-	parts := strings.Fields(q)
-
-	for _, p := range parts {
+	// strings.Fields は unicode.IsSpace で分割するため、全角スペース・タブもそのまま扱える
+	for _, p := range strings.Fields(q) {
 		if p == "-" || p == "" {
 			// `-` 単体・空文字は無視
 			continue

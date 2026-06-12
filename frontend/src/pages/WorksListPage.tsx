@@ -154,13 +154,13 @@ export default function WorksListPage() {
     });
   };
 
-  // 除外タグチップのクリック: 除外 → 未選択に直接戻す
-  const clearExcludeTag = (tagId: number) => {
+  // チップの ✕ クリック: 3 状態サイクルを経由せず、含む/除外を直接解除する
+  const clearTagParam = (key: 'tags' | 'exclude_tags', tagId: number) => {
     update((p) => {
-      const exclSet = new Set(parseTags(p.get('exclude_tags')));
-      exclSet.delete(tagId);
-      if (exclSet.size > 0) p.set('exclude_tags', [...exclSet].join(','));
-      else p.delete('exclude_tags');
+      const set = new Set(parseTags(p.get(key)));
+      set.delete(tagId);
+      if (set.size > 0) p.set(key, [...set].join(','));
+      else p.delete(key);
       p.delete('page');
     });
   };
@@ -270,7 +270,7 @@ export default function WorksListPage() {
                 <button
                   key={id}
                   className={styles.chip}
-                  onClick={() => toggleTag(id)}
+                  onClick={() => clearTagParam('tags', id)}
                   title="クリックで解除"
                 >
                   {tagNames.get(id) ?? `#${id}`}
@@ -281,7 +281,7 @@ export default function WorksListPage() {
                 <button
                   key={`excl-${id}`}
                   className={`${styles.chip} ${styles.chipExcluded}`}
-                  onClick={() => clearExcludeTag(id)}
+                  onClick={() => clearTagParam('exclude_tags', id)}
                   title="クリックで解除"
                 >
                   −{tagNames.get(id) ?? `#${id}`}

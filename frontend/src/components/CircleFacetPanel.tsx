@@ -18,19 +18,23 @@ export default function CircleFacetPanel({ selected, onSelect }: Props) {
   const [circles, setCircles] = useState<CircleFacet[]>([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     const ac = new AbortController();
     // デバウンス: 入力 250ms 後に fetch
     const t = setTimeout(() => {
       setLoading(true);
+      setFailed(false);
       fetchCircles(q ? { q } : {}, ac.signal)
         .then((d) => {
           setCircles(d.items);
           setLoading(false);
         })
         .catch(() => {
-          if (!ac.signal.aborted) setLoading(false);
+          if (ac.signal.aborted) return;
+          setFailed(true);
+          setLoading(false);
         });
     }, q ? 250 : 0);
     return () => {
@@ -55,6 +59,8 @@ export default function CircleFacetPanel({ selected, onSelect }: Props) {
         <div className={styles.center}>
           <div className="spinner" />
         </div>
+      ) : failed ? (
+        <p className="error">サークル一覧の読み込みに失敗しました</p>
       ) : circles.length === 0 ? (
         <p className="faint">サークルがありません</p>
       ) : (

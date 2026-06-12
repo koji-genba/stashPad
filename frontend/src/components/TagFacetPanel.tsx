@@ -36,6 +36,7 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
   const [tags, setTags] = useState<TagFacet[]>([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
   // 折りたたみ中のカテゴリ。デフォルトは全て開。
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
@@ -52,13 +53,16 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
     const ac = new AbortController();
     const t = setTimeout(() => {
       setLoading(true);
+      setFailed(false);
       fetchTags(q ? { q } : {}, ac.signal)
         .then((d) => {
           setTags(d.items);
           setLoading(false);
         })
         .catch(() => {
-          if (!ac.signal.aborted) setLoading(false);
+          if (ac.signal.aborted) return;
+          setFailed(true);
+          setLoading(false);
         });
     }, q ? 250 : 0);
     return () => {
@@ -95,6 +99,8 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
         <div className={styles.center}>
           <div className="spinner" />
         </div>
+      ) : failed ? (
+        <p className="error">タグ一覧の読み込みに失敗しました</p>
       ) : grouped.length === 0 ? (
         <p className="faint">タグがありません</p>
       ) : (
