@@ -92,3 +92,32 @@
   justify-content: center;
   padding: 30px 0;
 }
+
+/* li を flex にして行本体 button と ⋮ button を兄弟配置(button ネスト回避) */
+.row {
+  display: flex;
+  align-items: stretch;
+}
+.row .entry {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ⋮ キュー操作ボタン(audio 行のみ表示) */
+.menuBtn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 18px;
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.menuBtn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}

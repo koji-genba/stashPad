@@ -1,12 +1,14 @@
 // 作品詳細下部のファイルブラウザ。
 // GET entries?path= の結果をそのまま表示(サーバが自然順ソート済みなので順序を保つ)。
 // ファイルタップで media_kind に応じて プレイヤー / 画像ビューア / 動画 / テキスト を起動。
+// audio 行の「⋮」ボタンからボトムシートでキュー操作が可能。
 import { useEffect, useState } from 'react';
 import type { EntriesResponse, Entry } from '@/api/types';
 import { fetchEntries, fileUrl } from '@/api/client';
 import { usePlayerStore } from '@/store/playerStore';
 import { useOverlayStore } from '@/store/overlayStore';
 import { formatBytes, joinPath, pathCrumbs } from '@/utils/format';
+import QueueActionSheet from './QueueActionSheet';
 import styles from './FileBrowser.module.css';
 
 interface Props {
@@ -28,6 +30,8 @@ export default function FileBrowser({ workId, workTitle }: Props) {
   const [data, setData] = useState<EntriesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // ⋮ タップで開くシートの対象エントリ(null = 閉じている)
+  const [sheetEntry, setSheetEntry] = useState<Entry | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -133,7 +137,8 @@ export default function FileBrowser({ workId, workTitle }: Props) {
       ) : (
         <ul className={styles.list}>
           {data.entries.map((entry) => (
-            <li key={entry.name}>
+            <li key={entry.name} className={styles.row}>
+              {/* 行本体ボタン(openEntry): ディレクトリ・全ファイル種別で従来通り */}
               <button className={styles.entry} onClick={() => openEntry(entry)}>
                 <span className={`${styles.icon} ${entry.is_dir ? styles.dir : ''}`}>
                   {entry.is_dir ? '📁' : (KIND_ICON[entry.media_kind] ?? '·')}
@@ -143,9 +148,37 @@ export default function FileBrowser({ workId, workTitle }: Props) {
                   <span className={styles.size}>{formatBytes(entry.size)}</span>
                 )}
               </button>
+              {/* audio 行のみ ⋮ ボタンを表示(button ネスト回避のため兄弟 button) */}
+              {!entry.is_dir && entry.media_kind === 'audio' && (
+                <button
+                  type="button"
+                  className={styles.menuBtn}
+                  aria-label={`${entry.name} のキュー操作`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSheetEntry(entry);
+                  }}
+                >
+                  ⋮
+                </button>
+              )}
             </li>
           ))}
         </ul>
+      )}
+
+      {/* キュー操作ボトムシート */}
+      {sheetEntry && (
+        <QueueActionSheet
+          name={sheetEntry.name}
+          input={{
+            workId,
+            workTitle,
+            path: joinPath(path, sheetEntry.name),
+            name: sheetEntry.name,
+          }}
+          onClose={() => setSheetEntry(null)}
+        />
       )}
     </section>
   );
