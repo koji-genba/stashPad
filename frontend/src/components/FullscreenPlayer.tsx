@@ -14,6 +14,7 @@ import {
 } from '@/store/playerStore';
 import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
 import { formatTime } from '@/utils/format';
+import QueueScreen from './QueueScreen';
 import styles from './FullscreenPlayer.module.css';
 
 export default function FullscreenPlayer() {
@@ -28,16 +29,6 @@ export default function FullscreenPlayer() {
   const playbackRate = useStore(usePlayerStore, (s) => s.playbackRate);
   const volume = useStore(usePlayerStore, (s) => s.volume);
   const track = useStore(usePlayerStore, currentTrack);
-
-  // キュー内の現在再生行を自動スクロール
-  const currentQueueRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    if (!overlay.playerOpen) return;
-    // scrollIntoView が未対応の環境(テスト環境)ではガード
-    if (currentQueueRef.current && typeof currentQueueRef.current.scrollIntoView === 'function') {
-      currentQueueRef.current.scrollIntoView({ block: 'nearest' });
-    }
-  }, [overlay.playerOpen, index]);
 
   // Escape キーで 1 段閉じる(キュー画面 → プレイヤー → ミニプレイヤーの順)
   useEffect(() => {
@@ -302,30 +293,20 @@ export default function FullscreenPlayer() {
         </label>
       </div>
 
-      {/* キュー一覧 */}
-      <div className={styles.queueSection}>
-        <div className={styles.queueHeader}>
-          キュー({index + 1}/{queue.length})
-        </div>
-        <div className={styles.queueList}>
-          {queue.map((t, i) => {
-            const isCurrent = i === index;
-            return (
-              <button
-                key={t.uid}
-                type="button"
-                ref={isCurrent ? currentQueueRef : null}
-                className={`${styles.queueItem} ${isCurrent ? styles.queueItemCurrent : ''}`}
-                onClick={() => store.playIndex(i)}
-                aria-label={t.name}
-              >
-                {isCurrent && <span className={styles.queueNowPlaying} aria-hidden>♪</span>}
-                <span className={styles.queueName}>{t.name}</span>
-              </button>
-            );
-          })}
-        </div>
+      {/* キュー画面を開く */}
+      <div className={styles.queueBtnRow}>
+        <button
+          type="button"
+          className={styles.queueOpenBtn}
+          onClick={() => overlay.openQueue()}
+          aria-label="再生キューを表示"
+        >
+          <span aria-hidden>☰</span> キュー({index + 1}/{queue.length})
+        </button>
       </div>
+
+      {/* 再生キュー画面(このオーバーレイのさらに上に重なる) */}
+      {overlay.queueOpen && <QueueScreen />}
     </div>
   );
 }

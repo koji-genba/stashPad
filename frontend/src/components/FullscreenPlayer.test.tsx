@@ -102,9 +102,7 @@ describe('FullscreenPlayer 描画条件', () => {
   it('開いていて現在トラックがあるとき描画される', () => {
     setupPlayingState();
     renderPlayer();
-    // トラック名はトラック情報エリアとキュー一覧の両方に表示されるので getAllByText を使う
-    const trackNames = screen.getAllByText('track02.mp3');
-    expect(trackNames.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('track02.mp3')).toBeInTheDocument();
   });
 });
 
@@ -117,9 +115,7 @@ describe('FullscreenPlayer コンテンツ', () => {
 
   it('トラック名が表示される', () => {
     renderPlayer();
-    // 現在再生中のトラック名はトラック情報エリアとキュー一覧の両方に表示される
-    const trackNames = screen.getAllByText('track02.mp3');
-    expect(trackNames.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('track02.mp3')).toBeInTheDocument();
   });
 
   it('作品タイトルが表示される', () => {
@@ -127,16 +123,6 @@ describe('FullscreenPlayer コンテンツ', () => {
     // ヘッダの作品タイトルボタンとメタエリアの両方に表示される
     const titles = screen.getAllByText('テスト作品タイトル');
     expect(titles.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('キュー一覧の全トラックが表示される', () => {
-    renderPlayer();
-    // キュー一覧内のボタンで確認(aria-label で特定)
-    expect(screen.getByRole('button', { name: /track01\.mp3/ })).toBeInTheDocument();
-    // track02.mp3 はキュー一覧ボタンとトラック情報エリアに複数存在する
-    const track02Elements = screen.getAllByText('track02.mp3');
-    expect(track02Elements.length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole('button', { name: /track03\.mp3/ })).toBeInTheDocument();
   });
 });
 
@@ -165,12 +151,14 @@ describe('FullscreenPlayer 操作', () => {
     expect(playerVisible()).toBe(false);
   });
 
-  it('キュー行クリックで playIndex が呼ばれる', () => {
+  it('キューボタンに現在番号/総数が表示され、クリックでキュー画面が開く', () => {
     renderPlayer();
-    // track01.mp3 は index=0
-    const track01Btn = screen.getByRole('button', { name: /track01\.mp3/ });
-    fireEvent.click(track01Btn);
-    expect(usePlayerStore.getState().index).toBe(0);
+    const btn = screen.getByRole('button', { name: '再生キューを表示' });
+    expect(btn).toHaveTextContent('キュー(2/3)');
+    fireEvent.click(btn);
+    expect(probeText()).toContain('queue=true');
+    // キュー画面(QueueScreen)が重なって表示される
+    expect(screen.getByText('再生キュー(2/3)')).toBeInTheDocument();
   });
 
   it('−5 ボタンで currentTime が 5 秒戻る', () => {
@@ -216,6 +204,17 @@ describe('FullscreenPlayer キーボード', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(playerVisible()).toBe(false);
     expect(probeText()).toContain('player=false');
+  });
+
+  it('Escape はキュー画面 → プレイヤーの順に 1 段ずつ閉じる', () => {
+    renderPlayer();
+    fireEvent.click(screen.getByRole('button', { name: '再生キューを表示' }));
+    expect(probeText()).toContain('queue=true');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(probeText()).toContain('queue=false');
+    expect(playerVisible()).toBe(true);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(playerVisible()).toBe(false);
   });
 
   it('アンマウント後は Escape キーを無視する(リスナーがクリーンアップされる)', () => {
@@ -326,11 +325,6 @@ describe('FullscreenPlayer 操作系(追加)', () => {
     expect(state.seekRequest!.time).toBe(60);
   });
 
-  it('キュー見出しに「キュー(2/3)」のように現在番号/総数が表示される', () => {
-    // setupPlayingState: index=1(表示は 2), queue.length=3
-    renderPlayer();
-    expect(screen.getByText('キュー(2/3)')).toBeInTheDocument();
-  });
 });
 
 describe('FullscreenPlayer スワイプ操作', () => {
