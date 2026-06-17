@@ -9,7 +9,8 @@ func (s *Server) handleListCircles(w http.ResponseWriter, r *http.Request) {
 	keyword := r.URL.Query().Get("q")
 
 	args := []any{}
-	whereClause := "WHERE circle IS NOT NULL AND circle != ''"
+	// 非表示作品(hidden=1)を除外する。circle が NULL または空文字の作品も除外。
+	whereClause := "WHERE circle IS NOT NULL AND circle != '' AND hidden=0"
 
 	if keyword != "" {
 		whereClause += " AND circle LIKE ?"

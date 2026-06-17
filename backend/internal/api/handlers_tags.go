@@ -24,13 +24,17 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "%"+keyword+"%")
 	}
 
+	// 可視作品(hidden=0)のみカウント対象とする。
+	// LEFT JOIN works で hidden=0 を条件に付けることで、
+	// 非表示作品しか持たないタグは HAVING COUNT(w.id) > 0 で除外される。
 	query := `
-		SELECT t.id, t.name, t.category, COUNT(wt.work_id) AS work_count
+		SELECT t.id, t.name, t.category, COUNT(w.id) AS work_count
 		FROM tags t
 		LEFT JOIN work_tags wt ON wt.tag_id=t.id
+		LEFT JOIN works w ON w.id=wt.work_id AND w.hidden=0
 		WHERE 1=1` + whereClause + `
 		GROUP BY t.id
-		HAVING COUNT(wt.work_id) > 0
+		HAVING COUNT(w.id) > 0
 		ORDER BY work_count DESC, t.name ASC`
 
 	rows, err := s.db.Query(query, args...)

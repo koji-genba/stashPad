@@ -17,6 +17,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	// 作品単位でグルーピングし、最終再生日時・最終ファイルパス・再生回数を集計
 	// last_file_path は相関サブクエリで最新の play_history を取得する。
 	// ph.file_path を直接参照すると GROUP BY のないカラムとなり、SQLite が任意の行を返してしまう。
+	// 非表示作品(hidden=1)は JOIN 条件に AND w.hidden=0 を付けることで除外する。
 	query := `
 		SELECT
 			w.id,
@@ -26,7 +27,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			(SELECT ph2.file_path FROM play_history ph2 WHERE ph2.work_id=w.id ORDER BY ph2.played_at DESC LIMIT 1) AS last_file_path,
 			COUNT(ph.id) AS play_count
 		FROM play_history ph
-		JOIN works w ON w.id=ph.work_id
+		JOIN works w ON w.id=ph.work_id AND w.hidden=0
 		GROUP BY w.id
 		ORDER BY last_played_at DESC
 		LIMIT ? OFFSET ?`
