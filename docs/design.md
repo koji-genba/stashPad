@@ -299,13 +299,15 @@ RJ404669_耳舐め&耳ふ～サンドイッチ ダウナー妹と低音姉【R-1
 
 | Method | Path | 説明 |
 |--------|------|------|
-| GET | `/works` | 一覧 + 検索。`?q=キーワード&tags=1,2,3&exclude_tags=4,5&sort=purchase_date&page=` |
-| GET | `/works/{id}` | 詳細(メタデータ + 全タグ) |
-| PATCH | `/works/{id}` | タイトル等の手動編集 |
+| GET | `/works` | 一覧 + 検索。`?q=キーワード&tags=1,2,3&exclude_tags=4,5&sort=purchase_date&page=`。`hidden=1` で非表示作品のみ(設定画面用) |
+| GET | `/works/{id}` | 詳細(メタデータ + 全タグ + `hidden`) |
+| PATCH | `/works/{id}` | タイトル・サークルの手動編集、`hidden`(非表示)の切り替え |
 | POST | `/works/{id}/tags` | カスタムタグ追加 `{name}` |
 | DELETE | `/works/{id}/tags/{tag_id}` | タグ除去 |
 
 検索仕様: `q` は空白(半角・全角・タブ)区切りで複数語を指定でき、各語はタイトル・サークル・RJ 番号への部分一致(LIKE)、語間は AND。`-語` で「含まない」を指定できる(例 `ASMR -耳かき`)。`tags` は AND 条件、`exclude_tags` は指定タグを持つ作品の除外。1,500〜数千件規模なら LIKE で十分、遅くなったら SQLite FTS5 を追加。
+
+非表示(hidden)仕様: `hidden=1` の作品は「存在しない扱い」とし、`/works`(デフォルト)・タグ集計(`/tags`)・サークル集計(`/circles`)・履歴(`/history`)のすべてから除外する。解除は設定画面から `PATCH {hidden:false}`、一覧確認は `/works?hidden=1`。
 
 ### タグ・サークル
 
@@ -542,3 +544,5 @@ services:
 | D18 | NOT 検索の表現(2026-06-12) | キーワードは `q` 内の `-語` 構文(空白区切り AND の一部として)、タグは独立パラメータ `exclude_tags` で表現。SQL の `NOT (... LIKE ...)` は NULL カラム(circle)で三値論理により行が落ちるため `COALESCE(circle,'')` で判定(issue #11) |
 | D19 | サークルファセット(2026-06-12) | 専用エンドポイント `/api/circles`(作品数付き一覧)を新設。選択は単一で、既存の `/works?circle=` 完全一致を利用。UI は上位 50 件+絞り込み入力(issue #15) |
 | D20 | 一覧への戻りで検索状態維持(2026-06-12) | 一覧ページの URL クエリを sessionStorage に保存し、詳細ページの「← ライブラリ」はそのクエリ付きで戻る。詳細ページ内のタグ/サークル/シリーズリンクは「新しい検索の開始」なので対象外(issue #9) |
+| D21 | 作品の非表示(2026-06-17) | `works.hidden` カラム(INTEGER 0/1)を追加し、非表示作品を「存在しない扱い」に。検索・タグ集計・サークル集計・履歴のすべてに `hidden=0` フィルタを通す。専用エンドポイントは設けず、切り替えは `PATCH /works/{id} {hidden}`、非表示一覧は `GET /works?hidden=1` で表現。スキャナ/CSV インポータの upsert は hidden カラムに触れないため、再スキャン・再取り込みでも非表示状態は保持される(issue #10) |
+| D22 | RJ 番号の DLsite リンク(2026-06-17) | 作品詳細の RJ 番号を `https://www.dlsite.com/maniax/work/=/product_id/{RJ}.html` への外部リンク(`target=_blank`)にする(issue #13) |

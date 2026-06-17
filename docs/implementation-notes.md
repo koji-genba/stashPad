@@ -111,6 +111,7 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
 - `tags` は AND 条件(指定タグを全部持つ作品のみ)。`exclude_tags` は指定タグを 1 つでも持つ作品を除外(`NOT EXISTS`)
 - `sort`: `purchase_date`(デフォルト) / `title` / `created_at` / `circle`
 - `has_folder` = `root_path IS NOT NULL`。false の作品は一覧で「未取込」表示
+- `hidden`: 未指定/`0` は可視作品のみ、`1` は非表示作品のみ(設定画面の非表示一覧用)。デフォルトで非表示作品は一覧に出ない
 
 ### GET /api/works/12
 
@@ -127,6 +128,7 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
   "file_format": "WAV/ MP3同梱",
   "file_size_text": "4.91GB",
   "has_folder": true,
+  "hidden": false,
   "tags": [
     {"id": 3, "name": "ボイス・ASMR", "category": "genre"},
     {"id": 17, "name": "耳舐め", "category": "detail_genre"},
@@ -134,6 +136,8 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
   ]
 }
 ```
+
+- `hidden` は常に bool で返る。`PATCH /api/works/12` に `{"hidden": true|false}` を送ると切り替わる(タイトル・サークル編集と同じエンドポイント)
 
 ### GET /api/works/12/entries?path=mp3
 
