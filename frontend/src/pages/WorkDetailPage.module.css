@@ -145,3 +145,25 @@
   justify-content: center;
   padding: 60px 0;
 }
+
+/* 非表示コントロール */
+.hideControl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.hiddenBadge {
+  display: inline-block;
+  background: var(--text-faint);
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.hideBtn {
+  font-size: 12px;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
