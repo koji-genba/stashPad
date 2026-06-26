@@ -72,6 +72,8 @@ export interface WorksQuery {
   circle?: string;
   /** シリーズ名の完全一致フィルタ */
   series?: string;
+  /** true のとき非表示作品のみを返す */
+  hidden?: boolean;
   sort?: SortKey;
   order?: SortOrder;
   page?: number;
@@ -90,6 +92,7 @@ export function fetchWorks(query: WorksQuery, signal?: AbortSignal): Promise<Wor
   if (query.order) params.set('order', query.order);
   if (query.page) params.set('page', String(query.page));
   if (query.limit) params.set('limit', String(query.limit));
+  if (query.hidden) params.set('hidden', '1');
   const qs = params.toString();
   return getJson<WorksResponse>(`${API_BASE}/works${qs ? `?${qs}` : ''}`, signal);
 }
@@ -104,6 +107,11 @@ export function addCustomTag(workId: number, name: string): Promise<Tag> {
 
 export function removeTag(workId: number, tagId: number): Promise<void> {
   return sendJson<void>('DELETE', `${API_BASE}/works/${workId}/tags/${tagId}`);
+}
+
+/** 作品の非表示状態を変更する(PATCH /api/works/{id}) */
+export function setWorkHidden(workId: number, hidden: boolean): Promise<void> {
+  return sendJson<void>('PATCH', `${API_BASE}/works/${workId}`, { hidden });
 }
 
 // ---- タグ ----

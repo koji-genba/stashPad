@@ -50,6 +50,7 @@ export interface WorkDetail {
   file_format: string | null;
   file_size_text: string | null;
   has_folder: boolean;
+  hidden: boolean;
   tags: Tag[];
 }
 

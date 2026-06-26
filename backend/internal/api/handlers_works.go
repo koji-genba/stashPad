@@ -41,6 +41,8 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	order := q.Get("order")
 	pageStr := q.Get("page")
 	limitStr := q.Get("limit")
+	// hidden パラメータ: "1" → 非表示作品のみ、それ以外(未指定/"0") → 可視作品のみ
+	hiddenParam := q.Get("hidden")
 
 	page := 1
 	limit := 40
@@ -122,6 +124,13 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	for _, tid := range excludeTagIDs {
 		whereClause += " AND NOT EXISTS(SELECT 1 FROM work_tags wt WHERE wt.work_id=w.id AND wt.tag_id=?)"
 		args = append(args, tid)
+	}
+
+	// hidden フィルタ: "1" → 非表示のみ、それ以外 → 可視のみ(デフォルト)
+	if hiddenParam == "1" {
+		whereClause += " AND w.hidden=1"
+	} else {
+		whereClause += " AND w.hidden=0"
 	}
 
 	countQuery := "SELECT COUNT(*) FROM works w WHERE 1=1" + whereClause
@@ -218,15 +227,16 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 		fileSizeText sql.NullString
 		rootPath     sql.NullString
 		thumbPath    sql.NullString
+		hiddenInt    int // hidden は INTEGER(0/1)。bool 変換して返す
 	)
 	err = s.db.QueryRow(
 		`SELECT id, rj_number, title, circle, series_name, purchase_date,
 		        work_type, age_rating, file_format, file_size_text,
-		        root_path, thumbnail_path
+		        root_path, thumbnail_path, hidden
 		 FROM works WHERE id=?`, workID,
 	).Scan(&id, &rjNumber, &title, &circle, &seriesName,
 		&purchaseDate, &workType, &ageRating, &fileFormat,
-		&fileSizeText, &rootPath, &thumbPath)
+		&fileSizeText, &rootPath, &thumbPath, &hiddenInt)
 	if err == sql.ErrNoRows {
 		respondError(w, http.StatusNotFound, "作品が見つかりません")
 		return
@@ -266,6 +276,7 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 		"title":      title,
 		"has_folder": rootPath.Valid,
 		"tags":       tags,
+		"hidden":     hiddenInt != 0, // INTEGER 0/1 を bool に変換
 	}
 	setIfValid(result, "rj_number", rjNumber)
 	setIfValid(result, "circle", circle)
@@ -295,6 +306,7 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Title  *string `json:"title"`
 		Circle *string `json:"circle"`
+		Hidden *bool   `json:"hidden"` // 非表示フラグ。true→非表示、false→可視
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respondError(w, http.StatusBadRequest, "JSON パース失敗: "+err.Error())
@@ -325,6 +337,20 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.db.Exec(
 			"UPDATE works SET circle=?, updated_at=datetime('now') WHERE id=?",
 			*body.Circle, workID,
+		); err != nil {
+			respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
+			return
+		}
+	}
+	if body.Hidden != nil {
+		// bool を INTEGER(0/1) に変換して保存
+		hiddenVal := 0
+		if *body.Hidden {
+			hiddenVal = 1
+		}
+		if _, err := s.db.Exec(
+			"UPDATE works SET hidden=?, updated_at=datetime('now') WHERE id=?",
+			hiddenVal, workID,
 		); err != nil {
 			respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
 			return

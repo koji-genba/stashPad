@@ -6,6 +6,7 @@ import {
   fetchWork,
   refreshThumbnail,
   removeTag,
+  setWorkHidden,
   thumbnailUrl,
 } from '@/api/client';
 import FileBrowser from '@/components/FileBrowser';
@@ -34,6 +35,9 @@ export default function WorkDetailPage() {
   const [newTag, setNewTag] = useState('');
   const [busy, setBusy] = useState(false);
   const [tagError, setTagError] = useState<string | null>(null);
+  // 非表示操作用
+  const [hideBusy, setHideBusy] = useState(false);
+  const [hideError, setHideError] = useState<string | null>(null);
   // サムネ再生成が走ったら src にクエリを足して再読込させる
   const [thumbBust, setThumbBust] = useState<number | null>(null);
 
@@ -109,6 +113,36 @@ export default function WorkDetailPage() {
     }
   };
 
+  // この作品を非表示にして一覧へ戻る
+  const onHide = async () => {
+    if (!work) return;
+    if (!window.confirm('この作品を非表示にしますか?')) return;
+    setHideBusy(true);
+    setHideError(null);
+    try {
+      await setWorkHidden(work.id, true);
+      navigate(listBackPath());
+    } catch (err) {
+      setHideError(err instanceof Error ? err.message : '非表示設定に失敗しました');
+      setHideBusy(false);
+    }
+  };
+
+  // 非表示を解除してローカル state を更新
+  const onUnhide = async () => {
+    if (!work) return;
+    setHideBusy(true);
+    setHideError(null);
+    try {
+      await setWorkHidden(work.id, false);
+      setWork((w) => (w ? { ...w, hidden: false } : w));
+    } catch (err) {
+      setHideError(err instanceof Error ? err.message : '非表示解除に失敗しました');
+    } finally {
+      setHideBusy(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className={styles.center}>
@@ -131,8 +165,15 @@ export default function WorkDetailPage() {
     label: string;
     value: string | null | undefined;
     to?: string;
+    href?: string;
   }[] = [
-    { label: 'RJ番号', value: work.rj_number },
+    {
+      label: 'RJ番号',
+      value: work.rj_number,
+      href: work.rj_number
+        ? `https://www.dlsite.com/maniax/work/=/product_id/${encodeURIComponent(work.rj_number)}.html`
+        : undefined,
+    },
     {
       label: 'サークル',
       value: work.circle,
@@ -177,7 +218,16 @@ export default function WorkDetailPage() {
                 <div key={m.label} className={styles.metaRow}>
                   <dt>{m.label}</dt>
                   <dd>
-                    {m.to ? (
+                    {m.href ? (
+                      <a
+                        href={m.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.metaLink}
+                      >
+                        {m.value} ↗
+                      </a>
+                    ) : m.to ? (
                       <Link to={m.to} className={styles.metaLink}>
                         {m.value}
                       </Link>
@@ -189,6 +239,33 @@ export default function WorkDetailPage() {
               ))}
           </dl>
         </div>
+      </div>
+
+      {/* 非表示コントロール */}
+      <div className={styles.hideControl}>
+        {work.hidden ? (
+          <>
+            <span className={styles.hiddenBadge}>非表示</span>
+            <button
+              type="button"
+              className="btn"
+              onClick={onUnhide}
+              disabled={hideBusy}
+            >
+              {hideBusy ? '解除中…' : '非表示を解除'}
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className={`btn ${styles.hideBtn}`}
+            onClick={onHide}
+            disabled={hideBusy}
+          >
+            {hideBusy ? '処理中…' : 'この作品を非表示にする'}
+          </button>
+        )}
+        {hideError && <p className="error">{hideError}</p>}
       </div>
 
       <section className={styles.tagsSection}>

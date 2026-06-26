@@ -1,15 +1,19 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type {
   ImportResult,
   ScanResult,
   TagCleanupResult,
   ThumbnailRebuildResult,
+  WorkListItem,
 } from '@/api/types';
 import {
   cleanupTags,
+  fetchWorks,
   importCsv,
   rebuildThumbnails,
   runScan,
+  setWorkHidden,
 } from '@/api/client';
 import styles from './SettingsPage.module.css';
 
@@ -33,6 +37,14 @@ export default function SettingsPage() {
     null,
   );
   const [rebuildError, setRebuildError] = useState<string | null>(null);
+
+  // 非表示作品一覧
+  const [hiddenWorks, setHiddenWorks] = useState<WorkListItem[]>([]);
+  const [hiddenTotal, setHiddenTotal] = useState(0);
+  const [hiddenLoading, setHiddenLoading] = useState(true);
+  const [hiddenError, setHiddenError] = useState<string | null>(null);
+  // unhide 中の作品 ID セット
+  const [unhidingIds, setUnhidingIds] = useState<Set<number>>(new Set());
 
   const onImport = async () => {
     if (!csvFile) return;
@@ -90,6 +102,45 @@ export default function SettingsPage() {
       );
     } finally {
       setRebuilding(false);
+    }
+  };
+
+  // 非表示作品一覧を取得する
+  // 設定画面では上限 200 件まで表示する。それを超える場合は注記でユーザに知らせる
+  const HIDDEN_LIMIT = 200;
+  const loadHiddenWorks = async () => {
+    setHiddenLoading(true);
+    setHiddenError(null);
+    try {
+      const result = await fetchWorks({ hidden: true, limit: HIDDEN_LIMIT });
+      setHiddenWorks(result.items);
+      setHiddenTotal(result.total);
+    } catch (e) {
+      setHiddenError(e instanceof Error ? e.message : '一覧の取得に失敗しました');
+    } finally {
+      setHiddenLoading(false);
+    }
+  };
+
+  // マウント時に非表示作品一覧をロード
+  useEffect(() => {
+    void loadHiddenWorks();
+  }, []);
+
+  // 非表示を解除してリスト再取得
+  const onUnhide = async (work: WorkListItem) => {
+    setUnhidingIds((prev) => new Set(prev).add(work.id));
+    try {
+      await setWorkHidden(work.id, false);
+      await loadHiddenWorks();
+    } catch (e) {
+      setHiddenError(e instanceof Error ? e.message : '非表示解除に失敗しました');
+    } finally {
+      setUnhidingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(work.id);
+        return next;
+      });
     }
   };
 
@@ -250,6 +301,49 @@ export default function SettingsPage() {
           </p>
         )}
         {rebuildError && <p className={styles.error}>{rebuildError}</p>}
+      </section>
+
+      {/* 非表示の作品 */}
+      <section className={styles.section}>
+        <h2 className={styles.heading}>非表示の作品</h2>
+        <p className="muted">
+          非表示に設定した作品の一覧です。「解除」ボタンで通常表示に戻せます。
+        </p>
+
+        {hiddenLoading && <p className="muted">読み込み中…</p>}
+        {hiddenError && <p className={styles.error}>{hiddenError}</p>}
+
+        {!hiddenLoading && !hiddenError && hiddenWorks.length === 0 && (
+          <p className="faint">非表示の作品はありません</p>
+        )}
+
+        {!hiddenLoading && hiddenWorks.length > 0 && (
+          <ul className={styles.hiddenList}>
+            {hiddenWorks.map((work) => (
+              <li key={work.id} className={styles.hiddenItem}>
+                <Link to={`/works/${work.id}`} className={styles.hiddenTitle}>
+                  {work.title}
+                  {work.rj_number && (
+                    <span className={styles.hiddenRj}>{work.rj_number}</span>
+                  )}
+                </Link>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void onUnhide(work)}
+                  disabled={unhidingIds.has(work.id)}
+                >
+                  {unhidingIds.has(work.id) ? '解除中…' : '解除'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {!hiddenLoading && hiddenTotal > hiddenWorks.length && (
+          <p className="faint">
+            {hiddenTotal} 件中 {hiddenWorks.length} 件を表示しています(上限 {HIDDEN_LIMIT} 件)
+          </p>
+        )}
       </section>
     </div>
   );
