@@ -40,6 +40,7 @@ export default function SettingsPage() {
 
   // 非表示作品一覧
   const [hiddenWorks, setHiddenWorks] = useState<WorkListItem[]>([]);
+  const [hiddenTotal, setHiddenTotal] = useState(0);
   const [hiddenLoading, setHiddenLoading] = useState(true);
   const [hiddenError, setHiddenError] = useState<string | null>(null);
   // unhide 中の作品 ID セット
@@ -105,12 +106,15 @@ export default function SettingsPage() {
   };
 
   // 非表示作品一覧を取得する
+  // 設定画面では上限 200 件まで表示する。それを超える場合は注記でユーザに知らせる
+  const HIDDEN_LIMIT = 200;
   const loadHiddenWorks = async () => {
     setHiddenLoading(true);
     setHiddenError(null);
     try {
-      const result = await fetchWorks({ hidden: true, limit: 200 });
+      const result = await fetchWorks({ hidden: true, limit: HIDDEN_LIMIT });
       setHiddenWorks(result.items);
+      setHiddenTotal(result.total);
     } catch (e) {
       setHiddenError(e instanceof Error ? e.message : '一覧の取得に失敗しました');
     } finally {
@@ -334,6 +338,11 @@ export default function SettingsPage() {
               </li>
             ))}
           </ul>
+        )}
+        {!hiddenLoading && hiddenTotal > hiddenWorks.length && (
+          <p className="faint">
+            {hiddenTotal} 件中 {hiddenWorks.length} 件を表示しています(上限 {HIDDEN_LIMIT} 件)
+          </p>
         )}
       </section>
     </div>

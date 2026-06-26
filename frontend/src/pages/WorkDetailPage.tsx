@@ -171,7 +171,7 @@ export default function WorkDetailPage() {
       label: 'RJ番号',
       value: work.rj_number,
       href: work.rj_number
-        ? `https://www.dlsite.com/maniax/work/=/product_id/${work.rj_number}.html`
+        ? `https://www.dlsite.com/maniax/work/=/product_id/${encodeURIComponent(work.rj_number)}.html`
         : undefined,
     },
     {
