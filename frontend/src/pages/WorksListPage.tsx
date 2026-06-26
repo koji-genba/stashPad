@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { SortKey, WorksResponse } from '@/api/types';
-import { fetchTags, fetchWorks } from '@/api/client';
+import { fetchWorks } from '@/api/client';
+import { useTagStore, useTagNameMap } from '@/store/tagStore';
 import WorkCard from '@/components/WorkCard';
 import TagFacetPanel from '@/components/TagFacetPanel';
 import CircleFacetPanel from '@/components/CircleFacetPanel';
@@ -45,7 +46,9 @@ export default function WorksListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [tagNames, setTagNames] = useState<Map<number, string>>(new Map());
+  // 全タグ一覧を共有ストアから取得し、id→name の Map として参照する。
+  // TagFacetPanel でも同じストアを使うため HTTP リクエストは 1 回だけ発火する。
+  const tagNames = useTagNameMap();
 
   // 検索ボックスは URL と同期(戻る等で反映)
   useEffect(() => {
@@ -74,14 +77,10 @@ export default function WorksListPage() {
     return () => clearTimeout(t);
   }, [qInput, update]);
 
-  // 選択タグのラベル表示用に、全タグ名を一度だけ取得してキャッシュ
+  // マウント時にタグ一覧をプリフェッチ(ストアがキャッシュするので 1 回のみ発火)
   useEffect(() => {
     const ac = new AbortController();
-    fetchTags({}, ac.signal)
-      .then((d) => {
-        setTagNames(new Map(d.items.map((t) => [t.id, t.name])));
-      })
-      .catch(() => {});
+    useTagStore.getState().ensureLoaded(ac.signal);
     return () => ac.abort();
   }, []);
 

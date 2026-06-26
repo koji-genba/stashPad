@@ -1,8 +1,12 @@
 // タグファセット。カテゴリ別にグルーピングし、作品数付きで表示。
 // 選択中タグはトグルできる。スマホはドロワー、PC はサイドパネルとして使われる。
+//
+// q が空の場合 → 共有 tagStore から取得(WorksListPage の ensureLoaded と重複なし)
+// q が非空の場合 → サーバ側 LIKE フィルタを利用するため直接 fetchTags({q}) を呼ぶ
 import { useEffect, useMemo, useState } from 'react';
 import type { TagFacet } from '@/api/types';
 import { fetchTags } from '@/api/client';
+import { useTagStore } from '@/store/tagStore';
 import styles from './TagFacetPanel.module.css';
 
 interface Props {
@@ -33,10 +37,17 @@ const CATEGORY_ORDER = [
 ];
 
 export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
-  const [tags, setTags] = useState<TagFacet[]>([]);
-  const [q, setQ] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
+  const [searchQ, setSearchQ] = useState('');
+  // q が非空のとき用のローカル検索結果
+  const [localTags, setLocalTags] = useState<TagFacet[]>([]);
+  const [localLoading, setLocalLoading] = useState(false);
+  const [localFailed, setLocalFailed] = useState(false);
+
+  // q が空のとき → 共有ストアから参照
+  const storeItems = useTagStore((s) => s.items);
+  const storeLoading = useTagStore((s) => s.loading);
+  const storeFailed = useTagStore((s) => s.error !== null);
+
   // 折りたたみ中のカテゴリ。デフォルトは全て開。
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
@@ -49,27 +60,46 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
     });
   };
 
+  // q が空のとき → ストアに取得を委ねる(WorksListPage が ensureLoaded 済みのケースが多い)
   useEffect(() => {
+    if (searchQ) return;
+    const ac = new AbortController();
+    useTagStore.getState().ensureLoaded(ac.signal);
+    return () => ac.abort();
+  }, [searchQ]);
+
+  // q が非空のとき → サーバ側 LIKE フィルタで絞り込む(250ms デバウンス)
+  useEffect(() => {
+    if (!searchQ) return;
     const ac = new AbortController();
     const t = setTimeout(() => {
-      setLoading(true);
-      setFailed(false);
-      fetchTags(q ? { q } : {}, ac.signal)
+      setLocalLoading(true);
+      setLocalFailed(false);
+      fetchTags({ q: searchQ }, ac.signal)
         .then((d) => {
-          setTags(d.items);
-          setLoading(false);
+          setLocalTags(d.items);
+          setLocalLoading(false);
         })
         .catch(() => {
           if (ac.signal.aborted) return;
-          setFailed(true);
-          setLoading(false);
+          setLocalFailed(true);
+          setLocalLoading(false);
         });
-    }, q ? 250 : 0);
+    }, 250);
     return () => {
       clearTimeout(t);
       ac.abort();
     };
-  }, [q]);
+  }, [searchQ]);
+
+  // 表示に使う実際の tags/loading/failed を q の有無で切り替える
+  const tags = searchQ ? localTags : storeItems;
+  const loading = searchQ ? localLoading : storeLoading;
+  const failed = searchQ ? localFailed : storeFailed;
+
+  // #22: selected/excluded を Set に変換してレンダー内の includes(O(n²)) を排除する
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const excludedSet = useMemo(() => new Set(excluded), [excluded]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, TagFacet[]>();
@@ -92,8 +122,8 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
         className="input"
         type="search"
         placeholder="タグを絞り込み"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
+        value={searchQ}
+        onChange={(e) => setSearchQ(e.target.value)}
       />
       {loading ? (
         <div className={styles.center}>
@@ -106,8 +136,8 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
       ) : (
         grouped.map((g) => {
           const isCollapsed = collapsed.has(g.category);
-          const selCount = g.tags.filter((t) => selected.includes(t.id)).length;
-          const exclCount = g.tags.filter((t) => excluded.includes(t.id)).length;
+          const selCount = g.tags.filter((t) => selectedSet.has(t.id)).length;
+          const exclCount = g.tags.filter((t) => excludedSet.has(t.id)).length;
           const activeCount = selCount + exclCount;
           return (
             <div key={g.category} className={styles.group}>
@@ -126,8 +156,8 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
               {!isCollapsed && (
                 <ul className={styles.tagList}>
                   {g.tags.map((tag) => {
-                    const isSel = selected.includes(tag.id);
-                    const isExcl = excluded.includes(tag.id);
+                    const isSel = selectedSet.has(tag.id);
+                    const isExcl = excludedSet.has(tag.id);
                     return (
                       <li key={tag.id}>
                         <button
