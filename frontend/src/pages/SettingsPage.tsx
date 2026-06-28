@@ -15,6 +15,7 @@ import {
   runScan,
   setWorkHidden,
 } from '@/api/client';
+import { useTagStore } from '@/store/tagStore';
 import styles from './SettingsPage.module.css';
 
 export default function SettingsPage() {
@@ -54,6 +55,8 @@ export default function SettingsPage() {
     try {
       const result = await importCsv(csvFile);
       setImportResult(result);
+      // タグキャッシュが古くなるので強制再取得
+      useTagStore.getState().refresh();
     } catch (e) {
       setImportError(e instanceof Error ? e.message : 'インポートに失敗しました');
     } finally {
@@ -68,6 +71,8 @@ export default function SettingsPage() {
     try {
       const result = await runScan();
       setScanResult(result);
+      // スキャンで作品/タグの構成が変わりうるのでキャッシュ更新
+      useTagStore.getState().refresh();
     } catch (e) {
       setScanError(e instanceof Error ? e.message : 'スキャンに失敗しました');
     } finally {
@@ -82,6 +87,8 @@ export default function SettingsPage() {
     try {
       const result = await cleanupTags();
       setCleanupResult(result);
+      // 未使用タグが消えるのでキャッシュ更新
+      useTagStore.getState().refresh();
     } catch (e) {
       setCleanupError(e instanceof Error ? e.message : 'タグ削除に失敗しました');
     } finally {

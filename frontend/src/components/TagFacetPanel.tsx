@@ -63,9 +63,7 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
   // q が空のとき → ストアに取得を委ねる(WorksListPage が ensureLoaded 済みのケースが多い)
   useEffect(() => {
     if (searchQ) return;
-    const ac = new AbortController();
-    useTagStore.getState().ensureLoaded(ac.signal);
-    return () => ac.abort();
+    useTagStore.getState().ensureLoaded();
   }, [searchQ]);
 
   // q が非空のとき → サーバ側 LIKE フィルタで絞り込む(250ms デバウンス)

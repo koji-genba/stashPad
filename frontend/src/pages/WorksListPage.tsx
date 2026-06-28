@@ -79,9 +79,7 @@ export default function WorksListPage() {
 
   // マウント時にタグ一覧をプリフェッチ(ストアがキャッシュするので 1 回のみ発火)
   useEffect(() => {
-    const ac = new AbortController();
-    useTagStore.getState().ensureLoaded(ac.signal);
-    return () => ac.abort();
+    useTagStore.getState().ensureLoaded();
   }, []);
 
   useEffect(() => {
