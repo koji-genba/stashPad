@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/koji-genba/stashpad/backend/internal/media"
@@ -491,8 +492,12 @@ func (s *Server) handleWorkThumbnail(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, st.Name(), st.ModTime(), f)
 }
 
+// thumbCheckThrottle はサムネイルチェックを抑制する期間。
+// 同じ作品に対して詳細ページを開くたびに数百ファイルの Stat が走るのを防ぐ。
+const thumbCheckThrottle = 24 * time.Hour
+
 // handleRefreshThumbnail は POST /api/works/{id}/thumbnail/refresh を処理する。
-// mtime 判定でサムネイルを再生成し、結果を返す。
+// 前回チェックから thumbCheckThrottle 未満の場合は IO を完全スキップして返す。
 func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) {
 	workID, err := parseWorkID(r)
 	if err != nil {
@@ -500,10 +505,13 @@ func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var rootPath sql.NullString
+	var (
+		rootPath       sql.NullString
+		thumbCheckedAt sql.NullString
+	)
 	if err := s.db.QueryRow(
-		"SELECT root_path FROM works WHERE id=?", workID,
-	).Scan(&rootPath); err == sql.ErrNoRows {
+		"SELECT root_path, thumb_checked_at FROM works WHERE id=?", workID,
+	).Scan(&rootPath, &thumbCheckedAt); err == sql.ErrNoRows {
 		respondError(w, http.StatusNotFound, "作品が見つかりません")
 		return
 	} else if err != nil {
@@ -511,9 +519,25 @@ func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// root_path が NULL の作品はフォルダが存在しないのでスキップ
 	if !rootPath.Valid {
 		respondJSON(w, http.StatusOK, map[string]any{"refreshed": false})
 		return
+	}
+
+	// 前回チェックから thumbCheckThrottle 未満なら IO を一切行わずに返す。
+	// SQLite の datetime 比較: strftime('%s', 'now') で UNIX 秒を取得し秒数差で判定する。
+	// (datetime(...) との比較よりも整数演算の方が精度・移植性ともに安定している)
+	if thumbCheckedAt.Valid {
+		var isThrottled bool
+		throttleSec := int64(thumbCheckThrottle.Seconds())
+		if err := s.db.QueryRow(
+			"SELECT (strftime('%s', 'now') - strftime('%s', ?)) < ?",
+			thumbCheckedAt.String, throttleSec,
+		).Scan(&isThrottled); err == nil && isThrottled {
+			respondJSON(w, http.StatusOK, map[string]any{"refreshed": false})
+			return
+		}
 	}
 
 	thumbsDir := filepath.Join(s.cfg.DataDir, "thumbs")
@@ -533,6 +557,14 @@ func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) 
 			respondError(w, http.StatusInternalServerError, "thumbnail_path 更新失敗: "+uErr.Error())
 			return
 		}
+	}
+
+	// 再生成の有無に関わらず、チェックを実行した時刻を記録してスロットルを有効化する
+	if _, uErr := s.db.Exec(
+		"UPDATE works SET thumb_checked_at=datetime('now') WHERE id=?", workID,
+	); uErr != nil {
+		respondError(w, http.StatusInternalServerError, "thumb_checked_at 更新失敗: "+uErr.Error())
+		return
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{"refreshed": regenerated})

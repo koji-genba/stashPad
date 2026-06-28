@@ -243,3 +243,50 @@ func TestOpenJournalModeWAL(t *testing.T) {
 		t.Errorf("journal_mode = %q, want wal", mode)
 	}
 }
+
+// TestOpenCreatesWorksIndexes は Open 後に migration 003 で定義されたインデックスが作られていることをテスト。
+func TestOpenCreatesWorksIndexes(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open 失敗: %v", err)
+	}
+	defer db.Close()
+
+	// 期待インデックス一覧
+	expectedIndexes := []string{
+		"idx_works_hidden_purchase",
+		"idx_works_hidden_circle",
+		"idx_works_hidden_title",
+		"idx_works_hidden_created",
+		"idx_works_hidden_series",
+	}
+
+	// sqlite_master からインデックス一覧を取得
+	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='works' ORDER BY name")
+	if err != nil {
+		t.Fatalf("sqlite_master クエリ失敗: %v", err)
+	}
+	defer rows.Close()
+
+	actualIndexes := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		actualIndexes[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 期待インデックスが全て存在することを確認
+	for _, idx := range expectedIndexes {
+		if !actualIndexes[idx] {
+			t.Errorf("インデックス %q が存在しない", idx)
+		}
+	}
+}

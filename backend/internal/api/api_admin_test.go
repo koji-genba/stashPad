@@ -257,6 +257,124 @@ func TestRebuildThumbnails(t *testing.T) {
 	}
 }
 
+// ---- POST /api/works/{id}/thumbnail/refresh スロットル -------------------
+
+// TestRefreshThumbnailUpdatesCheckedAt: 初回 refresh で thumb_checked_at が設定される。
+func TestRefreshThumbnailUpdatesCheckedAt(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	root := makeWorkDir(t, database, "RJ840001", nil)
+	writePNG(t, filepath.Join(root, "cover.png"), 100, 100)
+	var id int64
+	database.QueryRow("SELECT id FROM works WHERE rj_number='RJ840001'").Scan(&id)
+
+	req := httptest.NewRequest(http.MethodPost, urlf("/api/works/%d/thumbnail/refresh", id), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	// thumb_checked_at が NULL でなくなっていることを確認
+	var checkedAt sql.NullString
+	database.QueryRow("SELECT thumb_checked_at FROM works WHERE id=?", id).Scan(&checkedAt)
+	if !checkedAt.Valid {
+		t.Error("refresh 後に thumb_checked_at が NULL のまま")
+	}
+}
+
+// TestRefreshThumbnailThrottledWithin24h: 24h 以内に checked_at がある場合、
+// thumb.Refresh は呼ばれずに refreshed=false が返る。
+func TestRefreshThumbnailThrottledWithin24h(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	root := makeWorkDir(t, database, "RJ840002", nil)
+	writePNG(t, filepath.Join(root, "cover.png"), 100, 100)
+	var id int64
+	database.QueryRow("SELECT id FROM works WHERE rj_number='RJ840002'").Scan(&id)
+
+	// thumb_checked_at を現在時刻にセット(24h 以内 → スロットル対象)
+	if _, err := database.Exec(
+		"UPDATE works SET thumb_checked_at=datetime('now') WHERE id=?", id,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, urlf("/api/works/%d/thumbnail/refresh", id), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Refreshed bool `json:"refreshed"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Refreshed {
+		t.Error("スロットル中なのに refreshed=true が返った")
+	}
+
+	// thumb_checked_at の値が変わっていないこと(再 UPDATE されない)
+	var checkedAt1 sql.NullString
+	database.QueryRow("SELECT thumb_checked_at FROM works WHERE id=?", id).Scan(&checkedAt1)
+
+	req2 := httptest.NewRequest(http.MethodPost, urlf("/api/works/%d/thumbnail/refresh", id), nil)
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+
+	var checkedAt2 sql.NullString
+	database.QueryRow("SELECT thumb_checked_at FROM works WHERE id=?", id).Scan(&checkedAt2)
+	if checkedAt1.String != checkedAt2.String {
+		t.Errorf("スロットル中に thumb_checked_at が変わった: %q → %q", checkedAt1.String, checkedAt2.String)
+	}
+
+	// walk が走っていない証拠: cover.png を削除してもスロットル中は 200 で返る
+	if err := os.Remove(filepath.Join(root, "cover.png")); err != nil {
+		t.Fatal(err)
+	}
+	req3 := httptest.NewRequest(http.MethodPost, urlf("/api/works/%d/thumbnail/refresh", id), nil)
+	rec3 := httptest.NewRecorder()
+	h.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusOK {
+		t.Errorf("cover 削除後スロットル中: status = %d, want 200", rec3.Code)
+	}
+}
+
+// TestRefreshThumbnailReExpiresAfter24h: 25 時間前に checked_at が設定されている場合、
+// スロットルを通過して thumb.Refresh が実行され、checked_at が更新される。
+func TestRefreshThumbnailReExpiresAfter24h(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	root := makeWorkDir(t, database, "RJ840003", nil)
+	writePNG(t, filepath.Join(root, "cover.png"), 100, 100)
+	var id int64
+	database.QueryRow("SELECT id FROM works WHERE rj_number='RJ840003'").Scan(&id)
+
+	// thumb_checked_at を 25 時間前にセット(有効期限切れ → スロットル対象外)
+	if _, err := database.Exec(
+		"UPDATE works SET thumb_checked_at=datetime('now', '-25 hours') WHERE id=?", id,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var oldCheckedAt sql.NullString
+	database.QueryRow("SELECT thumb_checked_at FROM works WHERE id=?", id).Scan(&oldCheckedAt)
+
+	req := httptest.NewRequest(http.MethodPost, urlf("/api/works/%d/thumbnail/refresh", id), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	// thumb_checked_at が新しい値に更新されていること
+	var newCheckedAt sql.NullString
+	database.QueryRow("SELECT thumb_checked_at FROM works WHERE id=?", id).Scan(&newCheckedAt)
+	if !newCheckedAt.Valid {
+		t.Error("refresh 後に thumb_checked_at が NULL")
+	}
+	if oldCheckedAt.String == newCheckedAt.String {
+		t.Errorf("thumb_checked_at が更新されていない: %q", newCheckedAt.String)
+	}
+}
+
 // ---- POST /api/import/csv ----------------------------------------------------
 
 // multipartCSV は file フィールドに CSV 内容を持つ multipart リクエストを組み立てる。
