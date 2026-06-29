@@ -13,6 +13,7 @@ import {
   usePlayerStore,
 } from '@/store/playerStore';
 import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { formatTime } from '@/utils/format';
 import QueueScreen from './QueueScreen';
 import styles from './FullscreenPlayer.module.css';
@@ -43,15 +44,7 @@ export default function FullscreenPlayer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlay.playerOpen, overlay.queueOpen]);
 
-  // body スクロールロック(ImageViewer と同じイディオム)
-  useEffect(() => {
-    if (!overlay.playerOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [overlay.playerOpen]);
+  useBodyScrollLock(overlay.playerOpen);
 
   // スワイプで閉じる(ヘッダ〜アートワーク領域に touchstart/touchend を設置)
   const touchStartX = useRef<number | null>(null);

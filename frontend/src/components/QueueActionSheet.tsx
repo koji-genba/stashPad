@@ -5,6 +5,7 @@
 import { useEffect } from 'react';
 import type { EnqueueInput } from '@/store/playerStore';
 import { usePlayerStore } from '@/store/playerStore';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import styles from './QueueActionSheet.module.css';
 
 interface Props {
@@ -17,14 +18,7 @@ interface Props {
 }
 
 export default function QueueActionSheet({ name, input, onClose }: Props) {
-  // 表示中は body スクロールロック(FullscreenPlayer.tsx と同じイディオム)
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, []);
+  useBodyScrollLock(true);
 
   // Escape キーで閉じる
   useEffect(() => {
