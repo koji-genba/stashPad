@@ -332,7 +332,7 @@ RJ404669_耳舐め&耳ふ～サンドイッチ ダウナー妹と低音姉【R-1
 | Method | Path | 説明 |
 |--------|------|------|
 | POST | `/works/{id}/plays` | 再生開始の記録 `{path}` |
-| GET | `/history?page=` | 最近再生した作品(作品単位でグルーピング、最終再生日時・ファイル付き) |
+| GET | `/history?page=&q=&sort=&order=` | 最近再生した作品(作品単位でグルーピング、最終再生日時・ファイル付き)。`q` タイトル絞り込み・`sort`(last_played/play_count)・`order`(desc/asc) |
 
 ### 管理
 

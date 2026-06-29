@@ -349,8 +349,24 @@ describe('fetchHistory', () => {
     fetchMock = mockFetchOk({ items: [], page: 3 });
     vi.stubGlobal('fetch', fetchMock);
 
-    await fetchHistory(3);
+    await fetchHistory({ page: 3 });
     expect(fetchMock).toHaveBeenCalledWith('/api/history?page=3', { signal: undefined });
+  });
+
+  it('q・sort・order を指定できる', async () => {
+    fetchMock = mockFetchOk({ items: [], page: 1 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchHistory({ page: 1, q: '猫', sort: 'play_count', order: 'asc' });
+    const expected = new URLSearchParams();
+    expected.set('page', '1');
+    expected.set('q', '猫');
+    expected.set('sort', 'play_count');
+    expected.set('order', 'asc');
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/history?${expected.toString()}`,
+      { signal: undefined },
+    );
   });
 });
 

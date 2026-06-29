@@ -99,6 +99,17 @@ export interface HistoryResponse {
   limit: number;
 }
 
+export type HistorySort = 'last_played' | 'play_count';
+export type HistoryOrder = 'asc' | 'desc';
+
+/** GET /api/history のクエリパラメータ */
+export interface HistoryParams {
+  page?: number;
+  q?: string;
+  sort?: HistorySort;
+  order?: HistoryOrder;
+}
+
 /** POST /api/import/csv のレスポンス */
 export interface ImportResult {
   created: number;
