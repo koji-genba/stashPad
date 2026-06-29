@@ -27,6 +27,10 @@ function parseTags(value: string | null): number[] {
     .filter((n) => Number.isFinite(n) && n > 0);
 }
 
+// フィルタ変更が結果セット全体に影響するとき、ユーザーが先頭に戻れるよう
+// スクロールトップをオプションで指示できる型
+type UpdateOptions = { scrollToTop?: boolean };
+
 export default function WorksListPage() {
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
@@ -56,14 +60,19 @@ export default function WorksListPage() {
     setQInput(q);
   }, [q]);
 
-  // setParams の関数形式を使い、タイマー発火時に最新の params を参照する
-  const update = useCallback((mut: (p: URLSearchParams) => void) => {
-    setParams((prev) => {
-      const next = new URLSearchParams(prev);
-      mut(next);
-      return next;
-    }, { replace: false });
-  }, [setParams]);
+  // setParams の関数形式を使い、タイマー発火時に最新の params を参照する。
+  // scrollToTop が true のとき先頭に戻す(結果セットが大きく変わる操作で指定)。
+  const update = useCallback(
+    (mut: (p: URLSearchParams) => void, opts?: UpdateOptions) => {
+      setParams((prev) => {
+        const next = new URLSearchParams(prev);
+        mut(next);
+        return next;
+      }, { replace: false });
+      if (opts?.scrollToTop) window.scrollTo(0, 0);
+    },
+    [setParams],
+  );
 
   // 入力を 300ms デバウンスして URL に反映(リアルタイム検索)
   useEffect(() => {
@@ -73,7 +82,7 @@ export default function WorksListPage() {
         if (qInput) p.set('q', qInput);
         else p.delete('q');
         p.delete('page');
-      });
+      }, { scrollToTop: true });
     }, 300);
     return () => clearTimeout(t);
   }, [qInput, update]);
@@ -125,7 +134,7 @@ export default function WorksListPage() {
       if (qInput) p.set('q', qInput);
       else p.delete('q');
       p.delete('page');
-    });
+    }, { scrollToTop: true });
   };
 
   // タグの 3 状態サイクル: 未選択 → 含む → 除外 → 未選択
@@ -151,7 +160,7 @@ export default function WorksListPage() {
       if (exclSet.size > 0) p.set('exclude_tags', [...exclSet].join(','));
       else p.delete('exclude_tags');
       p.delete('page');
-    });
+    }, { scrollToTop: true });
   };
 
   // チップの ✕ クリック: 3 状態サイクルを経由せず、含む/除外を直接解除する
@@ -162,7 +171,7 @@ export default function WorksListPage() {
       if (set.size > 0) p.set(key, [...set].join(','));
       else p.delete(key);
       p.delete('page');
-    });
+    }, { scrollToTop: true });
   };
 
   const setCircle = (name: string) => {
@@ -170,31 +179,47 @@ export default function WorksListPage() {
       if (name) p.set('circle', name);
       else p.delete('circle');
       p.delete('page');
-    });
+    }, { scrollToTop: true });
   };
 
   const setSort = (s: SortKey) => {
     update((p) => {
       p.set('sort', s);
       p.delete('page');
-    });
+    }, { scrollToTop: true });
   };
 
   const goPage = (n: number) => {
-    update((p) => p.set('page', String(n)));
-    window.scrollTo(0, 0);
+    // ページ送りでも先頭に戻す(update 経由に統一し直接呼び出しを排除)
+    update((p) => p.set('page', String(n)), { scrollToTop: true });
   };
 
   const clearParam = (key: 'circle' | 'series') => {
     update((p) => {
       p.delete(key);
       p.delete('page');
-    });
+    }, { scrollToTop: true });
+  };
+
+  // q を含む全フィルタを一括削除し、入力欄もリセットする
+  const clearAllFilters = () => {
+    update((p) => {
+      p.delete('q');
+      p.delete('tags');
+      p.delete('exclude_tags');
+      p.delete('circle');
+      p.delete('series');
+      p.delete('page');
+    }, { scrollToTop: true });
+    setQInput('');
   };
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
   // タグ絞り込みボタンのバッジ: 含む + 除外の合計
   const tagFilterCount = tags.length + excludeTags.length;
+
+  // chips セクションの表示条件。q 単独は検索ボックス本体に見えるため chip 対象外とする。
+  const hasChips = tags.length > 0 || excludeTags.length > 0 || !!circle || !!series;
 
   return (
     <div className={styles.layout}>
@@ -242,7 +267,7 @@ export default function WorksListPage() {
             </select>
           </div>
 
-          {(tags.length > 0 || excludeTags.length > 0 || circle || series) && (
+          {hasChips && (
             <div className={styles.chips}>
               {circle && (
                 <button
@@ -289,6 +314,9 @@ export default function WorksListPage() {
                 </button>
               ))}
               {tags.length > 1 && <span className={styles.chipNote}>(AND 条件)</span>}
+              <button className={styles.clearAll} onClick={clearAllFilters}>
+                全てクリア
+              </button>
             </div>
           )}
         </div>

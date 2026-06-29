@@ -93,6 +93,22 @@
   border-color: rgba(220, 38, 38, 0.6);
   color: #fca5a5;
 }
+/* chip と区別できるアクションボタン。chip(アクセントカラー)ではなく
+   ニュートラルな色味にして「フィルタではなく操作」と視覚的に区別する */
+.clearAll {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  margin-left: auto;
+}
+.clearAll:hover {
+  color: var(--text);
+}
 
 .resultCount {
   font-size: 12px;
