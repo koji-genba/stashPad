@@ -3,6 +3,7 @@
 import type {
   CirclesResponse,
   EntriesResponse,
+  HistoryParams,
   HistoryResponse,
   ImportResult,
   ScanResult,
@@ -180,8 +181,13 @@ export function recordPlay(workId: number, path: string): Promise<void> {
   return sendJson<void>('POST', `${API_BASE}/works/${workId}/plays`, { path });
 }
 
-export function fetchHistory(page = 1, signal?: AbortSignal): Promise<HistoryResponse> {
-  return getJson<HistoryResponse>(`${API_BASE}/history?page=${page}`, signal);
+export function fetchHistory(params: HistoryParams = {}, signal?: AbortSignal): Promise<HistoryResponse> {
+  const sp = new URLSearchParams();
+  sp.set('page', String(params.page ?? 1));
+  if (params.q) sp.set('q', params.q);
+  if (params.sort) sp.set('sort', params.sort);
+  if (params.order) sp.set('order', params.order);
+  return getJson<HistoryResponse>(`${API_BASE}/history?${sp.toString()}`, signal);
 }
 
 // ---- 管理 ----

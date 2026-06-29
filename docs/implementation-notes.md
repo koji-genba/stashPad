@@ -185,7 +185,7 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
 
 リクエスト `{"path": "mp3/01_オープニング.mp3"}` → 201。
 
-### GET /api/history?page=1
+### GET /api/history?page=1&q=&sort=&order=
 
 ```json
 {
@@ -201,7 +201,13 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
 }
 ```
 
-作品単位でグルーピングし、最終再生日時の降順。
+作品単位でグルーピング(window 関数 `ROW_NUMBER`/`COUNT(*) OVER` で集計)。クエリパラメータ:
+
+- `q`: 作品タイトルの部分一致フィルタ
+- `sort`: `last_played`(既定) / `play_count`。ホワイトリスト照合のみで SQL に渡す
+- `order`: `desc`(既定) / `asc`
+
+既定は最終再生日時の降順。
 
 ### POST /api/import/csv
 
