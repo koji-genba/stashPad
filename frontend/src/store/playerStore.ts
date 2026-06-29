@@ -2,6 +2,7 @@
 // <audio> 要素自体はルート直下の <AudioPlayer> が ref で保持し続け、
 // ページ遷移しても unmount しない。本ストアは「何を・どこまで再生しているか」を持つ。
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { Entry } from '@/api/types';
 import { fileUrl, recordPlay, thumbnailUrl } from '@/api/client';
 import { joinPath } from '@/utils/format';
@@ -86,7 +87,11 @@ export const currentSrc = (s: PlayerState): string | null => {
   return t ? fileUrl(t.workId, t.path) : null;
 };
 
-export const usePlayerStore = create<PlayerState>((set, get) => ({
+export const usePlayerStore = create<PlayerState>()(
+  // playbackRate と volume のみ永続化。queue 等の揮発状態はファイルが消えている
+  // 可能性があるためセッションをまたいで復元しない(FullscreenPlayer と同じイディオム)
+  persist(
+    (set, get) => ({
   queue: [],
   index: -1,
   isPlaying: false,
@@ -266,7 +271,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       set({ isPlaying: false });
     }
   },
-}));
+    }),
+    {
+      name: 'stashpad-player',
+      storage: createJSONStorage(() => localStorage),
+      // 揮発状態(queue/index/isPlaying 等)は永続化しない。
+      // 次回起動時にファイルが存在しない可能性があるため。
+      partialize: (s) => ({
+        playbackRate: s.playbackRate,
+        volume: s.volume,
+      }),
+      version: 1,
+    },
+  ),
+);
 
 // zustand の set / get の型エイリアス(ヘルパで使う)
 type SetState = (partial: Partial<PlayerState>) => void;

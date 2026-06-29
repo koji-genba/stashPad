@@ -833,3 +833,30 @@ describe('volume / 音量', () => {
     expect(usePlayerStore.getState().volume).toBe(1);
   });
 });
+
+describe('永続化(persist middleware)', () => {
+  // このブロック専用で localStorage をリセット。他テストへの汚染を防ぐ。
+  beforeEach(() => {
+    localStorage.clear();
+    resetStore();
+  });
+
+  it('setRate を呼ぶと localStorage の stashpad-player に playbackRate が反映される', () => {
+    usePlayerStore.getState().setRate(1.5);
+    const stored = JSON.parse(localStorage.getItem('stashpad-player')!);
+    expect(stored.state.playbackRate).toBe(1.5);
+  });
+
+  it('setVolume を呼ぶと localStorage の stashpad-player に volume が反映される', () => {
+    usePlayerStore.getState().setVolume(0.7);
+    const stored = JSON.parse(localStorage.getItem('stashpad-player')!);
+    expect(stored.state.volume).toBe(0.7);
+  });
+
+  it('queue / currentTime / isPlaying / index などの揮発 state は localStorage に書き込まれない(partialize の検証)', () => {
+    usePlayerStore.getState().setRate(1.25);
+    const stored = JSON.parse(localStorage.getItem('stashpad-player')!);
+    // partialize で絞り込んだ state には playbackRate と volume のみ存在する
+    expect(Object.keys(stored.state)).toEqual(['playbackRate', 'volume']);
+  });
+});
