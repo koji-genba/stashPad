@@ -7,6 +7,7 @@ import WorkCard from '@/components/WorkCard';
 import TagFacetPanel from '@/components/TagFacetPanel';
 import CircleFacetPanel from '@/components/CircleFacetPanel';
 import { saveListSearch } from '@/lib/listSearchMemory';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import styles from './WorksListPage.module.css';
 
 const LIMIT = 40;
@@ -116,15 +117,7 @@ export default function WorksListPage() {
     saveListSearch(params.toString());
   }, [params]);
 
-  // ドロワーが開いている間は body スクロールをロック(FullscreenPlayer と同じイディオム)
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [drawerOpen]);
+  useBodyScrollLock(drawerOpen);
 
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();
