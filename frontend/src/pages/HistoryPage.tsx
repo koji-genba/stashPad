@@ -18,23 +18,16 @@ export default function HistoryPage() {
   const [sort, setSort] = useState<HistorySort>('last_played');
   const [order, setOrder] = useState<HistoryOrder>('desc');
 
-  // qInput を 300ms デバウンスして q に反映
+  // qInput を 300ms デバウンスして q に反映。フィルタ変更時はページを先頭に戻す。
+  // データ取得 effect は [page, q, ...] を見るので、ここで page も一緒に確定させて
+  // 二重 fetch(古い page での取得 → page=1 での再取得)を防ぐ。
   useEffect(() => {
     const t = setTimeout(() => {
       setQ(qInput);
+      setPage(1);
     }, 300);
     return () => clearTimeout(t);
   }, [qInput]);
-
-  // q が変わったらページを先頭に戻す
-  useEffect(() => {
-    setPage(1);
-  }, [q]);
-
-  // sort/order が変わったらページを先頭に戻す
-  useEffect(() => {
-    setPage(1);
-  }, [sort, order]);
 
   // データ取得
   useEffect(() => {
@@ -71,16 +64,23 @@ export default function HistoryPage() {
         <select
           className={styles.select}
           value={sort}
-          onChange={(e) => setSort(e.target.value as HistorySort)}
+          onChange={(e) => {
+            setSort(e.target.value as HistorySort);
+            setPage(1);
+          }}
         >
           <option value="last_played">最終再生日</option>
           <option value="play_count">再生回数</option>
         </select>
         <button
           className="btn"
-          onClick={() => setOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+          aria-label={order === 'desc' ? '昇順に切り替え' : '降順に切り替え'}
+          onClick={() => {
+            setOrder((o) => (o === 'desc' ? 'asc' : 'desc'));
+            setPage(1);
+          }}
         >
-          {order === 'desc' ? '降順' : '昇順'}
+          {order === 'desc' ? '降順 ↓' : '昇順 ↑'}
         </button>
       </div>
 
