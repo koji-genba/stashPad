@@ -211,6 +211,7 @@ export default function WorksListPage() {
       p.delete('series');
       p.delete('page');
     }, { scrollToTop: true });
+    // URL→qInput 同期の useEffect は次レンダー待ちになるため、入力欄は即時クリア
     setQInput('');
   };
 

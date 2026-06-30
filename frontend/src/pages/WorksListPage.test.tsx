@@ -2,7 +2,7 @@
 // フィルタドロワー開閉時の body スクロールロック動作を検証する。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useSearchParams } from 'react-router-dom';
 
 // API クライアントをモック化
 vi.mock('@/api/client', () => ({
@@ -32,12 +32,22 @@ vi.mock('@/components/WorkCard', () => ({ default: () => null }));
 import WorksListPage from './WorksListPage';
 import { fetchWorks } from '@/api/client';
 
+// useSearchParams の現在値をテストから直接覗くためのプローブコンポーネント。
+// 単独レンダー時は `getParams` を呼ばないテストには無影響。
 function renderPage(initialUrl = '/') {
-  return render(
+  let currentParams = new URLSearchParams();
+  function Probe() {
+    const [p] = useSearchParams();
+    currentParams = p;
+    return null;
+  }
+  const utils = render(
     <MemoryRouter initialEntries={[initialUrl]}>
       <WorksListPage />
+      <Probe />
     </MemoryRouter>,
   );
+  return { ...utils, getParams: () => currentParams };
 }
 
 describe('WorksListPage body スクロールロック', () => {
@@ -146,6 +156,8 @@ describe('フィルタ操作時のスクロールトップ (#36)', () => {
 describe('全てクリアボタン (#30)', () => {
   beforeEach(() => {
     vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    // 他 describe の状態に依存せず自己完結させる
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
   });
 
   afterEach(() => {
@@ -165,8 +177,8 @@ describe('全てクリアボタン (#30)', () => {
     });
   });
 
-  it('「全てクリア」をクリックすると URL から circle が消え chips が非表示になる', async () => {
-    renderPage('/?circle=Foo&tags=1');
+  it('「全てクリア」をクリックすると URL から q / tags / circle が全て消える', async () => {
+    const { getParams } = renderPage('/?q=hello&circle=Foo&tags=1&exclude_tags=2&series=Bar&page=3');
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '全てクリア' })).toBeInTheDocument();
@@ -174,9 +186,14 @@ describe('全てクリアボタン (#30)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '全てクリア' }));
 
-    // chips セクションごと消えることで URL パラメータが消えたことを間接確認
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: '全てクリア' })).not.toBeInTheDocument();
+      const p = getParams();
+      expect(p.has('q')).toBe(false);
+      expect(p.has('tags')).toBe(false);
+      expect(p.has('exclude_tags')).toBe(false);
+      expect(p.has('circle')).toBe(false);
+      expect(p.has('series')).toBe(false);
+      expect(p.has('page')).toBe(false);
     });
   });
 
