@@ -10,6 +10,7 @@ import {
   thumbnailUrl,
 } from '@/api/client';
 import FileBrowser from '@/components/FileBrowser';
+import Thumbnail from '@/components/Thumbnail';
 import { formatDateTime } from '@/utils/format';
 import { listBackPath } from '@/lib/listSearchMemory';
 import styles from './WorkDetailPage.module.css';
@@ -200,13 +201,9 @@ export default function WorkDetailPage() {
       </Link>
 
       <div className={styles.header}>
-        <img
+        <Thumbnail
           className={styles.thumb}
           src={thumbBust ? `${thumbnailUrl(work.id)}?t=${thumbBust}` : thumbnailUrl(work.id)}
-          alt=""
-          onError={(e) => {
-            e.currentTarget.style.visibility = 'hidden';
-          }}
         />
         <div className={styles.headInfo}>
           <h1 className={styles.title}>{work.title}</h1>

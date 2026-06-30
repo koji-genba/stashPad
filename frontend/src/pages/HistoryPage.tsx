@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { HistoryItem, HistorySort, HistoryOrder } from '@/api/types';
 import { fetchHistory } from '@/api/client';
+import Thumbnail from '@/components/Thumbnail';
 import { basename, formatDateTime } from '@/utils/format';
 import styles from './HistoryPage.module.css';
 
@@ -98,14 +99,10 @@ export default function HistoryPage() {
             {items.map((item) => (
               <li key={item.work.id}>
                 <Link to={`/works/${item.work.id}`} className={styles.row}>
-                  <img
+                  <Thumbnail
                     className={styles.thumb}
                     src={item.work.thumbnail_url}
-                    alt=""
                     loading="lazy"
-                    onError={(e) => {
-                      e.currentTarget.style.visibility = 'hidden';
-                    }}
                   />
                   <div className={styles.info}>
                     <div className={styles.workTitle}>{item.work.title}</div>

@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import Thumbnail from './Thumbnail';
 import styles from './WorkCard.module.css';
 
 interface Props {
@@ -24,15 +25,7 @@ export default function WorkCard({
   return (
     <Link to={`/works/${id}`} className={styles.card}>
       <div className={styles.thumbWrap}>
-        <img
-          className={styles.thumb}
-          src={thumbnailUrl}
-          alt=""
-          loading="lazy"
-          onError={(e) => {
-            e.currentTarget.classList.add(styles.thumbBroken);
-          }}
-        />
+        <Thumbnail className={styles.thumb} src={thumbnailUrl} loading="lazy" />
         {!hasFolder && <span className={styles.notImported}>未取込</span>}
         {ageRating && <span className={styles.age}>{ageRating}</span>}
         {badge && <span className={styles.badge}>{badge}</span>}

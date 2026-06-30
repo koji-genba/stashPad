@@ -21,9 +21,6 @@
   height: 100%;
   object-fit: cover;
 }
-.thumbBroken {
-  visibility: hidden;
-}
 
 .notImported {
   position: absolute;
