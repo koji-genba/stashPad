@@ -5,6 +5,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -93,7 +94,10 @@ func (s *Server) Router(middlewares ...func(http.Handler) http.Handler) http.Han
 func respondJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		// ヘッダーは送信済みなのでステータスは変えられない。気付くためにログだけ残す。
+		log.Printf("respondJSON: JSON エンコード失敗: %v", err)
+	}
 }
 
 // respondError はエラーレスポンスを返す。

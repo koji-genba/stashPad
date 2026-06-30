@@ -102,6 +102,46 @@ func TestWorkThumbnailServed(t *testing.T) {
 	}
 }
 
+// サムネイルは Last-Modified による 304 だけでなく Cache-Control でブラウザキャッシュも効かせる。
+func TestWorkThumbnailCacheControl(t *testing.T) {
+	h, database, id := newTestServer(t)
+	tmp := t.TempDir()
+	thumbFile := filepath.Join(tmp, "thumb.jpg")
+	if err := os.WriteFile(thumbFile, []byte("jpegdata"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(
+		"UPDATE works SET thumbnail_path=? WHERE id=?", thumbFile, id); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, urlf("/api/works/%d/thumbnail", id))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	const want = "private, max-age=3600"
+	if cc := w.Header().Get("Cache-Control"); cc != want {
+		t.Errorf("Cache-Control = %q, want %q", cc, want)
+	}
+
+	// If-Modified-Since で 304 になるケースでも Cache-Control が落ちないことを確認する
+	// (http.ServeContent の挙動が変わったり、Set 順序を変えるリファクタで気付けるように)。
+	lastMod := w.Header().Get("Last-Modified")
+	if lastMod == "" {
+		t.Fatal("Last-Modified が返っていない")
+	}
+	req := httptest.NewRequest(http.MethodGet, urlf("/api/works/%d/thumbnail", id), nil)
+	req.Header.Set("If-Modified-Since", lastMod)
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, req)
+	if w2.Code != http.StatusNotModified {
+		t.Fatalf("304 期待: status = %d", w2.Code)
+	}
+	if cc := w2.Header().Get("Cache-Control"); cc != want {
+		t.Errorf("304 時の Cache-Control = %q, want %q", cc, want)
+	}
+}
+
 // DB にパスはあるがファイルが消失 → 404
 func TestWorkThumbnailFileMissing(t *testing.T) {
 	h, database, id := newTestServer(t)

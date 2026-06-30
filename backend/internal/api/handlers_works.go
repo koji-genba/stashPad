@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -152,7 +153,9 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 		 LIMIT ? OFFSET ?`,
 		whereClause, sortCol, order, order,
 	)
-	dataArgs := append(args, limit, offset)
+	// 将来 args を再利用する変更で append が裏配列を破壊するのを防ぐため、
+	// 独立スライスへコピーしてから limit/offset を足す。
+	dataArgs := append(slices.Clone(args), limit, offset)
 
 	rows, err := s.db.Query(dataQuery, dataArgs...)
 	if err != nil {
@@ -489,6 +492,9 @@ func (s *Server) handleWorkThumbnail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "image/jpeg")
+	// ブラウザキャッシュを 1 時間効かせる(http.ServeContent が付ける Last-Modified で
+	// 更新検知できる)。将来の認証導入を見据えて private にする。
+	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeContent(w, r, st.Name(), st.ModTime(), f)
 }
 

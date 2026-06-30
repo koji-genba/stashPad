@@ -154,7 +154,9 @@ func TestListWorksExcludeTags(t *testing.T) {
 		// id3 はどちらも持たない → normalTag でフィルタされてヒットしない
 		// → 結果 0 件
 		w := doGet(t, h, urlf("/api/works?tags=%d&exclude_tags=%d", normalTagID, excTagID))
-		var body struct{ Total int `json:"total"` }
+		var body struct {
+			Total int `json:"total"`
+		}
 		json.Unmarshal(w.Body.Bytes(), &body)
 		if body.Total != 0 {
 			t.Errorf("include+exclude: total = %d, want 0", body.Total)
@@ -164,7 +166,9 @@ func TestListWorksExcludeTags(t *testing.T) {
 	t.Run("複数 exclude_tags", func(t *testing.T) {
 		// 除外タグと通常タグを両方除外 → id3 のみ
 		w := doGet(t, h, urlf("/api/works?exclude_tags=%d,%d", excTagID, normalTagID))
-		var body struct{ Total int `json:"total"` }
+		var body struct {
+			Total int `json:"total"`
+		}
 		json.Unmarshal(w.Body.Bytes(), &body)
 		if body.Total != 1 {
 			t.Errorf("複数 exclude: total = %d, want 1", body.Total)
@@ -174,7 +178,9 @@ func TestListWorksExcludeTags(t *testing.T) {
 	t.Run("非数値は無視", func(t *testing.T) {
 		// 非数値が混ざっても無視され、有効な数値のみ適用
 		w := doGet(t, h, urlf("/api/works?exclude_tags=%d,abc", excTagID))
-		var body struct{ Total int `json:"total"` }
+		var body struct {
+			Total int `json:"total"`
+		}
 		json.Unmarshal(w.Body.Bytes(), &body)
 		if body.Total != 1 {
 			t.Errorf("非数値混在 exclude: total = %d, want 1", body.Total)
