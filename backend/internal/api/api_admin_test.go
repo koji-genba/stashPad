@@ -102,6 +102,29 @@ func TestWorkThumbnailServed(t *testing.T) {
 	}
 }
 
+// サムネイルは ETag による 304 だけでなく Cache-Control でブラウザキャッシュも効かせる。
+func TestWorkThumbnailCacheControl(t *testing.T) {
+	h, database, id := newTestServer(t)
+	tmp := t.TempDir()
+	thumbFile := filepath.Join(tmp, "thumb.jpg")
+	if err := os.WriteFile(thumbFile, []byte("jpegdata"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(
+		"UPDATE works SET thumbnail_path=? WHERE id=?", thumbFile, id); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, urlf("/api/works/%d/thumbnail", id))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	const want = "private, max-age=3600"
+	if cc := w.Header().Get("Cache-Control"); cc != want {
+		t.Errorf("Cache-Control = %q, want %q", cc, want)
+	}
+}
+
 // DB にパスはあるがファイルが消失 → 404
 func TestWorkThumbnailFileMissing(t *testing.T) {
 	h, database, id := newTestServer(t)

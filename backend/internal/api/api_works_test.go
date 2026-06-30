@@ -504,7 +504,7 @@ func TestListWorksKeyword(t *testing.T) {
 	}{
 		{"キーワード対象タイトル", 1}, // title ヒット
 		{"キーワード対象サークル", 1}, // circle ヒット
-		{"RJ888003", 1},      // rj_number ヒット
+		{"RJ888003", 1},    // rj_number ヒット
 	}
 	for _, tc := range cases {
 		tc := tc
