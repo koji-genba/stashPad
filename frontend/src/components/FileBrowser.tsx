@@ -73,9 +73,19 @@ export default function FileBrowser({ workId, workTitle }: Props) {
     return () => ac.abort();
   }, [workId, path]);
 
+  // ディレクトリ移動 / パンくず操作の共通入口。
+  // useEffect 内の setLoading(true) より前にスピナーへ切替えておくことで、
+  // 「新 path × 旧 entries」の組合せが 1 フレーム描画される stale render を防ぐ。
+  // (旧 entries のまま isCurrentMedia が走ると、たまたまパスが一致したファイルに
+  //  誤って強調が一瞬付いてしまうのを回避する)
+  const navigateTo = (newPath: string) => {
+    setLoading(true);
+    setPath(newPath);
+  };
+
   const openEntry = (entry: Entry) => {
     if (entry.is_dir) {
-      setPath(joinPath(path, entry.name));
+      navigateTo(joinPath(path, entry.name));
       return;
     }
     const entries = data?.entries ?? [];
@@ -130,7 +140,7 @@ export default function FileBrowser({ workId, workTitle }: Props) {
       <nav className={styles.crumbs} aria-label="パンくず">
         <button
           className={styles.crumb}
-          onClick={() => setPath('')}
+          onClick={() => navigateTo('')}
           disabled={path === ''}
         >
           ホーム
@@ -140,7 +150,7 @@ export default function FileBrowser({ workId, workTitle }: Props) {
             <span className={styles.sep}>/</span>
             <button
               className={styles.crumb}
-              onClick={() => setPath(c.path)}
+              onClick={() => navigateTo(c.path)}
               disabled={c.path === path}
             >
               {c.name}

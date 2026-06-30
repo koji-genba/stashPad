@@ -37,6 +37,7 @@ function resetStore() {
 }
 
 // テスト用エントリフィクスチャ
+// 各 media_kind を最低 1 つ含め、isCurrentMedia の switch 全分岐(default 含む)を覆えるようにする
 const mockEntries = {
   path: '',
   parent: '',
@@ -45,6 +46,7 @@ const mockEntries = {
     { name: 'track01.mp3', is_dir: false, size: 1024000, media_kind: 'audio' as const },
     { name: 'track02.mp3', is_dir: false, size: 2048000, media_kind: 'audio' as const },
     { name: 'cover.jpg', is_dir: false, size: 51200, media_kind: 'image' as const },
+    { name: 'manual.pdf', is_dir: false, size: 1024, media_kind: 'other' as const },
   ],
 };
 
@@ -340,18 +342,22 @@ describe('FileBrowser 再生中ファイルのインジケータ (issue #31)', (
     expect(screen.getByText('readme.txt').closest('button')!).toHaveAttribute('aria-current', 'true');
   });
 
-  it('image / other / ディレクトリ は再生中強調の対象外', async () => {
-    // image overlay は本 issue の対象外(ページ列で構造が異なる)
-    // 一方で同名・同 workId の audio がキュー再生中であっても image 行は強調されない
+  it('image / other / ディレクトリ は再生中強調の対象外 (switch default 経路)', async () => {
+    // queue の (workId, path) をあえて非対象エントリ(manual.pdf)に揃え、
+    // media_kind が audio/video/text 以外なら強調されないこと(switch default)を実証する。
+    // image overlay はそもそも store にも乗らずスコープ外(pages 列で構造が異なる)
     usePlayerStore.setState({
       queue: [
-        { uid: 1, workId: 1, workTitle: 'テスト作品', name: 'cover.jpg', path: 'cover.jpg' },
+        { uid: 1, workId: 1, workTitle: 'テスト作品', name: 'manual.pdf', path: 'manual.pdf' },
       ],
       index: 0,
       isPlaying: true,
     });
     await renderAndWait(1, 'テスト作品');
 
+    // workId / path 一致でも media_kind='other' なら付かない(default 分岐)
+    expect(screen.getByText('manual.pdf').closest('button')!).not.toHaveAttribute('aria-current');
+    // image / ディレクトリ も対象外
     expect(screen.getByText('cover.jpg').closest('button')!).not.toHaveAttribute('aria-current');
     expect(screen.getByText('subdir').closest('button')!).not.toHaveAttribute('aria-current');
   });
