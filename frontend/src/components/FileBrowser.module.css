@@ -61,6 +61,16 @@
   background: var(--bg-hover);
 }
 
+/* 「今このファイルを再生中 / 表示中」インジケータ (issue #31)
+   QueueScreen の rowCurrent と同様、アクセントカラー + 太字で示す */
+.entryCurrent .name,
+.entryCurrent .icon {
+  color: var(--accent);
+}
+.entryCurrent .name {
+  font-weight: 600;
+}
+
 .icon {
   flex-shrink: 0;
   width: 22px;

@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { usePlayerStore } from '@/store/playerStore';
+import { useOverlayStore } from '@/store/overlayStore';
 
 // API クライアントをモック化
 vi.mock('@/api/client', () => ({
@@ -31,6 +32,8 @@ const initialState = {
 
 function resetStore() {
   usePlayerStore.setState(initialState, false);
+  // overlayStore も毎テスト初期化(video/text を null へ戻す)
+  useOverlayStore.setState({ image: null, video: null, text: null }, false);
 }
 
 // テスト用エントリフィクスチャ
@@ -249,6 +252,128 @@ describe('FileBrowser サブディレクトリ閲覧中の path join', () => {
     // path は subdir/bonus.mp3 に join される
     expect(queue[0].path).toBe('subdir/bonus.mp3');
     expect(queue[0].name).toBe('bonus.mp3');
+  });
+});
+
+describe('FileBrowser 再生中ファイルのインジケータ (issue #31)', () => {
+  // 「再生中」の判定は (workId, path) の組で行う。
+  // path は FileBrowser 上で joinPath(currentDir, entry.name) と組み立てた値と一致させる。
+
+  it('再生中の audio エントリには aria-current="true" が付く', async () => {
+    usePlayerStore.setState({
+      queue: [
+        { uid: 1, workId: 1, workTitle: 'テスト作品', name: 'track01.mp3', path: 'track01.mp3' },
+      ],
+      index: 0,
+      isPlaying: true,
+    });
+    await renderAndWait(1, 'テスト作品');
+
+    const btn = screen.getByText('track01.mp3').closest('button')!;
+    expect(btn).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('再生中でない audio エントリには aria-current が付かない', async () => {
+    usePlayerStore.setState({
+      queue: [
+        { uid: 1, workId: 1, workTitle: 'テスト作品', name: 'track01.mp3', path: 'track01.mp3' },
+      ],
+      index: 0,
+      isPlaying: true,
+    });
+    await renderAndWait(1, 'テスト作品');
+
+    const btn = screen.getByText('track02.mp3').closest('button')!;
+    expect(btn).not.toHaveAttribute('aria-current');
+  });
+
+  it('別作品の再生中トラックは強調されない (workId 一致が必須)', async () => {
+    usePlayerStore.setState({
+      queue: [
+        // path は同じだが workId が違う
+        { uid: 1, workId: 999, workTitle: '別作品', name: 'track01.mp3', path: 'track01.mp3' },
+      ],
+      index: 0,
+      isPlaying: true,
+    });
+    await renderAndWait(1, 'テスト作品');
+
+    const btn = screen.getByText('track01.mp3').closest('button')!;
+    expect(btn).not.toHaveAttribute('aria-current');
+  });
+
+  it('再生中の video オーバーレイ表示中はその video 行が aria-current="true"', async () => {
+    vi.mocked(fetchEntries).mockResolvedValue({
+      path: '',
+      parent: '',
+      entries: [
+        { name: 'movie.mp4', is_dir: false, size: 1024000, media_kind: 'video' as const },
+        { name: 'other.mp4', is_dir: false, size: 2048000, media_kind: 'video' as const },
+      ],
+    });
+    useOverlayStore.setState({
+      video: { workId: 1, workTitle: 'テスト作品', path: 'movie.mp4', name: 'movie.mp4' },
+    });
+
+    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+    await screen.findByText('movie.mp4');
+
+    expect(screen.getByText('movie.mp4').closest('button')!).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByText('other.mp4').closest('button')!).not.toHaveAttribute('aria-current');
+  });
+
+  it('text オーバーレイ表示中はその text 行が aria-current="true"', async () => {
+    vi.mocked(fetchEntries).mockResolvedValue({
+      path: '',
+      parent: '',
+      entries: [
+        { name: 'readme.txt', is_dir: false, size: 1024, media_kind: 'text' as const },
+      ],
+    });
+    useOverlayStore.setState({
+      text: { workId: 1, path: 'readme.txt', name: 'readme.txt' },
+    });
+
+    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+    await screen.findByText('readme.txt');
+
+    expect(screen.getByText('readme.txt').closest('button')!).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('image / other / ディレクトリ は再生中強調の対象外', async () => {
+    // image overlay は本 issue の対象外(ページ列で構造が異なる)
+    // 一方で同名・同 workId の audio がキュー再生中であっても image 行は強調されない
+    usePlayerStore.setState({
+      queue: [
+        { uid: 1, workId: 1, workTitle: 'テスト作品', name: 'cover.jpg', path: 'cover.jpg' },
+      ],
+      index: 0,
+      isPlaying: true,
+    });
+    await renderAndWait(1, 'テスト作品');
+
+    expect(screen.getByText('cover.jpg').closest('button')!).not.toHaveAttribute('aria-current');
+    expect(screen.getByText('subdir').closest('button')!).not.toHaveAttribute('aria-current');
+  });
+
+  it('サブディレクトリ内でも joined path が一致すれば強調される', async () => {
+    vi.mocked(fetchEntries)
+      .mockResolvedValueOnce(mockEntries)
+      .mockResolvedValueOnce(mockSubEntries);
+    usePlayerStore.setState({
+      queue: [
+        { uid: 1, workId: 1, workTitle: 'テスト作品', name: 'bonus.mp3', path: 'subdir/bonus.mp3' },
+      ],
+      index: 0,
+      isPlaying: true,
+    });
+
+    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+    await screen.findByText('track01.mp3');
+    fireEvent.click(screen.getByText('subdir').closest('button')!);
+    await screen.findByText('bonus.mp3');
+
+    expect(screen.getByText('bonus.mp3').closest('button')!).toHaveAttribute('aria-current', 'true');
   });
 });
 

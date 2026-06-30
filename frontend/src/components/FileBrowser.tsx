@@ -3,9 +3,10 @@
 // ファイルタップで media_kind に応じて プレイヤー / 画像ビューア / 動画 / テキスト を起動。
 // audio 行の「⋮」ボタンからボトムシートでキュー操作が可能。
 import { useEffect, useState } from 'react';
+import { useStore } from 'zustand';
 import type { EntriesResponse, Entry } from '@/api/types';
 import { fetchEntries, fileUrl } from '@/api/client';
-import { usePlayerStore } from '@/store/playerStore';
+import { currentTrack, usePlayerStore } from '@/store/playerStore';
 import { useOverlayStore } from '@/store/overlayStore';
 import { formatBytes, joinPath, pathCrumbs } from '@/utils/format';
 import QueueActionSheet from './QueueActionSheet';
@@ -32,6 +33,28 @@ export default function FileBrowser({ workId, workTitle }: Props) {
   const [error, setError] = useState<string | null>(null);
   // ⋮ タップで開くシートの対象エントリ(null = 閉じている)
   const [sheetEntry, setSheetEntry] = useState<Entry | null>(null);
+
+  // 「今このファイルを開いている」インジケータ用に再生 / オーバーレイ状態を購読。
+  // audio はキューの現在トラック、video / text はオーバーレイの開いているファイル。
+  // image はページ列で構造が異なるため対象外(issue #31)
+  const playingTrack = useStore(usePlayerStore, currentTrack);
+  const openVideo = useStore(useOverlayStore, (s) => s.video);
+  const openText = useStore(useOverlayStore, (s) => s.text);
+
+  const isCurrentMedia = (entry: Entry): boolean => {
+    if (entry.is_dir) return false;
+    const entryPath = joinPath(path, entry.name);
+    switch (entry.media_kind) {
+      case 'audio':
+        return playingTrack?.workId === workId && playingTrack?.path === entryPath;
+      case 'video':
+        return openVideo?.workId === workId && openVideo?.path === entryPath;
+      case 'text':
+        return openText?.workId === workId && openText?.path === entryPath;
+      default:
+        return false;
+    }
+  };
 
   useEffect(() => {
     const ac = new AbortController();
@@ -136,34 +159,41 @@ export default function FileBrowser({ workId, workTitle }: Props) {
         <p className="faint">(空のフォルダ)</p>
       ) : (
         <ul className={styles.list}>
-          {data.entries.map((entry) => (
-            <li key={entry.name} className={styles.row}>
-              {/* 行本体ボタン(openEntry): ディレクトリ・全ファイル種別で従来通り */}
-              <button className={styles.entry} onClick={() => openEntry(entry)}>
-                <span className={`${styles.icon} ${entry.is_dir ? styles.dir : ''}`}>
-                  {entry.is_dir ? '📁' : (KIND_ICON[entry.media_kind] ?? '·')}
-                </span>
-                <span className={styles.name}>{entry.name}</span>
-                {!entry.is_dir && entry.size > 0 && (
-                  <span className={styles.size}>{formatBytes(entry.size)}</span>
-                )}
-              </button>
-              {/* audio 行のみ ⋮ ボタンを表示(button ネスト回避のため兄弟 button) */}
-              {!entry.is_dir && entry.media_kind === 'audio' && (
+          {data.entries.map((entry) => {
+            const isCurrent = isCurrentMedia(entry);
+            return (
+              <li key={entry.name} className={styles.row}>
+                {/* 行本体ボタン(openEntry): ディレクトリ・全ファイル種別で従来通り */}
                 <button
-                  type="button"
-                  className={styles.menuBtn}
-                  aria-label={`${entry.name} のキュー操作`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSheetEntry(entry);
-                  }}
+                  className={`${styles.entry} ${isCurrent ? styles.entryCurrent : ''}`}
+                  onClick={() => openEntry(entry)}
+                  aria-current={isCurrent ? 'true' : undefined}
                 >
-                  ⋮
+                  <span className={`${styles.icon} ${entry.is_dir ? styles.dir : ''}`}>
+                    {entry.is_dir ? '📁' : (KIND_ICON[entry.media_kind] ?? '·')}
+                  </span>
+                  <span className={styles.name}>{entry.name}</span>
+                  {!entry.is_dir && entry.size > 0 && (
+                    <span className={styles.size}>{formatBytes(entry.size)}</span>
+                  )}
                 </button>
-              )}
-            </li>
-          ))}
+                {/* audio 行のみ ⋮ ボタンを表示(button ネスト回避のため兄弟 button) */}
+                {!entry.is_dir && entry.media_kind === 'audio' && (
+                  <button
+                    type="button"
+                    className={styles.menuBtn}
+                    aria-label={`${entry.name} のキュー操作`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSheetEntry(entry);
+                    }}
+                  >
+                    ⋮
+                  </button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
 
