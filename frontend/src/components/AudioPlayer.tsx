@@ -15,6 +15,7 @@ import {
 import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
 import { formatTime } from '@/utils/format';
 import FullscreenPlayer from './FullscreenPlayer';
+import Thumbnail from './Thumbnail';
 import styles from './AudioPlayer.module.css';
 
 export default function AudioPlayer() {
@@ -213,13 +214,9 @@ export default function AudioPlayer() {
             onClick={() => overlay.openPlayer()}
             aria-label="フルスクリーンプレイヤーを開く"
           >
-            <img
+            <Thumbnail
               className={styles.thumb}
               src={playerThumbUrl(track) ?? ''}
-              alt=""
-              onError={(e) => {
-                e.currentTarget.style.visibility = 'hidden';
-              }}
             />
             <div className={styles.meta}>
               <div className={styles.trackName} title={track.name}>

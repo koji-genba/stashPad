@@ -16,6 +16,7 @@ import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { formatTime } from '@/utils/format';
 import QueueScreen from './QueueScreen';
+import Thumbnail from './Thumbnail';
 import styles from './FullscreenPlayer.module.css';
 
 export default function FullscreenPlayer() {
@@ -120,14 +121,7 @@ export default function FullscreenPlayer() {
         onTouchEnd={onTouchEnd}
       >
         {thumbUrl && (
-          <img
-            className={styles.artwork}
-            src={thumbUrl}
-            alt=""
-            onError={(e) => {
-              e.currentTarget.style.visibility = 'hidden';
-            }}
-          />
+          <Thumbnail className={styles.artwork} src={thumbUrl} />
         )}
       </div>
 
