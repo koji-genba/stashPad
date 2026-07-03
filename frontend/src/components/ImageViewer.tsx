@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
 import { fileUrl } from '@/api/client';
 import { useOverlayStore } from '@/store/overlayStore';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import styles from './ImageViewer.module.css';
 
 export default function ImageViewer() {
@@ -12,6 +13,8 @@ export default function ImageViewer() {
   const next = useStore(useOverlayStore, (s) => s.imageNext);
   const prev = useStore(useOverlayStore, (s) => s.imagePrev);
   const close = useStore(useOverlayStore, (s) => s.closeImage);
+
+  useBodyScrollLock(image !== null);
 
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);

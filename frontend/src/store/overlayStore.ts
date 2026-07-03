@@ -45,6 +45,9 @@ interface OverlayState {
 
   openText: (t: TextState) => void;
   closeText: () => void;
+
+  /** 開いているオーバーレイをすべて閉じる(history 同期の「戻る」処理用。issue #52) */
+  closeAll: () => void;
 }
 
 function joinPath(dir: string, name: string): string {
@@ -89,4 +92,6 @@ export const useOverlayStore = create<OverlayState>((set, get) => ({
 
   openText: (text) => set({ text }),
   closeText: () => set({ text: null }),
+
+  closeAll: () => set({ image: null, video: null, text: null }),
 }));
