@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -41,6 +42,7 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 	// ステップ1: 各ルートの直下ディレクトリを列挙し works を直列 upsert する。
 	// サムネイル生成が必要な (workID, absPath) ペアを収集する。
 	foundPaths := make(map[string]bool) // スキャンで見つかった root_path の集合
+	var failedRoots []string            // ReadDir が失敗したルート(NAS 一時障害・未マウント等)
 
 	type thumbJob struct {
 		workID  int64
@@ -52,6 +54,7 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 		entries, err := os.ReadDir(root)
 		if err != nil {
 			log.Printf("スキャン: ルート %q 読み込み失敗: %v", root, err)
+			failedRoots = append(failedRoots, root)
 			continue
 		}
 
@@ -83,8 +86,18 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 		}
 	}
 
-	// ステップ2: 既存 works の root_path が消えていたら NULL に戻す
-	missing, err := markMissingPaths(db, foundPaths)
+	// 全ルートが読み込み失敗した場合は NAS 未マウント等の一時障害とみなし、
+	// DB に一切触れずに中断する(markMissingPaths による全件 NULL 化を防ぐ)。
+	if len(failedRoots) == len(roots) {
+		return Result{}, fmt.Errorf(
+			"全ライブラリルート (%d 件) が読めないためスキャンを中断しました: マウント状態を確認してください",
+			len(roots),
+		)
+	}
+
+	// ステップ2: 既存 works の root_path が消えていたら NULL に戻す。
+	// ただし読み込み失敗したルート配下は「消えた」と判定できないので対象外とする。
+	missing, err := markMissingPaths(db, foundPaths, failedRoots)
 	if err != nil {
 		return res, fmt.Errorf("消失パスの処理に失敗: %w", err)
 	}
@@ -225,12 +238,29 @@ func upsertByRJ(db *sql.DB, rjNumber, absPath, dirName string) (newlyRegistered 
 
 // upsertByPath は RJ 番号なしフォルダをフォルダ名全体をタイトルとして登録する。
 // 既存判定は root_path の一致で行う。
+// root_path 一致で見つからない場合、NAS 一時障害等で NULL 化された孤児行
+// (root_path IS NULL かつ rj_number IS NULL かつ同一タイトル)への再リンクを試みてから
+// INSERT する(issue #48: 重複行によるタグ・履歴の消失を防ぐ)。
 func upsertByPath(db *sql.DB, absPath, dirName string) (newlyRegistered bool, workID int64, err error) {
 	var id int64
 	row := db.QueryRow("SELECT id FROM works WHERE root_path=?", absPath)
 	scanErr := row.Scan(&id)
 
 	if scanErr == sql.ErrNoRows {
+		orphanID, found, findErr := findOrphanWorkByTitle(db, dirName)
+		if findErr != nil {
+			return false, 0, findErr
+		}
+		if found {
+			if _, uErr := db.Exec(
+				"UPDATE works SET root_path=?, updated_at=datetime('now') WHERE id=?",
+				absPath, orphanID,
+			); uErr != nil {
+				return false, 0, fmt.Errorf("孤児行の再リンク UPDATE 失敗: %w", uErr)
+			}
+			return false, orphanID, nil
+		}
+
 		res, insErr := db.Exec(
 			`INSERT INTO works (title, root_path, updated_at)
 			 VALUES (?, ?, datetime('now'))`,
@@ -252,9 +282,28 @@ func upsertByPath(db *sql.DB, absPath, dirName string) (newlyRegistered bool, wo
 	return false, id, nil
 }
 
+// findOrphanWorkByTitle は root_path・rj_number がともに NULL で、
+// title が一致する行を 1 件探す。見つからなければ found=false を返す。
+func findOrphanWorkByTitle(db *sql.DB, title string) (id int64, found bool, err error) {
+	row := db.QueryRow(
+		"SELECT id FROM works WHERE root_path IS NULL AND rj_number IS NULL AND title=? ORDER BY id LIMIT 1",
+		title,
+	)
+	scanErr := row.Scan(&id)
+	if scanErr == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if scanErr != nil {
+		return 0, false, fmt.Errorf("孤児行 SELECT 失敗: %w", scanErr)
+	}
+	return id, true, nil
+}
+
 // markMissingPaths は DB にある root_path のうち、foundPaths に含まれないものを NULL に戻す。
+// ただし failedRoots 配下(読み込みに失敗したルート)にあるパスは、
+// 「実際に消えた」のか「読めなかっただけ」なのか区別できないため対象から除外する。
 // NULL 化した件数を返す。
-func markMissingPaths(db *sql.DB, foundPaths map[string]bool) (int, error) {
+func markMissingPaths(db *sql.DB, foundPaths map[string]bool, failedRoots []string) (int, error) {
 	rows, err := db.Query("SELECT id, root_path FROM works WHERE root_path IS NOT NULL")
 	if err != nil {
 		return 0, fmt.Errorf("root_path 一覧取得失敗: %w", err)
@@ -271,7 +320,7 @@ func markMissingPaths(db *sql.DB, foundPaths map[string]bool) (int, error) {
 		if err := rows.Scan(&r.id, &r.path); err != nil {
 			return 0, err
 		}
-		if !foundPaths[r.path] {
+		if !foundPaths[r.path] && !underFailedRoot(r.path, failedRoots) {
 			toNull = append(toNull, r)
 		}
 	}
@@ -288,6 +337,17 @@ func markMissingPaths(db *sql.DB, foundPaths map[string]bool) (int, error) {
 		}
 	}
 	return len(toNull), nil
+}
+
+// underFailedRoot は path がいずれかの failedRoots 配下(またはルート自身)にあるかを判定する。
+// セパレータ境界を考慮し、"/lib" と "/lib2" のような部分一致誤爆を防ぐ。
+func underFailedRoot(path string, failedRoots []string) bool {
+	for _, root := range failedRoots {
+		if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // firstUnderscoreAfterRJ は "RJxxxxxx_" の最初の "_" のインデックスを返す。
