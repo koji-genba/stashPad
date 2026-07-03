@@ -16,3 +16,4 @@ services:
       STASHPAD_DATA_DIR: /data
       STASHPAD_SCAN_ON_START: "true"
     restart: unless-stopped
+    stop_grace_period: 15s

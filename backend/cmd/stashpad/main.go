@@ -3,10 +3,14 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 
 	"github.com/koji-genba/stashpad/backend/internal/api"
 	"github.com/koji-genba/stashpad/backend/internal/config"
@@ -35,19 +39,39 @@ func main() {
 	defer database.Close()
 
 	// HTTP サーバ起動の準備(scanMu を共有するため先に構築する)
-	srv := api.New(database, cfg)
+	svc := api.New(database, cfg)
 
 	// 起動時自動スキャン(STASHPAD_SCAN_ON_START)。
 	// 大規模ライブラリでも起動をブロックしないようバックグラウンドで実行する。
 	// POST /api/scan・POST /api/thumbnails/rebuild と scanMu を共有し相互排他する。
 	if cfg.ScanOnStart {
-		go srv.RunStartupScan()
+		go svc.RunStartupScan()
 	}
 
-	router := srv.Router()
+	router := svc.Router()
 
+	srv := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		// Range 配信(長時間ストリーミング)があるため WriteTimeout は設定しない
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("サーバ起動失敗: %v", err)
+		}
+	}()
 	log.Printf("stashPad 起動: %s", cfg.Addr)
-	if err := http.ListenAndServe(cfg.Addr, router); err != nil {
-		log.Fatalf("サーバ起動失敗: %v", err)
+
+	<-ctx.Done()
+	log.Printf("シグナル受信、シャットダウン中(最大 10 秒)...")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("graceful shutdown 失敗: %v", err)
 	}
 }
