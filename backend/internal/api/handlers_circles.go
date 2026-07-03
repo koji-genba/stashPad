@@ -13,8 +13,8 @@ func (s *Server) handleListCircles(w http.ResponseWriter, r *http.Request) {
 	whereClause := "WHERE circle IS NOT NULL AND circle != '' AND hidden=0"
 
 	if keyword != "" {
-		whereClause += " AND circle LIKE ?"
-		args = append(args, "%"+keyword+"%")
+		whereClause += " AND circle LIKE ? ESCAPE '\\'"
+		args = append(args, likeContains(keyword))
 	}
 
 	query := `SELECT circle, COUNT(*) AS work_count

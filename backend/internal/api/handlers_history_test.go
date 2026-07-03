@@ -110,6 +110,31 @@ func TestHistoryKeywordFilter(t *testing.T) {
 	}
 }
 
+// TestHistoryKeywordLikeSpecialChars は q に含まれる % がワイルドカード展開されず
+// リテラル一致のみヒットすることを検証する(issue #50)。
+func TestHistoryKeywordLikeSpecialChars(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	if _, err := database.Exec(`
+		INSERT INTO works (id, rj_number, title) VALUES
+		  (211, 'RJ500111', '100%OFF セール作品'),
+		  (212, 'RJ500112', '100XOFF 作品');
+		INSERT INTO play_history (work_id, file_path, played_at) VALUES
+		  (211, 'a.mp3', '2026-01-01 10:00:00'),
+		  (212, 'b.mp3', '2026-01-02 10:00:00');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, "/api/history?q="+url.QueryEscape("100%OFF"))
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 1 || items[0].Work.ID != 211 {
+		t.Errorf("items = %+v, want 1 件(work id=211)", items)
+	}
+}
+
 // TestHistorySortByPlayCount は sort=play_count / order での並び替えを検証する。
 func TestHistorySortByPlayCount(t *testing.T) {
 	h, database, _ := newTestServer(t)

@@ -906,6 +906,25 @@ func TestListTagsFilters(t *testing.T) {
 	}
 }
 
+// q に含まれる % がワイルドカード展開されずリテラル一致のみヒットすることを検証する(issue #50)。
+func TestListTagsLikeSpecialChars(t *testing.T) {
+	h, database, id := newTestServer(t)
+	database.Exec(`INSERT INTO tags (name, category) VALUES
+		('100%OFFタグ','custom'), ('100XOFFタグ','custom')`)
+	database.Exec("INSERT INTO work_tags (work_id, tag_id) SELECT ?, id FROM tags", id)
+
+	w := doGet(t, h, "/api/tags?q="+url.QueryEscape("100%OFF"))
+	var body struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 1 || body.Items[0].Name != "100%OFFタグ" {
+		t.Errorf("q=100%%OFF items = %+v, want [100%%OFFタグ]", body.Items)
+	}
+}
+
 // last_file_path が最新の再生履歴のファイルパスを返すことを確認する。
 // 同一作品に古いファイルと新しいファイルを記録し、last_file_path が新しい方であることを検証。
 func TestHistoryLastFilePathIsLatest(t *testing.T) {

@@ -52,8 +52,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	innerWhere := ""
 	args := []any{}
 	if keyword != "" {
-		innerWhere = " AND w.title LIKE ?"
-		args = append(args, "%"+keyword+"%")
+		innerWhere = " AND w.title LIKE ? ESCAPE '\\'"
+		args = append(args, likeContains(keyword))
 	}
 
 	query := `

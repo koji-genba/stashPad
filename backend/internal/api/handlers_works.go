@@ -93,15 +93,15 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	// キーワードをターム分割してAND/NOT検索に変換
 	includeTerms, excludeTerms := parseSearchTerms(keyword)
 	for _, term := range includeTerms {
-		like := "%" + term + "%"
-		whereClause += " AND (w.title LIKE ? OR w.circle LIKE ? OR w.rj_number LIKE ?)"
+		like := likeContains(term)
+		whereClause += " AND (w.title LIKE ? ESCAPE '\\' OR w.circle LIKE ? ESCAPE '\\' OR w.rj_number LIKE ? ESCAPE '\\')"
 		args = append(args, like, like, like)
 	}
 	for _, term := range excludeTerms {
-		like := "%" + term + "%"
+		like := likeContains(term)
 		// circle は NULL の可能性があるため COALESCE で空文字に変換して NOT 判定する
 		// (NULL LIKE ? は NULL になり NOT NULL = NULL → 行が除外されてしまうため)
-		whereClause += " AND NOT (w.title LIKE ? OR COALESCE(w.circle, '') LIKE ? OR w.rj_number LIKE ?)"
+		whereClause += " AND NOT (w.title LIKE ? ESCAPE '\\' OR COALESCE(w.circle, '') LIKE ? ESCAPE '\\' OR w.rj_number LIKE ? ESCAPE '\\')"
 		args = append(args, like, like, like)
 	}
 

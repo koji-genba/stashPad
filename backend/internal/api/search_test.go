@@ -114,3 +114,78 @@ func TestParseSearchTerms(t *testing.T) {
 		})
 	}
 }
+
+// TestEscapeLike は escapeLike が LIKE パターン用の特殊文字(\ % _)を
+// 正しくエスケープすることを検証する(issue #50)。
+func TestEscapeLike(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "パーセント記号",
+			in:   "100%OFF",
+			want: `100\%OFF`,
+		},
+		{
+			name: "アンダースコア",
+			in:   "ver_2",
+			want: `ver\_2`,
+		},
+		{
+			name: "バックスラッシュ",
+			in:   `a\b`,
+			want: `a\\b`,
+		},
+		{
+			name: "混在",
+			in:   `100%OFF_ver\test`,
+			want: `100\%OFF\_ver\\test`,
+		},
+		{
+			name: "空文字",
+			in:   "",
+			want: "",
+		},
+		{
+			name: "日本語はそのまま",
+			in:   "日本語テスト",
+			want: "日本語テスト",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := escapeLike(tc.in)
+			if got != tc.want {
+				t.Errorf("escapeLike(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLikeContains は likeContains が escapeLike 済みの文字列を "%...%" で
+// 包んだ部分一致パターンを組み立てることを検証する。
+func TestLikeContains(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "特殊文字なし", in: "foo", want: "%foo%"},
+		{name: "パーセント記号", in: "100%OFF", want: `%100\%OFF%`},
+		{name: "空文字", in: "", want: "%%"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := likeContains(tc.in)
+			if got != tc.want {
+				t.Errorf("likeContains(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

@@ -20,8 +20,8 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 		args = append(args, category)
 	}
 	if keyword != "" {
-		whereClause += " AND t.name LIKE ?"
-		args = append(args, "%"+keyword+"%")
+		whereClause += " AND t.name LIKE ? ESCAPE '\\'"
+		args = append(args, likeContains(keyword))
 	}
 
 	// 可視作品(hidden=0)のみカウント対象とする。

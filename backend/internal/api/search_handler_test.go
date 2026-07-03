@@ -103,6 +103,88 @@ func TestListWorksNotKeyword(t *testing.T) {
 	}
 }
 
+// TestListWorksKeywordLikeSpecialChars は q に含まれる % / _ が SQL LIKE の
+// ワイルドカードとして解釈されず、リテラル文字として扱われることを検証する(issue #50)。
+func TestListWorksKeywordLikeSpecialChars(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	// newTestServer は RJ000001 「テスト作品」を既に持つ
+
+	if _, err := database.Exec(`
+		INSERT INTO works (rj_number, title) VALUES
+		  ('RJ900001', '100%OFF セール作品'),
+		  ('RJ900002', '100XOFF 作品'),
+		  ('RJ900003', 'ver_2 対応版'),
+		  ('RJ900004', 'verX2 対応版')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name  string
+		q     string
+		wantN int
+	}{
+		// "%" はワイルドカードとして解釈されず、リテラル一致のみヒットするべき
+		{"パーセント記号はリテラル一致", "100%OFF", 1},
+		// "_" はワイルドカードとして解釈されず、リテラル一致のみヒットするべき
+		{"アンダースコアはリテラル一致", "ver_2", 1},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			w := doGet(t, h, "/api/works?q="+url.QueryEscape(tc.q))
+			if w.Code != 200 {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+			var body struct {
+				Total int `json:"total"`
+			}
+			json.Unmarshal(w.Body.Bytes(), &body)
+			if body.Total != tc.wantN {
+				t.Errorf("q=%q: total = %d, want %d", tc.q, body.Total, tc.wantN)
+			}
+		})
+	}
+}
+
+// TestListWorksNotKeywordLikeSpecialChars は NOT 検索(-つき)でも % がリテラル
+// 一致すること(ワイルドカード展開されないこと)を検証する(issue #50)。
+func TestListWorksNotKeywordLikeSpecialChars(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	// newTestServer は RJ000001 「テスト作品」を既に持つ → 除外対象外なので残る
+
+	if _, err := database.Exec(`
+		INSERT INTO works (rj_number, title) VALUES
+		  ('RJ900101', '100%OFF セール作品'),
+		  ('RJ900102', '100XOFF 作品')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	// -100%OFF は「100%OFF」をリテラルに含む作品だけを除外するので、
+	// 「テスト作品」と「100XOFF 作品」の2件が残るはず
+	w := doGet(t, h, "/api/works?q="+url.QueryEscape("-100%OFF"))
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Total int `json:"total"`
+		Items []struct {
+			Title string `json:"title"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body.Total != 2 {
+		t.Errorf("total = %d, want 2; items = %+v", body.Total, body.Items)
+	}
+	for _, it := range body.Items {
+		if it.Title == "100%OFF セール作品" {
+			t.Errorf("除外されるべき作品が残っている: %+v", body.Items)
+		}
+	}
+}
+
 // ---- 機能2: exclude_tags パラメータ --------------------------------------------
 
 // TestListWorksExcludeTags は exclude_tags による AND NOT EXISTS 除外を検証する。

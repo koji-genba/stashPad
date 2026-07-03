@@ -34,6 +34,19 @@ func parseSearchTerms(q string) (include, exclude []string) {
 	return include, exclude
 }
 
+// escapeLike は LIKE パターン用に \ % _ をエスケープする。
+// クエリ側は必ず `LIKE ? ESCAPE '\'` の形で使うこと。
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
+}
+
+// likeContains は s をエスケープした上で部分一致用の LIKE パターン("%s%")を組み立てる。
+// クエリ側は必ず `LIKE ? ESCAPE '\'` の形で使うこと。
+func likeContains(s string) string {
+	return "%" + escapeLike(s) + "%"
+}
+
 // parseTagIDs はカンマ区切りのタグ ID 文字列を int64 スライスに変換する。
 // 非数値・空文字は無視する(既存の tags パラメータと同じ挙動)。
 func parseTagIDs(param string) []int64 {
