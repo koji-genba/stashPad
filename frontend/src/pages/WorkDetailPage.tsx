@@ -43,7 +43,12 @@ export default function WorkDetailPage() {
   const [thumbBust, setThumbBust] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!Number.isFinite(workId)) return;
+    if (!Number.isFinite(workId)) {
+      // /works/abc 等。work=null のまま loading を落とし「作品が見つかりません」表示にする
+      setWork(null);
+      setLoading(false);
+      return;
+    }
     const ac = new AbortController();
     setLoading(true);
     setError(null);
@@ -311,7 +316,8 @@ export default function WorkDetailPage() {
       </section>
 
       {work.has_folder ? (
-        <FileBrowser workId={work.id} workTitle={work.title} />
+        // key で作品を跨いだ path state の持ち越し(stale fetch)を防ぐ
+        <FileBrowser key={work.id} workId={work.id} workTitle={work.title} />
       ) : (
         <p className={styles.noFolder}>
           この作品はフォルダが未取込のため、ファイルを表示できません。
