@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 )
@@ -193,5 +195,105 @@ func TestHistoryInvalidSortFallsBack(t *testing.T) {
 	items := decodeHistory(t, w.Body.Bytes())
 	if len(items) != 1 {
 		t.Errorf("items 数 = %d, want 1", len(items))
+	}
+}
+
+// doDelete は DELETE リクエストを発行するテスト用ヘルパー。
+func doDelete(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodDelete, path, nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+// decodeDeleted は {"deleted": n} レスポンスをデコードする。
+func decodeDeleted(t *testing.T, body []byte) int64 {
+	t.Helper()
+	var resp struct {
+		Deleted int64 `json:"deleted"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, body)
+	}
+	return resp.Deleted
+}
+
+// TestDeleteHistoryByWorkID は work_id 指定での作品単位削除を検証する。
+// 該当作品の履歴行だけが消え、他作品の履歴は残ること。
+func TestDeleteHistoryByWorkID(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	if _, err := database.Exec(`
+		INSERT INTO works (id, rj_number, title) VALUES
+		  (501, 'RJ500401', '猫の物語'),
+		  (502, 'RJ500402', '犬の日記');
+		INSERT INTO play_history (work_id, file_path, played_at) VALUES
+		  (501, 'a/01.mp3', '2026-01-01 10:00:00'),
+		  (501, 'a/02.mp3', '2026-01-02 10:00:00'),
+		  (502, 'b/01.mp3', '2026-01-03 10:00:00');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doDelete(t, h, "/api/history?work_id=501")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if deleted := decodeDeleted(t, w.Body.Bytes()); deleted != 2 {
+		t.Errorf("deleted = %d, want 2", deleted)
+	}
+
+	w = doGet(t, h, "/api/history")
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 1 || items[0].Work.ID != 502 {
+		t.Errorf("削除後の items = %+v, want 作品 502 のみ", items)
+	}
+
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM play_history WHERE work_id=501").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("work_id=501 の play_history 残存数 = %d, want 0", count)
+	}
+}
+
+// TestDeleteHistoryAll は work_id なしでの全件クリアを検証する。
+func TestDeleteHistoryAll(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	if _, err := database.Exec(`
+		INSERT INTO works (id, rj_number, title) VALUES
+		  (511, 'RJ500411', '猫の物語'),
+		  (512, 'RJ500412', '犬の日記');
+		INSERT INTO play_history (work_id, file_path, played_at) VALUES
+		  (511, 'a/01.mp3', '2026-01-01 10:00:00'),
+		  (512, 'b/01.mp3', '2026-01-02 10:00:00'),
+		  (512, 'b/02.mp3', '2026-01-03 10:00:00');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doDelete(t, h, "/api/history")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if deleted := decodeDeleted(t, w.Body.Bytes()); deleted != 3 {
+		t.Errorf("deleted = %d, want 3", deleted)
+	}
+
+	w = doGet(t, h, "/api/history")
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 0 {
+		t.Errorf("全件削除後の items = %+v, want 0 件", items)
+	}
+}
+
+// TestDeleteHistoryInvalidWorkID は work_id が数値でない場合に 400 を返すことを検証する。
+func TestDeleteHistoryInvalidWorkID(t *testing.T) {
+	h, _, _ := newTestServer(t)
+
+	w := doDelete(t, h, "/api/history?work_id=abc")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400, body = %s", w.Code, w.Body.String())
 	}
 }

@@ -157,6 +157,7 @@ func (s *Server) Router(middlewares ...func(http.Handler) http.Handler) http.Han
 
 		// 再生履歴
 		r.Get("/history", s.handleHistory)
+		r.Delete("/history", s.handleDeleteHistory)
 	})
 
 	// /api 以外は embed したフロントエンド(SPA フォールバック付き)

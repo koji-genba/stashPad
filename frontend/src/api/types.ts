@@ -112,6 +112,11 @@ export interface HistoryParams {
   order?: HistoryOrder;
 }
 
+/** DELETE /api/history のレスポンス */
+export interface DeleteHistoryResult {
+  deleted: number;
+}
+
 /** POST /api/import/csv のレスポンス */
 export interface ImportResult {
   created: number;

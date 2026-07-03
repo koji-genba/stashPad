@@ -128,3 +128,39 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
+
+// handleDeleteHistory は DELETE /api/history を処理する。
+// work_id を指定すると当該作品の履歴のみ削除し、指定がなければ全件削除する。
+//
+// クエリパラメータ:
+//   - work_id  省略可。数値でない場合は 400
+func (s *Server) handleDeleteHistory(w http.ResponseWriter, r *http.Request) {
+	workIDStr := strings.TrimSpace(r.URL.Query().Get("work_id"))
+
+	var (
+		res sql.Result
+		err error
+	)
+	if workIDStr == "" {
+		res, err = s.db.Exec("DELETE FROM play_history")
+	} else {
+		workID, parseErr := strconv.ParseInt(workIDStr, 10, 64)
+		if parseErr != nil {
+			respondError(w, http.StatusBadRequest, "不正な work_id")
+			return
+		}
+		res, err = s.db.Exec("DELETE FROM play_history WHERE work_id=?", workID)
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "履歴削除失敗: "+err.Error())
+		return
+	}
+
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "件数取得失敗: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+}

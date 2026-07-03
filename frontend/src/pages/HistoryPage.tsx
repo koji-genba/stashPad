@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { HistoryItem, HistorySort, HistoryOrder } from '@/api/types';
-import { fetchHistory } from '@/api/client';
+import { deleteHistory, fetchHistory } from '@/api/client';
 import Thumbnail from '@/components/Thumbnail';
 import { basename, formatDateTime } from '@/utils/format';
 import styles from './HistoryPage.module.css';
@@ -18,6 +18,9 @@ export default function HistoryPage() {
   const [q, setQ] = useState('');                   // デバウンス後のキーワード
   const [sort, setSort] = useState<HistorySort>('last_played');
   const [order, setOrder] = useState<HistoryOrder>('desc');
+
+  // 行削除中の work_id セット(二重クリック防止用)
+  const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
 
   // qInput を 300ms デバウンスして q に反映。フィルタ変更時はページを先頭に戻す。
   // データ取得 effect は [page, q, ...] を見るので、ここで page も一緒に確定させて
@@ -48,6 +51,24 @@ export default function HistoryPage() {
       });
     return () => ac.abort();
   }, [page, q, sort, order]);
+
+  // 1 件削除: confirm → API 呼び出し → 一覧から該当行をローカル除去
+  const onDeleteOne = async (item: HistoryItem) => {
+    if (!window.confirm(`「${item.work.title}」の再生履歴を削除しますか?`)) return;
+    setDeletingIds((prev) => new Set(prev).add(item.work.id));
+    try {
+      await deleteHistory(item.work.id);
+      setItems((prev) => prev.filter((it) => it.work.id !== item.work.id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '削除に失敗しました');
+    } finally {
+      setDeletingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(item.work.id);
+        return next;
+      });
+    }
+  };
 
   return (
     <div className={styles.page}>
@@ -97,7 +118,7 @@ export default function HistoryPage() {
         <>
           <ul className={styles.list}>
             {items.map((item) => (
-              <li key={item.work.id}>
+              <li key={item.work.id} className={styles.rowWrapper}>
                 <Link to={`/works/${item.work.id}`} className={styles.row}>
                   <Thumbnail
                     className={styles.thumb}
@@ -115,6 +136,15 @@ export default function HistoryPage() {
                     </div>
                   </div>
                 </Link>
+                <button
+                  type="button"
+                  className={styles.deleteBtn}
+                  onClick={() => void onDeleteOne(item)}
+                  disabled={deletingIds.has(item.work.id)}
+                  aria-label="この作品の履歴を削除"
+                >
+                  ✕
+                </button>
               </li>
             ))}
           </ul>

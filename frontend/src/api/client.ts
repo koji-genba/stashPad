@@ -3,6 +3,7 @@
 import { decodeTextBuffer } from '@/utils/textDecode';
 import type {
   CirclesResponse,
+  DeleteHistoryResult,
   EntriesResponse,
   HistoryParams,
   HistoryResponse,
@@ -204,6 +205,15 @@ export function fetchHistory(params: HistoryParams = {}, signal?: AbortSignal): 
   if (params.sort) sp.set('sort', params.sort);
   if (params.order) sp.set('order', params.order);
   return getJson<HistoryResponse>(`${API_BASE}/history?${sp.toString()}`, signal);
+}
+
+/**
+ * 再生履歴を削除する(DELETE /api/history)。
+ * workId を指定するとその作品の履歴のみ、省略すると全件削除する。
+ */
+export function deleteHistory(workId?: number): Promise<DeleteHistoryResult> {
+  const qs = workId !== undefined ? `?work_id=${workId}` : '';
+  return sendJson<DeleteHistoryResult>('DELETE', `${API_BASE}/history${qs}`);
 }
 
 // ---- 管理 ----

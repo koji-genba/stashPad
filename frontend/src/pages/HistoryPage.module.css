@@ -17,8 +17,16 @@
   gap: 8px;
 }
 
+.rowWrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .row {
   display: flex;
+  flex: 1;
+  min-width: 0;
   gap: 12px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -28,6 +36,27 @@
 }
 .row:hover {
   border-color: var(--accent-dim);
+}
+
+.deleteBtn {
+  flex-shrink: 0;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.deleteBtn:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.deleteBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .thumb {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
+  DeleteHistoryResult,
   ImportResult,
   ScanResult,
   TagCleanupResult,
@@ -9,6 +10,7 @@ import type {
 } from '@/api/types';
 import {
   cleanupTags,
+  deleteHistory,
   fetchThumbnailRebuildStatus,
   fetchWorks,
   importCsv,
@@ -36,6 +38,12 @@ export default function SettingsPage() {
   const [cleaning, setCleaning] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<TagCleanupResult | null>(null);
   const [cleanupError, setCleanupError] = useState<string | null>(null);
+
+  const [clearingHistory, setClearingHistory] = useState(false);
+  const [clearHistoryResult, setClearHistoryResult] = useState<DeleteHistoryResult | null>(
+    null,
+  );
+  const [clearHistoryError, setClearHistoryError] = useState<string | null>(null);
 
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildStatus, setRebuildStatus] = useState<ThumbnailRebuildStatus | null>(
@@ -99,6 +107,21 @@ export default function SettingsPage() {
       setCleanupError(e instanceof Error ? e.message : 'タグ削除に失敗しました');
     } finally {
       setCleaning(false);
+    }
+  };
+
+  const onClearHistory = async () => {
+    if (!window.confirm('再生履歴を全て削除しますか?この操作は取り消せません')) return;
+    setClearingHistory(true);
+    setClearHistoryResult(null);
+    setClearHistoryError(null);
+    try {
+      const result = await deleteHistory();
+      setClearHistoryResult(result);
+    } catch (e) {
+      setClearHistoryError(e instanceof Error ? e.message : '履歴削除に失敗しました');
+    } finally {
+      setClearingHistory(false);
     }
   };
 
@@ -376,6 +399,23 @@ export default function SettingsPage() {
           </p>
         )}
         {rebuildError && <p className={styles.error}>{rebuildError}</p>}
+
+        <div className={styles.maintRow}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void onClearHistory()}
+            disabled={clearingHistory}
+          >
+            {clearingHistory ? '削除中…' : '再生履歴を全削除'}
+          </button>
+          {clearHistoryResult && (
+            <span className={styles.maintResult}>
+              削除 <b>{clearHistoryResult.deleted}</b> 件
+            </span>
+          )}
+        </div>
+        {clearHistoryError && <p className={styles.error}>{clearHistoryError}</p>}
       </section>
 
       {/* 非表示の作品 */}
