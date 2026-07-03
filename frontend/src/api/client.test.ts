@@ -12,6 +12,7 @@ import {
   fetchHistory,
   fetchTags,
   fetchTextFile,
+  fetchThumbnailRebuildStatus,
   fetchWork,
   fetchWorks,
   fileUrl,
@@ -452,8 +453,8 @@ describe('cleanupTags', () => {
 // ---- rebuildThumbnails ----
 
 describe('rebuildThumbnails', () => {
-  it('POST /api/thumbnails/rebuild を呼ぶ', async () => {
-    fetchMock = mockFetchOk({ checked: 10, regenerated: 2 });
+  it('POST /api/thumbnails/rebuild を呼び、202 の進捗スナップショットを返す', async () => {
+    fetchMock = mockFetchOk({ running: true, checked: 0, regenerated: 0, total: 10 }, 202);
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await rebuildThumbnails();
@@ -462,7 +463,20 @@ describe('rebuildThumbnails', () => {
       headers: undefined,
       body: undefined,
     });
-    expect(result).toEqual({ checked: 10, regenerated: 2 });
+    expect(result).toEqual({ running: true, checked: 0, regenerated: 0, total: 10 });
+  });
+});
+
+// ---- fetchThumbnailRebuildStatus ----
+
+describe('fetchThumbnailRebuildStatus', () => {
+  it('GET /api/thumbnails/rebuild/status を呼ぶ', async () => {
+    fetchMock = mockFetchOk({ running: true, checked: 3, regenerated: 1, total: 10 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchThumbnailRebuildStatus();
+    expect(fetchMock).toHaveBeenCalledWith('/api/thumbnails/rebuild/status', { signal: undefined });
+    expect(result).toEqual({ running: true, checked: 3, regenerated: 1, total: 10 });
   });
 });
 

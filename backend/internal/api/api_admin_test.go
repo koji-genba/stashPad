@@ -253,7 +253,11 @@ func TestRefreshThumbnailWorkNotFound(t *testing.T) {
 	}
 }
 
-// ---- POST /api/thumbnails/rebuild --------------------------------------------
+// ---- POST /api/thumbnails/rebuild(非同期。issue #55) --------------------------
+//
+// POST は 202 Accepted を即座に返すだけで、実際の再生成は goroutine で非同期に
+// 進む。最終結果は GET /api/thumbnails/rebuild/status をポーリングして確認する
+// (ポーリングの契約自体は rebuild_async_test.go でカバーする)。
 
 func TestRebuildThumbnails(t *testing.T) {
 	h, database, baseID := newTestServer(t)
@@ -271,16 +275,26 @@ func TestRebuildThumbnails(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/thumbnails/rebuild", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
 	}
-	var body struct {
-		Checked     int `json:"checked"`
-		Regenerated int `json:"regenerated"`
+	var accepted struct {
+		Running bool `json:"running"`
+		Total   int  `json:"total"`
 	}
-	json.Unmarshal(rec.Body.Bytes(), &body)
-
+	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
+		t.Fatalf("JSON デコード失敗: %v", err)
+	}
+	if !accepted.Running {
+		t.Error("202 応答で running=true になっていない")
+	}
 	// root_path がある作品: baseID(表紙.jpg中身非画像) + RJ830001(cover有) + RJ830002(なし) = 3
+	if accepted.Total != 3 {
+		t.Errorf("total = %d, want 3", accepted.Total)
+	}
+
+	body := waitForRebuildDone(t, h)
+
 	if body.Checked != 3 {
 		t.Errorf("checked = %d, want 3", body.Checked)
 	}

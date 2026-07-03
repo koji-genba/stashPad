@@ -13,7 +13,7 @@ import type {
   Tag,
   TagCleanupResult,
   TagsResponse,
-  ThumbnailRebuildResult,
+  ThumbnailRebuildStatus,
   ThumbnailRefreshResult,
   WorkDetail,
   WorksResponse,
@@ -217,9 +217,20 @@ export function cleanupTags(): Promise<TagCleanupResult> {
   return sendJson<TagCleanupResult>('POST', `${API_BASE}/tags/cleanup`);
 }
 
-/** 全作品のサムネイルを再生成チェックする(時間がかかる場合がある) */
-export function rebuildThumbnails(): Promise<ThumbnailRebuildResult> {
-  return sendJson<ThumbnailRebuildResult>('POST', `${API_BASE}/thumbnails/rebuild`);
+/**
+ * 全作品のサムネイル再生成ジョブを開始する(非同期。issue #55)。
+ * 202 Accepted とともに開始時点の進捗スナップショット(running=true, total 確定済み)
+ * を返す。完了までの進捗は fetchThumbnailRebuildStatus でポーリングする。
+ */
+export function rebuildThumbnails(): Promise<ThumbnailRebuildStatus> {
+  return sendJson<ThumbnailRebuildStatus>('POST', `${API_BASE}/thumbnails/rebuild`);
+}
+
+/** サムネイル一括再生成ジョブの進捗を取得する(ポーリング用) */
+export function fetchThumbnailRebuildStatus(
+  signal?: AbortSignal,
+): Promise<ThumbnailRebuildStatus> {
+  return getJson<ThumbnailRebuildStatus>(`${API_BASE}/thumbnails/rebuild/status`, signal);
 }
 
 /** 単一作品のサムネイルを再生成チェックする(fire-and-forget で利用) */

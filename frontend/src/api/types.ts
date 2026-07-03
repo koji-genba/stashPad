@@ -131,10 +131,19 @@ export interface TagCleanupResult {
   deleted: number;
 }
 
-/** POST /api/thumbnails/rebuild のレスポンス */
-export interface ThumbnailRebuildResult {
+/**
+ * POST /api/thumbnails/rebuild(202 Accepted)および
+ * GET /api/thumbnails/rebuild/status のレスポンス。
+ *
+ * サムネイル一括再生成は非同期ジョブとして実行される(issue #55)。POST は
+ * ジョブを開始した時点のスナップショット(running=true, total 確定済み)を
+ * 返すのみで、実際の完了は status をポーリングして確認する。
+ */
+export interface ThumbnailRebuildStatus {
+  running: boolean;
   checked: number;
   regenerated: number;
+  total: number;
 }
 
 /** POST /api/works/{id}/thumbnail/refresh のレスポンス */

@@ -25,6 +25,73 @@ type Server struct {
 	// 同じ作品群を触るため同一ロックを共有する。TryLock 失敗時は 409 を返す
 	// (起動時自動スキャンのみブロッキング Lock でよい)。
 	scanMu sync.Mutex
+
+	// rebuildProgress はサムネイル一括再生成ジョブ(POST /api/thumbnails/rebuild)の
+	// 進捗。ジョブ実行は goroutine に委譲されるため(issue #55)、GET
+	// /api/thumbnails/rebuild/status から並行に読み取られる。
+	rebuildProgress rebuildProgress
+}
+
+// rebuildStatusSnapshot は進捗のスナップショット。POST /api/thumbnails/rebuild(202)
+// と GET /api/thumbnails/rebuild/status の両方でこの形を返す。
+type rebuildStatusSnapshot struct {
+	Running     bool `json:"running"`
+	Checked     int  `json:"checked"`
+	Regenerated int  `json:"regenerated"`
+	Total       int  `json:"total"`
+}
+
+// rebuildProgress はサムネイル一括再生成ジョブの進捗。ジョブ goroutine と
+// GET /api/thumbnails/rebuild/status から並行アクセスされるため mu で保護する。
+type rebuildProgress struct {
+	mu          sync.Mutex
+	running     bool
+	checked     int
+	regenerated int
+	total       int
+}
+
+// snapshot は現在の進捗を JSON レスポンス用構造体としてコピーする。
+func (p *rebuildProgress) snapshot() rebuildStatusSnapshot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return rebuildStatusSnapshot{
+		Running:     p.running,
+		Checked:     p.checked,
+		Regenerated: p.regenerated,
+		Total:       p.total,
+	}
+}
+
+// start はジョブ開始時に呼び出し、カウンタをリセットして running=true にする。
+func (p *rebuildProgress) start(total int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.running = true
+	p.checked = 0
+	p.regenerated = 0
+	p.total = total
+}
+
+// addChecked は checked カウンタに n を加算する。
+func (p *rebuildProgress) addChecked(n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.checked += n
+}
+
+// addRegenerated は regenerated カウンタに n を加算する。
+func (p *rebuildProgress) addRegenerated(n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.regenerated += n
+}
+
+// finish はジョブ終了時に呼び出し、running=false にする(カウンタは最終値のまま残す)。
+func (p *rebuildProgress) finish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.running = false
 }
 
 // New は Server を生成する。
@@ -77,8 +144,9 @@ func (s *Server) Router(middlewares ...func(http.Handler) http.Handler) http.Han
 			r.Post("/plays", s.handleRecordPlay)
 		})
 
-		// サムネイル一括再生成
+		// サムネイル一括再生成(非同期。進捗は status で確認する)
 		r.Post("/thumbnails/rebuild", s.handleRebuildThumbnails)
+		r.Get("/thumbnails/rebuild/status", s.handleRebuildThumbnailsStatus)
 
 		// タグ
 		r.Get("/tags", s.handleListTags)

@@ -576,32 +576,41 @@ func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) 
 	respondJSON(w, http.StatusOK, map[string]any{"refreshed": regenerated})
 }
 
+// rebuildWorkEntry は一括再生成対象の作品(id, root_path)。
+type rebuildWorkEntry struct {
+	id       int64
+	rootPath string
+}
+
 // handleRebuildThumbnails は POST /api/thumbnails/rebuild を処理する。
 // root_path がある全作品に対して mtime 判定付きサムネイル再生成を worker pool で並列実行する。
 // scanMu を TryLock できない場合(スキャンや別の一括再生成と競合)は 409 を返す。
 // スキャンと同一の作品群を触るため scanMu を共有する(専用ロックにはしない)。
+//
+// 大規模ライブラリでは全作品の walk + 画像デコードに数分かかり、同期実行だと
+// プロキシ/ブラウザのタイムアウトでレスポンスを受け取れなくなる(issue #55)。
+// そのため作品一覧の取得と total 確定までは同期で行い、実際の worker pool 実行と
+// DB 更新は goroutine に委譲して 202 Accepted を即座に返す。進捗は
+// GET /api/thumbnails/rebuild/status でポーリングする。
 func (s *Server) handleRebuildThumbnails(w http.ResponseWriter, r *http.Request) {
 	if !s.tryLockScan(w) {
 		return
 	}
-	defer s.scanMu.Unlock()
 
-	// root_path がある作品一覧を取得
+	// root_path がある作品一覧を取得(total 確定まではリクエスト処理内で同期に行う)
 	rows, err := s.db.Query("SELECT id, root_path FROM works WHERE root_path IS NOT NULL")
 	if err != nil {
+		s.scanMu.Unlock()
 		respondError(w, http.StatusInternalServerError, "作品一覧取得失敗: "+err.Error())
 		return
 	}
 
-	type workEntry struct {
-		id       int64
-		rootPath string
-	}
-	var works []workEntry
+	var works []rebuildWorkEntry
 	for rows.Next() {
-		var we workEntry
+		var we rebuildWorkEntry
 		if err := rows.Scan(&we.id, &we.rootPath); err != nil {
 			rows.Close()
+			s.scanMu.Unlock()
 			respondError(w, http.StatusInternalServerError, "行読み込み失敗: "+err.Error())
 			return
 		}
@@ -609,9 +618,33 @@ func (s *Server) handleRebuildThumbnails(w http.ResponseWriter, r *http.Request)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
+		s.scanMu.Unlock()
 		respondError(w, http.StatusInternalServerError, "クエリエラー: "+err.Error())
 		return
 	}
+
+	s.rebuildProgress.start(len(works))
+
+	// worker pool 実行と DB 更新はリクエスト goroutine をブロックしないよう別 goroutine に
+	// 委譲する。scanMu の解放と進捗の終了処理は runRebuildThumbnailsJob 側の defer で行う。
+	go s.runRebuildThumbnailsJob(works)
+
+	respondJSON(w, http.StatusAccepted, s.rebuildProgress.snapshot())
+}
+
+// runRebuildThumbnailsJob は worker pool でサムネイルを並列再生成し、結果を DB に反映する。
+// handleRebuildThumbnails が TryLock した scanMu をここで解放し、進捗を finish する。
+func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
+	// パニックで scanMu が永久に取得されたままになるのを防ぐ(goroutine 内の未回収
+	// panic はプロセス全体を落とすため recover 自体も必須)。他の defer(Unlock・
+	// finish)より後に実行されるよう先頭で defer しておく。
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("サムネイル一括再生成ジョブがパニックしました: %v", rec)
+		}
+	}()
+	defer s.scanMu.Unlock()
+	defer s.rebuildProgress.finish()
 
 	thumbsDir := filepath.Join(s.cfg.DataDir, "thumbs")
 	gen := thumb.New(thumbsDir)
@@ -628,7 +661,7 @@ func (s *Server) handleRebuildThumbnails(w http.ResponseWriter, r *http.Request)
 		numWorkers = 1
 	}
 
-	jobs := make(chan workEntry, len(works))
+	jobs := make(chan rebuildWorkEntry, len(works))
 	results := make(chan result, len(works))
 
 	// ワーカー起動
@@ -648,31 +681,32 @@ func (s *Server) handleRebuildThumbnails(w http.ResponseWriter, r *http.Request)
 	close(jobs)
 
 	// 結果収集・DB 更新(SQLite は書き込みを直列化するためここで順次実行)
-	checked := len(works)
-	regenerated := 0
 	for range works {
 		res := <-results
 		if res.err != nil {
 			// ログには出力するが全体は継続
 			log.Printf("サムネイル再生成失敗 work_id=%d: %v", res.id, res.err)
+			s.rebuildProgress.addChecked(1)
 			continue
 		}
 		if res.regenerated && res.outPath != "" {
-			regenerated++
 			if _, uErr := s.db.Exec(
 				"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
 				res.outPath, res.id,
 			); uErr != nil {
-				// 更新失敗はログのみ、継続
-				_ = uErr
+				log.Printf("thumbnail_path 更新失敗 work_id=%d: %v", res.id, uErr)
+			} else {
+				s.rebuildProgress.addRegenerated(1)
 			}
 		}
+		s.rebuildProgress.addChecked(1)
 	}
+}
 
-	respondJSON(w, http.StatusOK, map[string]any{
-		"checked":     checked,
-		"regenerated": regenerated,
-	})
+// handleRebuildThumbnailsStatus は GET /api/thumbnails/rebuild/status を処理する。
+// 一度も一括再生成を実行していない場合は zero value のスナップショットを 200 で返す。
+func (s *Server) handleRebuildThumbnailsStatus(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, s.rebuildProgress.snapshot())
 }
 
 // ---- エントリ一覧 -----------------------------------------------------------

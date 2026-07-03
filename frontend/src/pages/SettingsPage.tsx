@@ -4,11 +4,12 @@ import type {
   ImportResult,
   ScanResult,
   TagCleanupResult,
-  ThumbnailRebuildResult,
+  ThumbnailRebuildStatus,
   WorkListItem,
 } from '@/api/types';
 import {
   cleanupTags,
+  fetchThumbnailRebuildStatus,
   fetchWorks,
   importCsv,
   rebuildThumbnails,
@@ -17,6 +18,9 @@ import {
 } from '@/api/client';
 import { useTagStore } from '@/store/tagStore';
 import styles from './SettingsPage.module.css';
+
+/** サムネイル一括再生成の進捗ポーリング間隔(ミリ秒) */
+const REBUILD_POLL_INTERVAL_MS = 1000;
 
 export default function SettingsPage() {
   const fileInput = useRef<HTMLInputElement>(null);
@@ -34,10 +38,12 @@ export default function SettingsPage() {
   const [cleanupError, setCleanupError] = useState<string | null>(null);
 
   const [rebuilding, setRebuilding] = useState(false);
-  const [rebuildResult, setRebuildResult] = useState<ThumbnailRebuildResult | null>(
+  const [rebuildStatus, setRebuildStatus] = useState<ThumbnailRebuildStatus | null>(
     null,
   );
   const [rebuildError, setRebuildError] = useState<string | null>(null);
+  // ポーリング用の setInterval ハンドル。アンマウント時・完了時に必ずクリアする
+  const rebuildPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 非表示作品一覧
   const [hiddenWorks, setHiddenWorks] = useState<WorkListItem[]>([]);
@@ -96,21 +102,74 @@ export default function SettingsPage() {
     }
   };
 
+  // ポーリングを止める(アンマウント時・完了時・エラー時に呼ぶ)
+  const stopRebuildPolling = () => {
+    if (rebuildPollRef.current !== null) {
+      clearInterval(rebuildPollRef.current);
+      rebuildPollRef.current = null;
+    }
+  };
+
+  // running=false になるまで status を 1 秒間隔でポーリングする
+  const startRebuildPolling = () => {
+    stopRebuildPolling();
+    rebuildPollRef.current = setInterval(async () => {
+      try {
+        const status = await fetchThumbnailRebuildStatus();
+        setRebuildStatus(status);
+        if (!status.running) {
+          stopRebuildPolling();
+          setRebuilding(false);
+        }
+      } catch (e) {
+        stopRebuildPolling();
+        setRebuilding(false);
+        setRebuildError(e instanceof Error ? e.message : '進捗の取得に失敗しました');
+      }
+    }, REBUILD_POLL_INTERVAL_MS);
+  };
+
   const onRebuildThumbnails = async () => {
     setRebuilding(true);
-    setRebuildResult(null);
+    setRebuildStatus(null);
     setRebuildError(null);
     try {
-      const result = await rebuildThumbnails();
-      setRebuildResult(result);
+      const status = await rebuildThumbnails();
+      setRebuildStatus(status);
+      if (status.running) {
+        startRebuildPolling();
+      } else {
+        setRebuilding(false);
+      }
     } catch (e) {
       setRebuildError(
         e instanceof Error ? e.message : 'サムネイル再生成に失敗しました',
       );
-    } finally {
       setRebuilding(false);
     }
   };
+
+  // マウント時に既にジョブが実行中なら(他タブでの起動等)ポーリングを再開する
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await fetchThumbnailRebuildStatus();
+        if (cancelled || !status.running) return;
+        setRebuilding(true);
+        setRebuildStatus(status);
+        startRebuildPolling();
+      } catch {
+        // 初回チェックの失敗は無視する(通常のボタン操作には影響しない)
+      }
+    })();
+    return () => {
+      cancelled = true;
+      stopRebuildPolling();
+    };
+    // マウント時のみ実行する
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 非表示作品一覧を取得する
   // 設定画面では上限 200 件まで表示する。それを超える場合は注記でユーザに知らせる
@@ -295,10 +354,19 @@ export default function SettingsPage() {
             {rebuilding ? 'サムネイル再生成中…' : 'サムネイル再生成'}
           </button>
           {rebuilding && <span className="spinner" />}
-          {rebuildResult && (
+          {rebuildStatus && (
             <span className={styles.maintResult}>
-              確認 <b>{rebuildResult.checked}</b> / 再生成{' '}
-              <b>{rebuildResult.regenerated}</b>
+              {rebuildStatus.running ? (
+                <>
+                  確認 <b>{rebuildStatus.checked}</b>/<b>{rebuildStatus.total}</b> / 再生成{' '}
+                  <b>{rebuildStatus.regenerated}</b>
+                </>
+              ) : (
+                <>
+                  確認 <b>{rebuildStatus.checked}</b> / 再生成{' '}
+                  <b>{rebuildStatus.regenerated}</b>
+                </>
+              )}
             </span>
           )}
         </div>
