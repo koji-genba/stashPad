@@ -1,0 +1,66 @@
+# CI: バックエンド(go vet / go test)、フロントエンド(typecheck / vitest)、
+# embed 込みビルド検証(Dockerfile と同じ流れ)を PR と main push で実行する。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    name: backend (go vet / go test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go vet ./...
+      - run: go test ./...
+
+  frontend:
+    name: frontend (typecheck / vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  build:
+    name: build (embed 込みバイナリ)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: フロントエンドをビルド
+        run: npm ci && npm run build
+        working-directory: frontend
+      - name: dist を embed 先へコピー
+        run: |
+          rm -rf backend/internal/web/dist
+          cp -r frontend/dist backend/internal/web/dist
+      - name: バックエンドをビルド(embed 込み)
+        run: CGO_ENABLED=0 go build ./cmd/stashpad
+        working-directory: backend
