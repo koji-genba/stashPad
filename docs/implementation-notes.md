@@ -229,13 +229,39 @@ multipart で CSV を受け取り、結果サマリを返す:
 
 | media_kind | 拡張子 |
 |------------|--------|
-| audio | .flac .wav .mp3 |
-| video | .mp4 |
-| image | .jpg .jpeg .png .webp |
+| audio | .flac .wav .mp3 .m4a .aac .ogg .opus |
+| video | .mp4 .webm .m4v |
+| image | .jpg .jpeg .png .webp .gif .avif |
 | text | .txt |
 | other | 上記以外すべて |
 
-大文字小文字は無視。判定はこの表に閉じる(MIME 推定などはしない)。配信時の Content-Type は拡張子から `mime.TypeByExtension` で決める。
+大文字小文字は無視。判定はこの表に閉じる(MIME 推定などはしない)。判定ロジックは `media.KindByExt`。
+
+ブラウザ互換の注意点:
+- ogg / opus は Safari 等一部ブラウザでネイティブ再生に対応していない場合がある(#54)。
+- avif は media_kind としては image だが、Go 標準ライブラリにデコーダが無くサムネイル生成の対象外(`media.CanDecodeThumb` が false を返す。`thumb` パッケージの候補選定は KindByExt ではなく CanDecodeThumb を使う)。gif は Go 標準ライブラリでデコード可能なのでサムネイル候補に含める。
+
+### 配信時の Content-Type(拡張子 → MIME)
+
+`mime.TypeByExtension` は OS の `/etc/mime.types` に依存し環境依存になる(distroless では `.flac` が `application/octet-stream` になる等の問題があった)。そのため `media.MimeByExt` で明示テーブルを持ち、配信時(`handleWorkFile`)はこれを優先し、対応外の拡張子のみ `mime.TypeByExtension` にフォールバックする。
+
+| 拡張子 | MIME |
+|--------|------|
+| .flac | audio/flac |
+| .wav | audio/wav |
+| .mp3 | audio/mpeg |
+| .m4a | audio/mp4 |
+| .aac | audio/aac |
+| .ogg | audio/ogg |
+| .opus | audio/ogg(Opus in Ogg コンテナ。audio/opus ではない) |
+| .mp4 / .m4v | video/mp4 |
+| .webm | video/webm |
+| .jpg / .jpeg | image/jpeg |
+| .png | image/png |
+| .webp | image/webp |
+| .gif | image/gif |
+| .avif | image/avif |
+| .txt | text/plain(charset は付けない。文字コード判定はフロント側で行うため) |
 
 ## 6. パストラバーサル検証(セキュリティ境界・必ずテストを書く)
 
@@ -258,9 +284,15 @@ multipart で CSV を受け取り、結果サマリを返す:
 f, _ := os.Open(resolvedPath)
 defer f.Close()
 st, _ := f.Stat()
-w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(resolvedPath)))
+ct := media.MimeByExt(resolvedPath)
+if ct == "" {
+	ct = mime.TypeByExtension(filepath.Ext(resolvedPath))
+}
+w.Header().Set("Content-Type", ct)
 http.ServeContent(w, r, st.Name(), st.ModTime(), f)
 ```
+
+Content-Type は `media.MimeByExt` の明示テーブルを優先する(§5 参照。`mime.TypeByExtension` 単独は環境依存)。
 
 `http.ServeContent` が Range / If-Range / 206 / HEAD を全部処理する。自前で Range をパースしないこと。
 

@@ -46,17 +46,4 @@ func TestNaturalSortOrder(t *testing.T) {
 	}
 }
 
-func TestKindByExt(t *testing.T) {
-	cases := map[string]string{
-		"a.flac": "audio", "b.WAV": "audio", "c.mp3": "audio",
-		"d.mp4": "video",
-		"e.jpg": "image", "f.JPEG": "image", "g.png": "image", "h.webp": "image",
-		"i.txt": "text",
-		"j.zip": "other", "noext": "other", "k.mp3.bak": "other",
-	}
-	for name, want := range cases {
-		if got := KindByExt(name); got != want {
-			t.Errorf("KindByExt(%q) = %q, want %q", name, got, want)
-		}
-	}
-}
+// KindByExt のテストは kind_test.go に統合(#54 で拡張子を追加した際に集約)。

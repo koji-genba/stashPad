@@ -6,6 +6,7 @@ package thumb
 import (
 	"fmt"
 	"image"
+	_ "image/gif" // GIF デコード登録
 	"image/jpeg"
 	_ "image/png" // PNG デコード登録
 	"os"
@@ -146,9 +147,11 @@ func walkDepth(dir string, depth, maxDepth int, callback func(string)) error {
 	return nil
 }
 
-// isImageFile は拡張子が画像かどうかを判定する。
+// isImageFile はサムネイル生成のデコード候補になる画像拡張子かどうかを判定する。
+// media_kind としては image でも(例: avif)Go 標準ライブラリでデコードできない
+// 形式はサムネイル候補から除外する(media.CanDecodeThumb を参照)。
 func isImageFile(name string) bool {
-	return media.KindByExt(name) == "image"
+	return media.CanDecodeThumb(name)
 }
 
 // chooseBestImage は候補から最適な画像を選ぶ。

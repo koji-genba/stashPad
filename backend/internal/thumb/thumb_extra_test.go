@@ -378,16 +378,18 @@ func TestRefreshSourceChangedToNonPriority(t *testing.T) {
 }
 
 // TestIsImageFile は isImageFile が画像拡張子を正しく識別することをテスト。
+// gif はデコード可能な候補として true(#54)。avif は KindByExt 上は image だが
+// Go 標準ライブラリでデコードできないため候補から除外する(thumb_formats_test.go 参照)。
 func TestIsImageFile(t *testing.T) {
 	imageFiles := []string{"test.jpg", "test.jpeg", "test.png", "test.webp",
-		"test.JPG", "test.PNG"}
+		"test.gif", "test.JPG", "test.PNG"}
 	for _, f := range imageFiles {
 		if !isImageFile(f) {
 			t.Errorf("isImageFile(%q) = false, want true", f)
 		}
 	}
 
-	nonImageFiles := []string{"test.mp3", "test.mp4", "test.txt", "test.gif", "test.bmp"}
+	nonImageFiles := []string{"test.mp3", "test.mp4", "test.txt", "test.avif", "test.bmp"}
 	for _, f := range nonImageFiles {
 		if isImageFile(f) {
 			t.Errorf("isImageFile(%q) = true, want false", f)

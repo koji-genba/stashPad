@@ -896,8 +896,13 @@ func (s *Server) handleWorkFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Content-Type を拡張子から決定
-	ct := mime.TypeByExtension(filepath.Ext(resolvedPath))
+	// Content-Type を拡張子から決定。media.MimeByExt の明示テーブルを優先し
+	// (mime.TypeByExtension は環境依存で distroless 等では .flac 等が外れることがある)、
+	// 対応外の拡張子のみ mime.TypeByExtension にフォールバックする。
+	ct := media.MimeByExt(resolvedPath)
+	if ct == "" {
+		ct = mime.TypeByExtension(filepath.Ext(resolvedPath))
+	}
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
