@@ -113,7 +113,7 @@ export default function AudioPlayer() {
         : [],
     });
     const store = usePlayerStore.getState();
-    const set = (action: MediaSessionAction, handler: (() => void) | null) => {
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
       try {
         ms.setActionHandler(action, handler);
       } catch {
@@ -124,6 +124,9 @@ export default function AudioPlayer() {
     set('pause', () => store.setPlaying(false));
     set('seekbackward', () => store.seekBy(-10));
     set('seekforward', () => store.seekBy(10));
+    set('seekto', (details) => {
+      if (details.seekTime != null) usePlayerStore.getState().seekTo(details.seekTime);
+    });
     set('previoustrack', () => usePlayerStore.getState().prev());
     set('nexttrack', () => usePlayerStore.getState().next());
     return () => {
@@ -133,6 +136,7 @@ export default function AudioPlayer() {
           'pause',
           'seekbackward',
           'seekforward',
+          'seekto',
           'previoustrack',
           'nexttrack',
         ] as MediaSessionAction[]
@@ -145,6 +149,20 @@ export default function AudioPlayer() {
       navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
     }
   }, [isPlaying]);
+
+  // ---- Media Session: 再生位置(ロック画面のシークバー/残り時間表示に反映) ----
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    const ms = navigator.mediaSession;
+    if (!('setPositionState' in ms)) return;
+    // duration が未確定(NaN/0/Infinity)の間は呼ばない。呼ぶと例外になるブラウザがある
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    ms.setPositionState({
+      duration,
+      playbackRate,
+      position: Math.min(currentTime, duration),
+    });
+  }, [duration, playbackRate, currentTime]);
 
   // キューが空になったら、オーバーレイ用に積んだ history エントリを巻き戻す
   // (再生キュー全削除など。畳み忘れると「戻る」が見かけ上の無反応になる)

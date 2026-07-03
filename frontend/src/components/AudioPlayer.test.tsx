@@ -247,6 +247,97 @@ describe('AudioPlayer 続きから再生(playbackMemory 連携)', () => {
   });
 });
 
+describe('AudioPlayer Media Session', () => {
+  // jsdom は navigator.mediaSession / MediaMetadata を実装していないため、
+  // このブロックでのみ最小限のモックを差し込む(他ブロックには影響させない)
+  let ms: {
+    metadata: unknown;
+    playbackState: string;
+    setActionHandler: ReturnType<typeof vi.fn>;
+    setPositionState: ReturnType<typeof vi.fn>;
+  };
+  let handlers: Record<string, ((details: { seekTime?: number | null }) => void) | null>;
+
+  beforeEach(() => {
+    setupPlayingState();
+    handlers = {};
+    ms = {
+      metadata: null,
+      playbackState: 'none',
+      setActionHandler: vi.fn(
+        (action: string, handler: ((details: { seekTime?: number | null }) => void) | null) => {
+          handlers[action] = handler;
+        },
+      ),
+      setPositionState: vi.fn(),
+    };
+    Object.defineProperty(window.navigator, 'mediaSession', {
+      value: ms,
+      configurable: true,
+    });
+    (globalThis as unknown as { MediaMetadata: unknown }).MediaMetadata = function MediaMetadata(
+      this: Record<string, unknown>,
+      init: unknown,
+    ) {
+      Object.assign(this, init);
+    };
+  });
+
+  afterEach(() => {
+    delete (window.navigator as { mediaSession?: unknown }).mediaSession;
+    delete (globalThis as { MediaMetadata?: unknown }).MediaMetadata;
+  });
+
+  it('seekto ハンドラが登録され、呼び出すと store.seekRequest が更新される', () => {
+    renderPlayer();
+    expect(ms.setActionHandler).toHaveBeenCalledWith('seekto', expect.any(Function));
+
+    act(() => {
+      handlers['seekto']?.({ seekTime: 42 });
+    });
+
+    expect(usePlayerStore.getState().seekRequest?.time).toBe(42);
+  });
+
+  it('seekTime が null のときは seekRequest を更新しない', () => {
+    renderPlayer();
+    const before = usePlayerStore.getState().seekRequest;
+
+    act(() => {
+      handlers['seekto']?.({ seekTime: null });
+    });
+
+    expect(usePlayerStore.getState().seekRequest).toBe(before);
+  });
+
+  it('duration>0 のとき setPositionState が duration/playbackRate/position で呼ばれる', () => {
+    renderPlayer();
+    expect(ms.setPositionState).toHaveBeenCalledWith({
+      duration: 120,
+      playbackRate: 1,
+      position: 30,
+    });
+  });
+
+  it('duration が 0 のとき setPositionState は呼ばれない', () => {
+    usePlayerStore.setState({ duration: 0 });
+    renderPlayer();
+    expect(ms.setPositionState).not.toHaveBeenCalled();
+  });
+
+  it('duration が NaN のとき setPositionState は呼ばれない', () => {
+    usePlayerStore.setState({ duration: NaN });
+    renderPlayer();
+    expect(ms.setPositionState).not.toHaveBeenCalled();
+  });
+
+  it('duration が Infinity のとき setPositionState は呼ばれない', () => {
+    usePlayerStore.setState({ duration: Infinity });
+    renderPlayer();
+    expect(ms.setPositionState).not.toHaveBeenCalled();
+  });
+});
+
 describe('AudioPlayer トラック操作ボタン', () => {
   it('「前のトラック」ボタンは queue が 1 件以下で disabled', () => {
     usePlayerStore.setState({
