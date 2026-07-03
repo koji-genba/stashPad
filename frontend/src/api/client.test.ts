@@ -294,20 +294,37 @@ describe('fetchEntries', () => {
 // ---- fetchTextFile ----
 
 describe('fetchTextFile', () => {
-  it('ファイル URL を GET してテキストを返す', async () => {
-    const fetchMockWithText = vi.fn().mockResolvedValue({
+  it('ファイル URL を GET してテキストを返す(UTF-8)', async () => {
+    const buf = new TextEncoder().encode('テキストの内容').buffer;
+    const fetchMockWithBuffer = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       statusText: 'OK',
       json: vi.fn().mockResolvedValue({}),
-      text: vi.fn().mockResolvedValue('テキストの内容'),
+      arrayBuffer: vi.fn().mockResolvedValue(buf),
     });
-    vi.stubGlobal('fetch', fetchMockWithText);
+    vi.stubGlobal('fetch', fetchMockWithBuffer);
 
     const result = await fetchTextFile(1, 'readme.txt');
-    const [url] = fetchMockWithText.mock.calls[0] as [string, ...unknown[]];
+    const [url] = fetchMockWithBuffer.mock.calls[0] as [string, ...unknown[]];
     expect(url).toBe('/api/works/1/file?path=readme.txt');
     expect(result).toBe('テキストの内容');
+  });
+
+  it('Shift_JIS のバイト列を正しくデコードする(issue #53)', async () => {
+    // "あ" の Shift_JIS バイト列
+    const buf = new Uint8Array([0x82, 0xa0]).buffer;
+    const fetchMockWithBuffer = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: vi.fn().mockResolvedValue({}),
+      arrayBuffer: vi.fn().mockResolvedValue(buf),
+    });
+    vi.stubGlobal('fetch', fetchMockWithBuffer);
+
+    const result = await fetchTextFile(1, 'sjis.txt');
+    expect(result).toBe('あ');
   });
 
   it('HTTP エラー時に ApiRequestError をスローする', async () => {

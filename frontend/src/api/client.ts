@@ -1,5 +1,6 @@
 // API クライアント。全レスポンス型は ./types に定義。
 // エラーは一律 {"error": "..."} なので ApiRequestError に正規化する。
+import { decodeTextBuffer } from '@/utils/textDecode';
 import type {
   CirclesResponse,
   EntriesResponse,
@@ -164,7 +165,13 @@ export function thumbnailUrl(workId: number): string {
   return `${API_BASE}/works/${workId}/thumbnail`;
 }
 
-/** テキストファイルの中身を取得 */
+/**
+ * テキストファイルの中身を取得する。
+ *
+ * DLsite 同梱テキスト(readme.txt・台本 txt 等)は Shift_JIS(CP932)率が高いため、
+ * `res.text()`(常に UTF-8 前提)は使わず、バイト列から `decodeTextBuffer` で
+ * UTF-8 として妥当なら UTF-8、不正バイト列なら Shift_JIS とみなしてデコードする(issue #53)。
+ */
 export async function fetchTextFile(
   workId: number,
   path: string,
@@ -172,7 +179,8 @@ export async function fetchTextFile(
 ): Promise<string> {
   const res = await fetch(fileUrl(workId, path), { signal });
   if (!res.ok) return parseError(res);
-  return res.text();
+  const buf = await res.arrayBuffer();
+  return decodeTextBuffer(buf);
 }
 
 // ---- 再生履歴 ----
