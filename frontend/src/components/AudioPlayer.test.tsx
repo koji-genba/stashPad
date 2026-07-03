@@ -14,6 +14,9 @@ vi.mock('@/api/client', () => ({
 
 // vi.mock はファイル先頭に巻き上げられるため、この import 時点でモックは適用済み
 import AudioPlayer from './AudioPlayer';
+import { _resetForTest, loadResumePosition } from '@/lib/playbackMemory';
+
+const PLAYBACK_POSITIONS_KEY = 'stashpad-playback-positions';
 
 // ストアの初期状態リセット用
 const initialState = {
@@ -65,6 +68,8 @@ function renderPlayer() {
 // jsdom は HTMLMediaElement.play/pause/load を実装していないため全テストでスタブする
 beforeEach(() => {
   resetStore();
+  localStorage.clear();
+  _resetForTest();
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
   vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined);
@@ -159,6 +164,86 @@ describe('AudioPlayer <audio> 要素へのストア反映', () => {
       usePlayerStore.getState().setRate(1.5);
     });
     expect(audio!.playbackRate).toBe(1.5);
+  });
+});
+
+describe('AudioPlayer 続きから再生(playbackMemory 連携)', () => {
+  beforeEach(setupPlayingState);
+
+  it('保存済み位置(30秒以上)があるとき、loadedmetadata で currentTime が復元される', () => {
+    localStorage.setItem(
+      PLAYBACK_POSITIONS_KEY,
+      JSON.stringify({ '42:track02.mp3': { position: 500, duration: 700, updatedAt: Date.now() } }),
+    );
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+    expect(audio).not.toBeNull();
+
+    Object.defineProperty(audio, 'duration', { value: 700, configurable: true });
+    fireEvent(audio, new Event('loadedmetadata'));
+
+    expect(audio.currentTime).toBe(500);
+    expect(usePlayerStore.getState().currentTime).toBe(500);
+  });
+
+  it('保存済み位置が無いとき、loadedmetadata が発火しても currentTime は復元されない', () => {
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+
+    Object.defineProperty(audio, 'duration', { value: 700, configurable: true });
+    fireEvent(audio, new Event('loadedmetadata'));
+
+    expect(audio.currentTime).toBe(0);
+  });
+
+  it('位置が末尾30秒以内に食い込む場合は再開しない', () => {
+    localStorage.setItem(
+      PLAYBACK_POSITIONS_KEY,
+      JSON.stringify({ '42:track02.mp3': { position: 690, duration: 700, updatedAt: Date.now() } }),
+    );
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+
+    // 実際にロードされた duration は 700 → 700 - 690 = 10 秒 < 30 秒なので再開しない
+    Object.defineProperty(audio, 'duration', { value: 700, configurable: true });
+    fireEvent(audio, new Event('loadedmetadata'));
+
+    expect(audio.currentTime).toBe(0);
+  });
+
+  it('onEnded で clearProgress が呼ばれ、保存済み位置が消える', () => {
+    localStorage.setItem(
+      PLAYBACK_POSITIONS_KEY,
+      JSON.stringify({ '42:track02.mp3': { position: 500, duration: 700, updatedAt: Date.now() } }),
+    );
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+
+    fireEvent(audio, new Event('ended'));
+
+    expect(loadResumePosition(42, 'track02.mp3')).toBeNull();
+  });
+
+  it('onPause(ended でない)で flushProgress により位置が即座に保存される', () => {
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+    Object.defineProperty(audio, 'duration', { value: 700, configurable: true });
+    Object.defineProperty(audio, 'currentTime', { value: 200, configurable: true, writable: true });
+
+    fireEvent(audio, new Event('pause'));
+
+    expect(loadResumePosition(42, 'track02.mp3')).toBe(200);
+  });
+
+  it('onTimeUpdate で recordProgress により位置が保存される(初回は throttle されない)', () => {
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+    Object.defineProperty(audio, 'duration', { value: 700, configurable: true });
+    Object.defineProperty(audio, 'currentTime', { value: 150, configurable: true, writable: true });
+
+    fireEvent.timeUpdate(audio);
+
+    expect(loadResumePosition(42, 'track02.mp3')).toBe(150);
   });
 });
 
