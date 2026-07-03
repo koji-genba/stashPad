@@ -76,6 +76,8 @@ export interface WorksQuery {
   series?: string;
   /** true のとき非表示作品のみを返す */
   hidden?: boolean;
+  /** true のときお気に入り作品のみを返す */
+  favorite?: boolean;
   sort?: SortKey;
   order?: SortOrder;
   page?: number;
@@ -95,6 +97,7 @@ export function fetchWorks(query: WorksQuery, signal?: AbortSignal): Promise<Wor
   if (query.page) params.set('page', String(query.page));
   if (query.limit) params.set('limit', String(query.limit));
   if (query.hidden) params.set('hidden', '1');
+  if (query.favorite) params.set('favorite', '1');
   const qs = params.toString();
   return getJson<WorksResponse>(`${API_BASE}/works${qs ? `?${qs}` : ''}`, signal);
 }
@@ -114,6 +117,11 @@ export function removeTag(workId: number, tagId: number): Promise<void> {
 /** 作品の非表示状態を変更する(PATCH /api/works/{id}) */
 export function setWorkHidden(workId: number, hidden: boolean): Promise<void> {
   return sendJson<void>('PATCH', `${API_BASE}/works/${workId}`, { hidden });
+}
+
+/** 作品のお気に入り状態を変更する(PATCH /api/works/{id}) */
+export function setWorkFavorite(workId: number, favorite: boolean): Promise<void> {
+  return sendJson<void>('PATCH', `${API_BASE}/works/${workId}`, { favorite });
 }
 
 // ---- タグ ----

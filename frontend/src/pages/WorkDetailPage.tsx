@@ -6,6 +6,7 @@ import {
   fetchWork,
   refreshThumbnail,
   removeTag,
+  setWorkFavorite,
   setWorkHidden,
   thumbnailUrl,
 } from '@/api/client';
@@ -39,6 +40,9 @@ export default function WorkDetailPage() {
   // 非表示操作用
   const [hideBusy, setHideBusy] = useState(false);
   const [hideError, setHideError] = useState<string | null>(null);
+  // お気に入り操作用
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+  const [favoriteError, setFavoriteError] = useState<string | null>(null);
   // サムネ再生成が走ったら src にクエリを足して再読込させる
   const [thumbBust, setThumbBust] = useState<number | null>(null);
 
@@ -149,6 +153,24 @@ export default function WorkDetailPage() {
     }
   };
 
+  // お気に入り登録/解除をトグルする
+  const onToggleFavorite = async () => {
+    if (!work) return;
+    const next = !work.favorited;
+    setFavoriteBusy(true);
+    setFavoriteError(null);
+    try {
+      await setWorkFavorite(work.id, next);
+      setWork((w) => (w ? { ...w, favorited: next } : w));
+    } catch (err) {
+      setFavoriteError(
+        err instanceof Error ? err.message : 'お気に入りの更新に失敗しました',
+      );
+    } finally {
+      setFavoriteBusy(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className={styles.center}>
@@ -211,7 +233,20 @@ export default function WorkDetailPage() {
           src={thumbBust ? `${thumbnailUrl(work.id)}?t=${thumbBust}` : thumbnailUrl(work.id)}
         />
         <div className={styles.headInfo}>
-          <h1 className={styles.title}>{work.title}</h1>
+          <div className={styles.titleRow}>
+            <h1 className={styles.title}>{work.title}</h1>
+            <button
+              type="button"
+              className={`${styles.favoriteBtn} ${work.favorited ? styles.favoriteBtnActive : ''}`}
+              onClick={onToggleFavorite}
+              disabled={favoriteBusy}
+              aria-label={work.favorited ? 'お気に入りから削除' : 'お気に入りに追加'}
+              aria-pressed={work.favorited}
+            >
+              {work.favorited ? '★' : '☆'}
+            </button>
+          </div>
+          {favoriteError && <p className="error">{favoriteError}</p>}
           {!work.has_folder && <span className={styles.notImported}>未取込</span>}
           <dl className={styles.meta}>
             {meta

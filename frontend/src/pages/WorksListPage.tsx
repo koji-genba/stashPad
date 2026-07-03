@@ -17,6 +17,9 @@ const SORT_LABELS: Record<SortKey, string> = {
   title: 'タイトル',
   created_at: '登録日',
   circle: 'サークル名',
+  favorited_at: 'お気に入り登録',
+  last_played: '最近聴いた',
+  play_count: 'よく聴く',
 };
 
 function parseTags(value: string | null): number[] {
@@ -39,6 +42,7 @@ export default function WorksListPage() {
   const excludeTags = useMemo(() => parseTags(params.get('exclude_tags')), [params]);
   const circle = params.get('circle') ?? '';
   const series = params.get('series') ?? '';
+  const favorite = params.get('favorite') === '1';
   const sort = (params.get('sort') as SortKey) || 'purchase_date';
   const page = Number(params.get('page') ?? '1') || 1;
 
@@ -103,6 +107,7 @@ export default function WorksListPage() {
         excludeTags,
         circle: circle || undefined,
         series: series || undefined,
+        favorite: favorite || undefined,
         sort,
         page,
         limit: LIMIT,
@@ -119,7 +124,7 @@ export default function WorksListPage() {
         setLoading(false);
       });
     return () => ac.abort();
-  }, [q, tags, excludeTags, circle, series, sort, page]);
+  }, [q, tags, excludeTags, circle, series, favorite, sort, page]);
 
   // URL が変わるたびに検索クエリを sessionStorage に保存(詳細→一覧の戻り先に使う)
   useEffect(() => {
@@ -182,6 +187,14 @@ export default function WorksListPage() {
     }, { scrollToTop: true });
   };
 
+  const toggleFavorite = () => {
+    update((p) => {
+      if (p.get('favorite') === '1') p.delete('favorite');
+      else p.set('favorite', '1');
+      p.delete('page');
+    }, { scrollToTop: true });
+  };
+
   const setSort = (s: SortKey) => {
     update((p) => {
       p.set('sort', s);
@@ -209,6 +222,7 @@ export default function WorksListPage() {
       p.delete('exclude_tags');
       p.delete('circle');
       p.delete('series');
+      p.delete('favorite');
       p.delete('page');
     }, { scrollToTop: true });
     // URL→qInput 同期の useEffect は次レンダー待ちになるため、入力欄は即時クリア
@@ -253,6 +267,14 @@ export default function WorksListPage() {
               onClick={() => setDrawerOpen(true)}
             >
               タグ絞り込み{tagFilterCount > 0 ? ` (${tagFilterCount})` : ''}
+            </button>
+            <button
+              type="button"
+              className={`btn ${styles.favoriteToggle} ${favorite ? styles.favoriteToggleActive : ''}`}
+              onClick={toggleFavorite}
+              aria-pressed={favorite}
+            >
+              ★ お気に入りのみ
             </button>
             <select
               className={styles.sortSelect}
@@ -343,6 +365,7 @@ export default function WorksListPage() {
                   ageRating={w.age_rating}
                   thumbnailUrl={w.thumbnail_url}
                   hasFolder={w.has_folder}
+                  favorited={w.favorited}
                 />
               ))}
             </div>

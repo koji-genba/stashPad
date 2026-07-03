@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -985,5 +986,232 @@ func TestHistoryPageParam(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &body)
 	if body.Page != 3 {
 		t.Errorf("page=3 = %d, want 3", body.Page)
+	}
+}
+
+// ---- お気に入り機能(issue #72) ------------------------------------------------
+
+// PATCH favorite=true でお気に入り登録(favorited_at が入る)、
+// favorite=false で解除(NULL に戻る)こと。hidden と同じ流儀。
+func TestPatchWorkFavorite(t *testing.T) {
+	h, database, id := newTestServer(t)
+
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"favorite":true}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("favorite=true status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var favoritedAt sql.NullString
+	if err := database.QueryRow("SELECT favorited_at FROM works WHERE id=?", id).Scan(&favoritedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !favoritedAt.Valid || favoritedAt.String == "" {
+		t.Errorf("favorited_at がセットされていない: %+v", favoritedAt)
+	}
+
+	// GET でも favorited: true が返る
+	getResp := doGet(t, h, urlf("/api/works/%d", id))
+	var getBody struct {
+		Favorited bool `json:"favorited"`
+	}
+	json.Unmarshal(getResp.Body.Bytes(), &getBody)
+	if !getBody.Favorited {
+		t.Error("GET /api/works/{id} の favorited が true にならない")
+	}
+
+	// 解除
+	w = doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"favorite":false}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("favorite=false status = %d", w.Code)
+	}
+	favoritedAt = sql.NullString{}
+	if err := database.QueryRow("SELECT favorited_at FROM works WHERE id=?", id).Scan(&favoritedAt); err != nil {
+		t.Fatal(err)
+	}
+	if favoritedAt.Valid {
+		t.Errorf("favorite=false で favorited_at が NULL に戻っていない: %v", favoritedAt.String)
+	}
+}
+
+// favorite キーを含まない PATCH では favorited_at が変化しないこと
+func TestPatchWorkFavoriteUntouchedWhenOmitted(t *testing.T) {
+	h, database, id := newTestServer(t)
+	doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"favorite":true}`)
+
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":"新タイトル"}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var favoritedAt sql.NullString
+	if err := database.QueryRow("SELECT favorited_at FROM works WHERE id=?", id).Scan(&favoritedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !favoritedAt.Valid {
+		t.Error("favorite を指定しない PATCH で favorited_at が消えた")
+	}
+}
+
+// GET /api/works?favorite=1 でお気に入りのみが返ること。
+// 一覧・詳細双方のレスポンスに favorited フィールドが付くことも合わせて確認する。
+func TestListWorksFavoriteFilterAndField(t *testing.T) {
+	h, database, id := newTestServer(t)
+	res, err := database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ750001', '非お気に入り')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, _ := res.LastInsertId()
+
+	doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"favorite":true}`)
+
+	// favorite=1 → お気に入りのみ
+	w := doGet(t, h, "/api/works?favorite=1")
+	var body struct {
+		Total int `json:"total"`
+		Items []struct {
+			ID        int64 `json:"id"`
+			Favorited bool  `json:"favorited"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Total != 1 || len(body.Items) != 1 || body.Items[0].ID != id {
+		t.Errorf("favorite=1: total=%d items=%+v, want id=%d のみ", body.Total, body.Items, id)
+	}
+	if !body.Items[0].Favorited {
+		t.Error("一覧の favorited が true にならない")
+	}
+
+	// 未指定 → 両方(2件)返り、favorited フィールドがそれぞれ正しい
+	w = doGet(t, h, "/api/works")
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body.Total != 2 {
+		t.Errorf("未指定 total = %d, want 2", body.Total)
+	}
+	for _, item := range body.Items {
+		want := item.ID == id
+		if item.Favorited != want {
+			t.Errorf("id=%d favorited=%v, want %v", item.ID, item.Favorited, want)
+		}
+	}
+	_ = otherID
+}
+
+// sort=favorited_at: お気に入り登録順(新しい順)で並び、非お気に入りは末尾に来ること
+func TestListWorksSortFavoritedAt(t *testing.T) {
+	h, database, id := newTestServer(t)
+	res, _ := database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ760001', '後で登録')")
+	id2, _ := res.LastInsertId()
+	res, _ = database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ760002', '未登録')")
+	id3, _ := res.LastInsertId()
+
+	// id を先に、id2 を後にお気に入り登録(favorited_at の値を明示的にずらす)
+	database.Exec("UPDATE works SET favorited_at='2026-01-01 00:00:00' WHERE id=?", id)
+	database.Exec("UPDATE works SET favorited_at='2026-01-02 00:00:00' WHERE id=?", id2)
+
+	w := doGet(t, h, "/api/works?sort=favorited_at&order=desc")
+	var body struct {
+		Items []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 3 {
+		t.Fatalf("items 数 = %d, want 3", len(body.Items))
+	}
+	if body.Items[0].ID != id2 || body.Items[1].ID != id {
+		t.Errorf("お気に入り登録順(新しい順) = %v, want [%d, %d, ...]", body.Items, id2, id)
+	}
+	// 非お気に入り(id3)は末尾
+	if body.Items[2].ID != id3 {
+		t.Errorf("非お気に入りが末尾に来ていない: %v, want 末尾 %d", body.Items, id3)
+	}
+}
+
+// sort=last_played: 最近再生した順で並び、未再生は末尾に来ること(order 指定に関わらず)
+func TestListWorksSortLastPlayed(t *testing.T) {
+	h, database, id := newTestServer(t)
+	res, _ := database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ770001', '再生済み')")
+	id2, _ := res.LastInsertId()
+	res, _ = database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ770002', '未再生')")
+	id3, _ := res.LastInsertId()
+
+	database.Exec("INSERT INTO play_history (work_id, file_path, played_at) VALUES (?, 'a.mp3', '2026-01-01 00:00:00')", id)
+	database.Exec("INSERT INTO play_history (work_id, file_path, played_at) VALUES (?, 'b.mp3', '2026-01-05 00:00:00')", id2)
+
+	for _, order := range []string{"desc", "asc"} {
+		w := doGet(t, h, "/api/works?sort=last_played&order="+order)
+		var body struct {
+			Items []struct {
+				ID int64 `json:"id"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Items) != 3 {
+			t.Fatalf("order=%s items 数 = %d, want 3", order, len(body.Items))
+		}
+		// 未再生(id3)は asc/desc どちらでも末尾
+		if body.Items[2].ID != id3 {
+			t.Errorf("order=%s: 未再生が末尾に来ていない: %v, want 末尾 %d", order, body.Items, id3)
+		}
+	}
+
+	// desc では直近再生(id2)が先頭
+	w := doGet(t, h, "/api/works?sort=last_played&order=desc")
+	var body struct {
+		Items []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body.Items[0].ID != id2 {
+		t.Errorf("last_played desc 先頭 = %d, want %d", body.Items[0].ID, id2)
+	}
+}
+
+// sort=play_count: 再生回数順で並び、未再生(0回)は末尾に来ること(order 指定に関わらず)
+func TestListWorksSortPlayCount(t *testing.T) {
+	h, database, id := newTestServer(t)
+	res, _ := database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ780001', 'よく聴く')")
+	id2, _ := res.LastInsertId()
+	res, _ = database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ780002', '未再生')")
+	id3, _ := res.LastInsertId()
+
+	// id: 1回, id2: 3回
+	database.Exec("INSERT INTO play_history (work_id, file_path) VALUES (?, 'a.mp3')", id)
+	database.Exec("INSERT INTO play_history (work_id, file_path) VALUES (?, 'a.mp3'), (?, 'a.mp3'), (?, 'a.mp3')", id2, id2, id2)
+
+	for _, order := range []string{"desc", "asc"} {
+		w := doGet(t, h, "/api/works?sort=play_count&order="+order)
+		var body struct {
+			Items []struct {
+				ID int64 `json:"id"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Items) != 3 {
+			t.Fatalf("order=%s items 数 = %d, want 3", order, len(body.Items))
+		}
+		// 未再生(id3)は asc/desc どちらでも末尾
+		if body.Items[2].ID != id3 {
+			t.Errorf("order=%s: 未再生が末尾に来ていない: %v, want 末尾 %d", order, body.Items, id3)
+		}
+	}
+
+	// desc では再生回数最多(id2)が先頭
+	w := doGet(t, h, "/api/works?sort=play_count&order=desc")
+	var body struct {
+		Items []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body.Items[0].ID != id2 {
+		t.Errorf("play_count desc 先頭 = %d, want %d", body.Items[0].ID, id2)
 	}
 }

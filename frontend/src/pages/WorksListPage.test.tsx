@@ -96,6 +96,7 @@ describe('フィルタ操作時のスクロールトップ (#36)', () => {
         age_rating: 'general',
         has_folder: true,
         thumbnail_url: '/api/works/1/thumbnail',
+        favorited: false,
       },
     ],
     total: 100,
@@ -150,6 +151,67 @@ describe('フィルタ操作時のスクロールトップ (#36)', () => {
     fireEvent.click(screen.getByTitle('クリックで解除'));
 
     expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+});
+
+describe('お気に入りフィルタ (issue #72)', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('「★ お気に入りのみ」トグルを押すと URL に favorite=1 が付き、fetchWorks が favorite: true で呼ばれる', async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenCalled();
+    });
+
+    const toggle = screen.getByRole('button', { name: /お気に入りのみ/ });
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenLastCalledWith(
+        expect.objectContaining({ favorite: true }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('URL ?favorite=1 で開くとトグルが有効状態で表示され、fetchWorks が favorite: true で呼ばれる', async () => {
+    renderPage('/?favorite=1');
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenLastCalledWith(
+        expect.objectContaining({ favorite: true }),
+        expect.anything(),
+      );
+    });
+
+    const toggle = screen.getByRole('button', { name: /お気に入りのみ/ });
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('有効状態でもう一度押すと favorite パラメータが消える', async () => {
+    const { getParams } = renderPage('/?favorite=1');
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /お気に入りのみ/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /お気に入りのみ/ }));
+
+    await waitFor(() => {
+      expect(getParams().has('favorite')).toBe(false);
+    });
   });
 });
 

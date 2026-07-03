@@ -21,6 +21,7 @@ export interface WorkListItem {
   age_rating: string | null;
   has_folder: boolean;
   thumbnail_url: string;
+  favorited: boolean;
 }
 
 /** GET /api/works のレスポンス */
@@ -51,6 +52,7 @@ export interface WorkDetail {
   file_size_text: string | null;
   has_folder: boolean;
   hidden: boolean;
+  favorited: boolean;
   tags: Tag[];
 }
 
@@ -156,7 +158,14 @@ export interface ApiError {
   error: string;
 }
 
-export type SortKey = 'purchase_date' | 'title' | 'created_at' | 'circle';
+export type SortKey =
+  | 'purchase_date'
+  | 'title'
+  | 'created_at'
+  | 'circle'
+  | 'favorited_at'
+  | 'last_played'
+  | 'play_count';
 export type SortOrder = 'asc' | 'desc';
 
 /** GET /api/circles の items 要素 */

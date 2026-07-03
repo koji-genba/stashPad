@@ -2,7 +2,7 @@
 // 不正な ID(/works/abc 等)で無限スピナーにならず「作品が見つかりません」に落ちること、
 // および正常 ID では詳細が表示されることを検証する(issue #56)。
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { WorkDetail } from '@/api/types';
 
@@ -13,6 +13,7 @@ vi.mock('@/api/client', () => ({
   addCustomTag: vi.fn(),
   removeTag: vi.fn(),
   setWorkHidden: vi.fn(),
+  setWorkFavorite: vi.fn(),
   thumbnailUrl: (workId: number) => `/api/works/${workId}/thumbnail`,
 }));
 
@@ -26,7 +27,7 @@ vi.mock('@/components/FileBrowser', () => ({ default: () => null }));
 vi.mock('@/components/Thumbnail', () => ({ default: () => null }));
 
 import WorkDetailPage from './WorkDetailPage';
-import { fetchWork } from '@/api/client';
+import { fetchWork, setWorkFavorite } from '@/api/client';
 
 const sampleWork: WorkDetail = {
   id: 1,
@@ -41,6 +42,7 @@ const sampleWork: WorkDetail = {
   file_size_text: null,
   has_folder: false,
   hidden: false,
+  favorited: false,
   tags: [],
 };
 
@@ -77,5 +79,49 @@ describe('WorkDetailPage 不正 ID の堅牢性', () => {
       expect(screen.getByText('テスト作品')).toBeTruthy();
     });
     expect(fetchWork).toHaveBeenCalledWith(1, expect.anything());
+  });
+});
+
+describe('WorkDetailPage お気に入りトグル(issue #72)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.mocked(fetchWork).mockReset();
+    vi.mocked(setWorkFavorite).mockReset();
+  });
+
+  it('未登録(favorited: false)では ☆ ボタンが表示され、クリックで登録されて ★ に変わる', async () => {
+    vi.mocked(fetchWork).mockResolvedValue(sampleWork);
+    vi.mocked(setWorkFavorite).mockResolvedValue(undefined);
+    renderPage('/works/1');
+
+    await waitFor(() => {
+      expect(screen.getByText('テスト作品')).toBeTruthy();
+    });
+
+    const btn = screen.getByRole('button', { name: 'お気に入りに追加' });
+    fireEvent.click(btn);
+
+    expect(setWorkFavorite).toHaveBeenCalledWith(1, true);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'お気に入りから削除' })).toBeInTheDocument();
+    });
+  });
+
+  it('登録済み(favorited: true)では ★ ボタンが表示され、クリックで解除されて ☆ に変わる', async () => {
+    vi.mocked(fetchWork).mockResolvedValue({ ...sampleWork, favorited: true });
+    vi.mocked(setWorkFavorite).mockResolvedValue(undefined);
+    renderPage('/works/1');
+
+    await waitFor(() => {
+      expect(screen.getByText('テスト作品')).toBeTruthy();
+    });
+
+    const btn = screen.getByRole('button', { name: 'お気に入りから削除' });
+    fireEvent.click(btn);
+
+    expect(setWorkFavorite).toHaveBeenCalledWith(1, false);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'お気に入りに追加' })).toBeInTheDocument();
+    });
   });
 });

@@ -45,6 +45,8 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	limitStr := q.Get("limit")
 	// hidden パラメータ: "1" → 非表示作品のみ、それ以外(未指定/"0") → 可視作品のみ
 	hiddenParam := q.Get("hidden")
+	// favorite パラメータ: "1" → お気に入りのみ
+	favoriteParam := q.Get("favorite")
 
 	page := 1
 	limit := 40
@@ -59,16 +61,24 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ソートカラムのホワイトリスト(circle を追加)
+	// ソートカラムのホワイトリスト。
+	// favorited_at / last_played / play_count は列そのものではなく式(相関サブクエリ含む)なので
+	// テーブル修飾やサブクエリを直接値に持たせる。
+	// last_played は MAX(played_at) が未再生で自然に NULL になるが、play_count は
+	// COUNT(*) が未再生で 0 になり NULL にならないため NULLIF で 0 → NULL に変換し、
+	// NULLS LAST で未再生が常に末尾に来るようにする。
 	allowedSort := map[string]string{
-		"purchase_date": "purchase_date",
-		"title":         "title",
-		"created_at":    "created_at",
-		"circle":        "circle",
+		"purchase_date": "w.purchase_date",
+		"title":         "w.title",
+		"created_at":    "w.created_at",
+		"circle":        "w.circle",
+		"favorited_at":  "w.favorited_at",
+		"last_played":   "(SELECT MAX(ph.played_at) FROM play_history ph WHERE ph.work_id=w.id)",
+		"play_count":    "(SELECT NULLIF(COUNT(*), 0) FROM play_history ph WHERE ph.work_id=w.id)",
 	}
-	sortCol, ok := allowedSort[sortBy]
+	sortExpr, ok := allowedSort[sortBy]
 	if !ok {
-		sortCol = "purchase_date"
+		sortExpr = allowedSort["purchase_date"]
 	}
 	if order != "asc" {
 		order = "desc"
@@ -135,6 +145,11 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 		whereClause += " AND w.hidden=0"
 	}
 
+	// favorite フィルタ: "1" → お気に入りのみ
+	if favoriteParam == "1" {
+		whereClause += " AND w.favorited_at IS NOT NULL"
+	}
+
 	countQuery := "SELECT COUNT(*) FROM works w WHERE 1=1" + whereClause
 	var total int
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
@@ -146,12 +161,12 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	dataQuery := fmt.Sprintf(
 		`SELECT w.id, w.rj_number, w.title, w.circle, w.age_rating,
 		        (w.root_path IS NOT NULL) AS has_folder,
-		        w.thumbnail_path
+		        w.thumbnail_path, w.favorited_at
 		 FROM works w
 		 WHERE 1=1%s
-		 ORDER BY w.%s %s NULLS LAST, w.id %s
+		 ORDER BY %s %s NULLS LAST, w.id %s
 		 LIMIT ? OFFSET ?`,
-		whereClause, sortCol, order, order,
+		whereClause, sortExpr, order, order,
 	)
 	// 将来 args を再利用する変更で append が裏配列を破壊するのを防ぐため、
 	// 独立スライスへコピーしてから limit/offset を足す。
@@ -167,11 +182,11 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]any, 0)
 	for rows.Next() {
 		var id int64
-		var rj, circle, ageRating, thumbPath sql.NullString
+		var rj, circle, ageRating, thumbPath, favoritedAt sql.NullString
 		var title string
 		var hasFolder bool
 
-		if err := rows.Scan(&id, &rj, &title, &circle, &ageRating, &hasFolder, &thumbPath); err != nil {
+		if err := rows.Scan(&id, &rj, &title, &circle, &ageRating, &hasFolder, &thumbPath, &favoritedAt); err != nil {
 			respondError(w, http.StatusInternalServerError, "スキャン失敗: "+err.Error())
 			return
 		}
@@ -180,6 +195,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 			"id":         id,
 			"title":      title,
 			"has_folder": hasFolder,
+			"favorited":  favoritedAt.Valid,
 		}
 		if rj.Valid {
 			item["rj_number"] = rj.String
@@ -232,15 +248,16 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 		rootPath     sql.NullString
 		thumbPath    sql.NullString
 		hiddenInt    int // hidden は INTEGER(0/1)。bool 変換して返す
+		favoritedAt  sql.NullString
 	)
 	err = s.db.QueryRow(
 		`SELECT id, rj_number, title, circle, series_name, purchase_date,
 		        work_type, age_rating, file_format, file_size_text,
-		        root_path, thumbnail_path, hidden
+		        root_path, thumbnail_path, hidden, favorited_at
 		 FROM works WHERE id=?`, workID,
 	).Scan(&id, &rjNumber, &title, &circle, &seriesName,
 		&purchaseDate, &workType, &ageRating, &fileFormat,
-		&fileSizeText, &rootPath, &thumbPath, &hiddenInt)
+		&fileSizeText, &rootPath, &thumbPath, &hiddenInt, &favoritedAt)
 	if err == sql.ErrNoRows {
 		respondError(w, http.StatusNotFound, "作品が見つかりません")
 		return
@@ -281,6 +298,7 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 		"has_folder": rootPath.Valid,
 		"tags":       tags,
 		"hidden":     hiddenInt != 0, // INTEGER 0/1 を bool に変換
+		"favorited":  favoritedAt.Valid,
 	}
 	setIfValid(result, "rj_number", rjNumber)
 	setIfValid(result, "circle", circle)
@@ -308,9 +326,10 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Title  *string `json:"title"`
-		Circle *string `json:"circle"`
-		Hidden *bool   `json:"hidden"` // 非表示フラグ。true→非表示、false→可視
+		Title    *string `json:"title"`
+		Circle   *string `json:"circle"`
+		Hidden   *bool   `json:"hidden"`   // 非表示フラグ。true→非表示、false→可視
+		Favorite *bool   `json:"favorite"` // お気に入りフラグ。true→登録、false→解除
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respondError(w, http.StatusBadRequest, "JSON パース失敗: "+err.Error())
@@ -358,6 +377,26 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 		); err != nil {
 			respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
 			return
+		}
+	}
+	if body.Favorite != nil {
+		// true → 現在時刻を記録(登録順ソートに使う)、false → NULL に戻す
+		if *body.Favorite {
+			if _, err := s.db.Exec(
+				"UPDATE works SET favorited_at=datetime('now'), updated_at=datetime('now') WHERE id=?",
+				workID,
+			); err != nil {
+				respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
+				return
+			}
+		} else {
+			if _, err := s.db.Exec(
+				"UPDATE works SET favorited_at=NULL, updated_at=datetime('now') WHERE id=?",
+				workID,
+			); err != nil {
+				respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
+				return
+			}
 		}
 	}
 

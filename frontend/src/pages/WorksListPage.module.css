@@ -48,6 +48,14 @@
 .filterBtn {
   flex: 1;
 }
+.favoriteToggle {
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+.favoriteToggleActive {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
 .sortSelect {
   background: var(--bg-elev2);
   border: 1px solid var(--border);
