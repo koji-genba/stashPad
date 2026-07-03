@@ -70,6 +70,8 @@ cd backend && CGO_ENABLED=0 go build -o stashpad ./cmd/stashpad
 
 ※ `backend/internal/web/dist/` は `.gitkeep` のみコミットされており、未コピーでもビルド・テストは通る(その場合 UI は 503 を返す)。
 
+※ PWA 対応として `frontend/public/manifest.webmanifest` と `frontend/public/icons/` を配信している(`npm run build` で dist にコピーされる)。`.webmanifest` は Go の `mime.TypeByExtension` に未登録のため、`backend/internal/web/web.go` で `application/manifest+json` を明示的に付与している(distroless には `/etc/mime.types` も無いため)。
+
 ## Docker
 
 ```bash

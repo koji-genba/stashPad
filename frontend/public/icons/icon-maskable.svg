@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Maskable variant: background fills the full canvas edge-to-edge (the OS applies
+       its own mask shape), and all foreground content stays within the central 80%
+       safe zone so it survives circle/squircle cropping. Regenerate PNGs from this file. -->
+  <rect width="512" height="512" fill="#0d0f14" />
+
+  <!-- stacked library bars (also reads as a compact waveform), scaled to the safe zone -->
+  <g fill="#3a5bb0">
+    <rect x="186" y="316" width="165" height="26" rx="9" />
+    <rect x="171" y="346" width="195" height="26" rx="9" />
+    <rect x="156" y="376" width="225" height="26" rx="9" />
+  </g>
+
+  <!-- play triangle -->
+  <path d="M223 164 L223 305 L342 234 Z" fill="#5b8cff" />
+</svg>

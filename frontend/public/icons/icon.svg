@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- stashPad app icon: dark rounded square + accent play triangle over a stacked
+       library/waveform shape. Regenerate PNGs from this file (see frontend/public/icons/). -->
+  <rect width="512" height="512" rx="112" fill="#0d0f14" />
+
+  <!-- stacked library bars (also reads as a compact waveform) -->
+  <g fill="#3a5bb0">
+    <rect x="146" y="332" width="220" height="34" rx="12" />
+    <rect x="126" y="372" width="260" height="34" rx="12" />
+    <rect x="106" y="412" width="300" height="34" rx="12" />
+  </g>
+
+  <!-- play triangle -->
+  <path d="M198 118 L198 300 L354 209 Z" fill="#5b8cff" />
+</svg>
