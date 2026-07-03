@@ -132,9 +132,10 @@
 
 .pager {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 10px;
   margin: 24px 0;
 }
 .pageInfo {
@@ -145,7 +146,8 @@
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
-.pageSelect {
+.pageInput {
+  width: 4.5em;
   background: var(--bg-elev2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -153,6 +155,7 @@
   padding: 6px 8px;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
 .center {
