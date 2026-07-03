@@ -6,13 +6,14 @@ stashPad — 自宅ファイルサーバ上のメディア(音声・動画・画
 
 **Phase 1 (MVP) 実装済み。** backend(スキャナ・CSV インポータ・検索/ファセット・ブラウズ・Range 配信・履歴)、frontend(一覧・詳細・プレイヤー・ビューア)、Docker まで揃っている。
 
-**Phase 2 の一部も実装済み。** フルスクリーンプレイヤー(±5/±30 秒)、再生キュー操作(⋮ メニュー 3 アクション・キュー画面・ドラッグ並び替え・Android 戻る対応、issue #12/#14)、検索強化(キーワード/タグの NOT 検索・サークルファセット・詳細→一覧の検索状態維持、issue #9/#11/#15)、作品の非表示(issue #10)、RJ 番号の DLsite リンク(issue #13)まで完了。残りは k8s マニフェスト整備・カスタムタグ UI の洗練・お気に入り/ソート強化・画像ビューア強化等(design.md §11 Phase 2 参照)。
+**Phase 2 の一部も実装済み。** フルスクリーンプレイヤー(±5/±30 秒)、再生キュー操作(⋮ メニュー 3 アクション・キュー画面・ドラッグ並び替え・Android 戻る対応、issue #12/#14)、検索強化(キーワード/タグの NOT 検索・サークルファセット・詳細→一覧の検索状態維持、issue #9/#11/#15)、作品の非表示(issue #10)、RJ 番号の DLsite リンク(issue #13)まで完了。**今後の着手順と open issue の対応は docs/roadmap.md を参照**(信頼性修正 → 体験向上(続きから再生・画像ズーム・お気に入り・PWA)→ 基盤整備、の順)。
 
 ## ドキュメントマップ(実装前に必ず読むこと)
 
 | ファイル | 内容 |
 |---------|------|
 | [docs/design.md](docs/design.md) | 設計の正本。要件・アーキテクチャ・データモデル・API 設計・開発フェーズ・決定事項ログ |
+| [docs/roadmap.md](docs/roadmap.md) | 開発ロードマップ。open issue と着手順の対応(マイルストーン運用) |
 | [docs/implementation-notes.md](docs/implementation-notes.md) | 実装の具体的指針。環境変数・DDL・API の JSON 例・各機能の実装上の注意・Phase 1 完了条件 |
 | [docs/samples/works.csv](docs/samples/works.csv) | DLsite 作品情報 CSV の実サンプル(インポータのテストフィクスチャに使う) |
 
