@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -18,6 +19,12 @@ import (
 type Server struct {
 	db  *sql.DB
 	cfg *config.Config
+
+	// scanMu はスキャンとサムネイル一括再生成の相互排他に使う。
+	// POST /api/scan・POST /api/thumbnails/rebuild・起動時自動スキャンは
+	// 同じ作品群を触るため同一ロックを共有する。TryLock 失敗時は 409 を返す
+	// (起動時自動スキャンのみブロッキング Lock でよい)。
+	scanMu sync.Mutex
 }
 
 // New は Server を生成する。
@@ -103,6 +110,20 @@ func respondJSON(w http.ResponseWriter, status int, v any) {
 // respondError はエラーレスポンスを返す。
 func respondError(w http.ResponseWriter, status int, msg string) {
 	respondJSON(w, status, map[string]string{"error": msg})
+}
+
+// scanConflictMsg はスキャン系処理が競合した際のエラーメッセージ。
+// POST /api/scan と POST /api/thumbnails/rebuild で共通のロック・文言を使う。
+const scanConflictMsg = "スキャンまたはサムネイル一括再生成が実行中です"
+
+// tryLockScan は scanMu の取得を試み、失敗時は 409 を書き込んで false を返す。
+// 呼び出し元は true が返った場合のみ処理を続行し、defer s.scanMu.Unlock() を行うこと。
+func (s *Server) tryLockScan(w http.ResponseWriter) bool {
+	if !s.scanMu.TryLock() {
+		respondError(w, http.StatusConflict, scanConflictMsg)
+		return false
+	}
+	return true
 }
 
 // handleHealthz は GET /api/healthz を処理する。

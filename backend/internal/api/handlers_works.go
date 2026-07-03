@@ -578,7 +578,14 @@ func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) 
 
 // handleRebuildThumbnails は POST /api/thumbnails/rebuild を処理する。
 // root_path がある全作品に対して mtime 判定付きサムネイル再生成を worker pool で並列実行する。
+// scanMu を TryLock できない場合(スキャンや別の一括再生成と競合)は 409 を返す。
+// スキャンと同一の作品群を触るため scanMu を共有する(専用ロックにはしない)。
 func (s *Server) handleRebuildThumbnails(w http.ResponseWriter, r *http.Request) {
+	if !s.tryLockScan(w) {
+		return
+	}
+	defer s.scanMu.Unlock()
+
 	// root_path がある作品一覧を取得
 	rows, err := s.db.Query("SELECT id, root_path FROM works WHERE root_path IS NOT NULL")
 	if err != nil {
