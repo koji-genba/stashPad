@@ -1,15 +1,22 @@
-# CI: バックエンド(go vet / go test)、フロントエンド(lint / typecheck / vitest)、
-# embed 込みビルド検証(Dockerfile と同じ流れ)を PR と main push で実行する。
+# CI: バックエンド(go vet / go test)、フロントエンド(lint / typecheck / vitest / ビルド)、
+# embed 込みビルド検証を全ブランチ push と PR で実行し、
+# main push / v*.*.* タグ push では GHCR へイメージを build & push する
+# (デプロイ側= homelab repo の Flux がタグを見て staging/prod へ反映する)。
 name: CI
 
 on:
-  pull_request:
   push:
-    branches: [main]
+    branches:
+      - "**"
+    tags:
+      - "v*.*.*"
+  pull_request:
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/stashpad
 
 jobs:
-  backend:
-    name: backend (go vet / go test)
+  test-backend:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -23,8 +30,7 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
-  frontend:
-    name: frontend (lint / typecheck / vitest)
+  test-frontend:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -39,10 +45,12 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      - run: npm run test
+      - run: npm run build
 
-  build:
-    name: build (embed 込みバイナリ)
+  # Dockerfile と同じ流れ(frontend dist を backend/internal/web/dist へコピーして
+  # go build)が通ることを検証する。embed 断面の壊れを PR 段階で検出する。
+  build-embed:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,3 +73,46 @@ jobs:
       - name: バックエンドをビルド(embed 込み)
         run: CGO_ENABLED=0 go build ./cmd/stashpad
         working-directory: backend
+
+  build-and-push:
+    needs: [test-backend, test-frontend, build-embed]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        run: |
+          short_sha="$(git rev-parse --short HEAD)"
+          tags=()
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            tags+=("${IMAGE_NAME}:${{ github.ref_name }}" "${IMAGE_NAME}:latest")
+          else
+            # main-<run_number>-<short_sha>: 単調増加する run_number を含めることで
+            # Flux ImagePolicy が最新イメージを numerical 順で判定できるようにする
+            tags+=("${IMAGE_NAME}:edge" "${IMAGE_NAME}:main-${{ github.run_number }}-${short_sha}")
+          fi
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
