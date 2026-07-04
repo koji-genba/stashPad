@@ -225,11 +225,12 @@ func upsertWorkNoThumb(db execQuerier, absPath, dirName string) (newlyRegistered
 // 既存の CSV 行(rj_number 一致、root_path が NULL)があればリンクする。
 // 既存の root_path が同一であればスキップ(何も変えない)。
 func upsertByRJ(db execQuerier, rjNumber, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, workID int64, err error) {
-	// タイトル候補: "RJxxxxxx_" 以降の文字列。アンダースコアがなければフォルダ名全体
-	title := dirName
-	if idx := firstUnderscoreAfterRJ(dirName); idx >= 0 {
-		title = dirName[idx+1:]
-	}
+	// タイトル候補: RJ 番号の直後の文字列から先頭の区切り文字(_ - 半角スペース)を
+	// 取り除いたもの。フォルダ名全体で最初の "_" を探すと、RJ 番号直後が "_" 以外の
+	// 区切り(例: "-作品名_ver2")の場合に後方の "_" で誤って区切ってしまうため、
+	// RJ 番号の直後だけを見る(issue #65)。
+	rest := dirName[len(rjNumber):]
+	title := strings.TrimLeft(rest, "_- ")
 	if title == "" {
 		title = dirName
 	}
@@ -413,15 +414,4 @@ func underFailedRoot(path string, failedRoots []string) bool {
 		}
 	}
 	return false
-}
-
-// firstUnderscoreAfterRJ は "RJxxxxxx_" の最初の "_" のインデックスを返す。
-// 見つからなければ -1。
-func firstUnderscoreAfterRJ(name string) int {
-	for i, c := range name {
-		if c == '_' {
-			return i
-		}
-	}
-	return -1
 }
