@@ -348,8 +348,10 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.Title != nil {
+		// title の手動編集は manually_edited を立てる。CSV 再インポートが
+		// このフラグの立った作品の title/circle を上書きしないようにするため(issue #64 案 A)。
 		if _, err := s.db.Exec(
-			"UPDATE works SET title=?, updated_at=datetime('now') WHERE id=?",
+			"UPDATE works SET title=?, manually_edited=1, updated_at=datetime('now') WHERE id=?",
 			*body.Title, workID,
 		); err != nil {
 			respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
@@ -357,8 +359,9 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.Circle != nil {
+		// circle の手動編集も同様に manually_edited を立てる(issue #64 案 A)。
 		if _, err := s.db.Exec(
-			"UPDATE works SET circle=?, updated_at=datetime('now') WHERE id=?",
+			"UPDATE works SET circle=?, manually_edited=1, updated_at=datetime('now') WHERE id=?",
 			*body.Circle, workID,
 		); err != nil {
 			respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())

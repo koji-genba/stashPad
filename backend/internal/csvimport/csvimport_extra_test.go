@@ -239,6 +239,73 @@ func TestBuildColumnIndex(t *testing.T) {
 	}
 }
 
+// TestImportPreservesManuallyEditedTitleCircle は manually_edited=1 の既存作品を
+// 再インポートしても title / circle が保持され、その他フィールドとタグは
+// 通常どおり更新されることをテスト(issue #64 案 A)。
+func TestImportPreservesManuallyEditedTitleCircle(t *testing.T) {
+	db := openTestDB(t)
+
+	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
+RJ600001,CSVタイトル,CSVシリーズ,CSVサークル,2026/01/01,ボイス・ASMR,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
+`
+
+	// 1回目インポートで作品を作成
+	if _, err := Import(db, strings.NewReader(csvData)); err != nil {
+		t.Fatalf("1回目 Import 失敗: %v", err)
+	}
+
+	var workID int64
+	if err := db.QueryRow("SELECT id FROM works WHERE rj_number='RJ600001'").Scan(&workID); err != nil {
+		t.Fatal(err)
+	}
+
+	// 手動編集をシミュレート: title/circle を書き換えて manually_edited=1 を立てる
+	if _, err := db.Exec(
+		"UPDATE works SET title='手動編集タイトル', circle='手動編集サークル', manually_edited=1 WHERE id=?",
+		workID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2回目インポート: series_name などを変更した CSV を再インポート
+	csvData2 := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
+RJ600001,CSVタイトル2,CSVシリーズ2,CSVサークル2,2026/02/02,ボイス・ASMR,ASMR,ボイス・ASMR,MP3,2GB,,R-15,,,,,
+`
+	res2, err := Import(db, strings.NewReader(csvData2))
+	if err != nil {
+		t.Fatalf("2回目 Import 失敗: %v", err)
+	}
+	if res2.Updated != 1 {
+		t.Errorf("2回目 Updated = %d, want 1", res2.Updated)
+	}
+
+	var title, circle, seriesName, fileSizeText, ageRating string
+	if err := db.QueryRow(
+		"SELECT title, circle, series_name, file_size_text, age_rating FROM works WHERE id=?", workID,
+	).Scan(&title, &circle, &seriesName, &fileSizeText, &ageRating); err != nil {
+		t.Fatal(err)
+	}
+
+	// title/circle は手動編集の値が保持される
+	if title != "手動編集タイトル" {
+		t.Errorf("title = %q, want 手動編集タイトル(手動編集が上書きされた)", title)
+	}
+	if circle != "手動編集サークル" {
+		t.Errorf("circle = %q, want 手動編集サークル(手動編集が上書きされた)", circle)
+	}
+
+	// その他フィールドは CSV の内容で更新される
+	if seriesName != "CSVシリーズ2" {
+		t.Errorf("series_name = %q, want CSVシリーズ2(更新されるべき)", seriesName)
+	}
+	if fileSizeText != "2GB" {
+		t.Errorf("file_size_text = %q, want 2GB(更新されるべき)", fileSizeText)
+	}
+	if ageRating != "R-15" {
+		t.Errorf("age_rating = %q, want R-15(更新されるべき)", ageRating)
+	}
+}
+
 // TestImportMultipleTagsReimport はタグが多い作品を 2 回インポートしても
 // タグ件数が正しいことをテスト(二重リンクが起きないことの確認)。
 func TestImportMultipleTagsReimport(t *testing.T) {

@@ -164,11 +164,12 @@ type WorkRow struct {
 func upsertWork(tx *sql.Tx, row WorkRow) (workID int64, created bool, linked bool, err error) {
 	var id int64
 	var currentRootPath sql.NullString
+	var manuallyEdited bool
 
 	scanErr := tx.QueryRow(
-		"SELECT id, root_path FROM works WHERE rj_number=?",
+		"SELECT id, root_path, manually_edited FROM works WHERE rj_number=?",
 		row.RJNumber,
-	).Scan(&id, &currentRootPath)
+	).Scan(&id, &currentRootPath, &manuallyEdited)
 
 	if scanErr == sql.ErrNoRows {
 		// 新規作成
@@ -198,19 +199,37 @@ func upsertWork(tx *sql.Tx, row WorkRow) (workID int64, created bool, linked boo
 	// スキャン済みで root_path が付いていれば「CSV がリンクされた」= linked=true。
 	linkedFlag := currentRootPath.Valid
 
-	_, uErr := tx.Exec(
-		`UPDATE works SET
-			title=?, series_name=?, circle=?, purchase_date=?,
-			work_type=?, file_format=?, file_size_text=?, age_rating=?, event=?,
-			updated_at=datetime('now')
-		 WHERE id=?`,
-		row.Title,
-		nullIfEmpty(row.SeriesName), nullIfEmpty(row.Circle),
-		nullIfEmpty(row.PurchaseDate), nullIfEmpty(row.WorkType),
-		nullIfEmpty(row.FileFormat), nullIfEmpty(row.FileSizeText),
-		nullIfEmpty(row.AgeRating), nullIfEmpty(row.Event),
-		id,
-	)
+	// manually_edited フラグが立っている作品は title/circle を PATCH での手動編集で
+	// 保護しているため、CSV 再インポートで上書きしない(その他メタ・タグは従来どおり更新。issue #64 案 A)。
+	var uErr error
+	if manuallyEdited {
+		_, uErr = tx.Exec(
+			`UPDATE works SET
+				series_name=?, purchase_date=?,
+				work_type=?, file_format=?, file_size_text=?, age_rating=?, event=?,
+				updated_at=datetime('now')
+			 WHERE id=?`,
+			nullIfEmpty(row.SeriesName),
+			nullIfEmpty(row.PurchaseDate), nullIfEmpty(row.WorkType),
+			nullIfEmpty(row.FileFormat), nullIfEmpty(row.FileSizeText),
+			nullIfEmpty(row.AgeRating), nullIfEmpty(row.Event),
+			id,
+		)
+	} else {
+		_, uErr = tx.Exec(
+			`UPDATE works SET
+				title=?, series_name=?, circle=?, purchase_date=?,
+				work_type=?, file_format=?, file_size_text=?, age_rating=?, event=?,
+				updated_at=datetime('now')
+			 WHERE id=?`,
+			row.Title,
+			nullIfEmpty(row.SeriesName), nullIfEmpty(row.Circle),
+			nullIfEmpty(row.PurchaseDate), nullIfEmpty(row.WorkType),
+			nullIfEmpty(row.FileFormat), nullIfEmpty(row.FileSizeText),
+			nullIfEmpty(row.AgeRating), nullIfEmpty(row.Event),
+			id,
+		)
+	}
 	if uErr != nil {
 		return 0, false, false, uErr
 	}

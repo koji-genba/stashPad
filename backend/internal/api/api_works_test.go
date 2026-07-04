@@ -325,6 +325,75 @@ func TestPatchWorkBadJSONAndNotFound(t *testing.T) {
 	}
 }
 
+// PATCH title で manually_edited が立つこと(issue #64 案 A)。
+func TestPatchWorkTitleSetsManuallyEdited(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":"新タイトル"}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var manuallyEdited int
+	if err := database.QueryRow("SELECT manually_edited FROM works WHERE id=?", id).
+		Scan(&manuallyEdited); err != nil {
+		t.Fatal(err)
+	}
+	if manuallyEdited != 1 {
+		t.Errorf("manually_edited = %d, want 1(title PATCH で立つべき)", manuallyEdited)
+	}
+}
+
+// PATCH circle でも manually_edited が立つこと。
+func TestPatchWorkCircleSetsManuallyEdited(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"circle":"新サークル"}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var manuallyEdited int
+	if err := database.QueryRow("SELECT manually_edited FROM works WHERE id=?", id).
+		Scan(&manuallyEdited); err != nil {
+		t.Fatal(err)
+	}
+	if manuallyEdited != 1 {
+		t.Errorf("manually_edited = %d, want 1(circle PATCH で立つべき)", manuallyEdited)
+	}
+}
+
+// PATCH hidden のみでは manually_edited が立たないこと(title/circle 以外の
+// PATCH は「手動編集」として扱わない)。
+func TestPatchWorkHiddenOnlyDoesNotSetManuallyEdited(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"hidden":true}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var manuallyEdited int
+	if err := database.QueryRow("SELECT manually_edited FROM works WHERE id=?", id).
+		Scan(&manuallyEdited); err != nil {
+		t.Fatal(err)
+	}
+	if manuallyEdited != 0 {
+		t.Errorf("manually_edited = %d, want 0(hidden PATCH のみでは立たないべき)", manuallyEdited)
+	}
+}
+
+// PATCH favorite のみでは manually_edited が立たないこと。
+func TestPatchWorkFavoriteOnlyDoesNotSetManuallyEdited(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"favorite":true}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var manuallyEdited int
+	if err := database.QueryRow("SELECT manually_edited FROM works WHERE id=?", id).
+		Scan(&manuallyEdited); err != nil {
+		t.Fatal(err)
+	}
+	if manuallyEdited != 0 {
+		t.Errorf("manually_edited = %d, want 0(favorite PATCH のみでは立たないべき)", manuallyEdited)
+	}
+}
+
 // ---- POST /api/works/{id}/tags & DELETE --------------------------------------
 
 func TestAddTagCreateAndUpsert(t *testing.T) {

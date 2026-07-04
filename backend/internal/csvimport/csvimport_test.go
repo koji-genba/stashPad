@@ -38,6 +38,7 @@ func openTestDB(t *testing.T) *sql.DB {
 		event          TEXT,
 		root_path      TEXT,
 		thumbnail_path TEXT,
+		manually_edited INTEGER NOT NULL DEFAULT 0,
 		created_at     TEXT NOT NULL DEFAULT (datetime('now')),
 		updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
 	);
