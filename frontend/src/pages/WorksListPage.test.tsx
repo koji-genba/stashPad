@@ -497,6 +497,46 @@ describe('デバウンス由来の history 汚染防止 (#58)', () => {
   });
 });
 
+describe('fetch 失敗時の再試行導線 (issue #70)', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    // 呼び出し回数のアサーションのため、前のテストの履歴をクリアする
+    vi.mocked(fetchWorks).mockClear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
+    vi.restoreAllMocks();
+  });
+
+  it('fetch 失敗でエラーメッセージと再試行ボタンが表示される', async () => {
+    vi.mocked(fetchWorks).mockRejectedValueOnce(new Error('サーバエラー'));
+
+    renderPage();
+
+    await screen.findByText('サーバエラー');
+    expect(screen.getByRole('button', { name: '再試行' })).toBeInTheDocument();
+  });
+
+  it('再試行クリックで再 fetch され、成功すると一覧表示に戻る', async () => {
+    vi.mocked(fetchWorks)
+      .mockRejectedValueOnce(new Error('サーバエラー'))
+      .mockResolvedValueOnce(PAGINATED_RESPONSE);
+
+    renderPage();
+
+    await screen.findByText('サーバエラー');
+    fireEvent.click(screen.getByRole('button', { name: '再試行' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('100 件')).toBeInTheDocument();
+    });
+    expect(vi.mocked(fetchWorks)).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('サーバエラー')).toBeNull();
+  });
+});
+
 describe('ページャーの数値入力化 (#35)', () => {
   beforeEach(() => {
     vi.spyOn(window, 'scrollTo').mockImplementation(() => {});

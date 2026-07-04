@@ -6,6 +6,7 @@ import { useTagStore, useTagNameMap } from '@/store/tagStore';
 import WorkCard from '@/components/WorkCard';
 import TagFacetPanel from '@/components/TagFacetPanel';
 import CircleFacetPanel from '@/components/CircleFacetPanel';
+import FetchError from '@/components/FetchError';
 import { saveListSearch } from '@/lib/listSearchMemory';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { parseSearchTerms, splitQuery } from '@/utils/searchTerms';
@@ -62,6 +63,8 @@ export default function WorksListPage() {
   const [data, setData] = useState<WorksResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // fetch 失敗時の再試行用。increment するとデータ取得 effect が再実行される(issue #70)
+  const [retryNonce, setRetryNonce] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // ページ番号入力欄(#35)。入力中の生値を保持し、Enter/blur で確定する
   const [pageInput, setPageInput] = useState(String(page));
@@ -144,7 +147,7 @@ export default function WorksListPage() {
         setLoading(false);
       });
     return () => ac.abort();
-  }, [q, tags, excludeTags, circle, series, favorite, sort, order, page]);
+  }, [q, tags, excludeTags, circle, series, favorite, sort, order, page, retryNonce]);
 
   // URL が変わるたびに検索クエリを sessionStorage に保存(詳細→一覧の戻り先に使う)
   useEffect(() => {
@@ -437,7 +440,7 @@ export default function WorksListPage() {
             <div className="spinner" />
           </div>
         ) : error ? (
-          <p className="muted">{error}</p>
+          <FetchError message={error} onRetry={() => setRetryNonce((n) => n + 1)} />
         ) : !data || data.items.length === 0 ? (
           <p className={styles.empty}>該当する作品がありません</p>
         ) : (

@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CircleFacet } from '@/api/types';
 import { fetchCircles } from '@/api/client';
+import FetchError from './FetchError';
 import styles from './CircleFacetPanel.module.css';
 
 /** 上位表示件数の上限 */
@@ -23,9 +24,11 @@ export default function CircleFacetPanel({ selected, onSelect }: Props) {
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  // fetch 失敗時の再試行用。increment するとデータ取得 effect が再実行される(issue #70)
+  const [retryNonce, setRetryNonce] = useState(0);
 
   // 初回マウント時に全件を 1 回だけ fetch する。以降の絞り込みはクライアントサイドで行うため
-  // q には依存しない。
+  // q には依存しない(再試行時のみ retryNonce 経由で再実行される)。
   useEffect(() => {
     const ac = new AbortController();
     // fetch 開始前にローディング表示へ切り替える意図的な setState(データ取得 effect の定型)
@@ -45,7 +48,7 @@ export default function CircleFacetPanel({ selected, onSelect }: Props) {
     return () => {
       ac.abort();
     };
-  }, []);
+  }, [retryNonce]);
 
   const filtered = useMemo(() => {
     if (!q) return circles;
@@ -70,7 +73,10 @@ export default function CircleFacetPanel({ selected, onSelect }: Props) {
           <div className="spinner" />
         </div>
       ) : failed ? (
-        <p className="error">サークル一覧の読み込みに失敗しました</p>
+        <FetchError
+          message="サークル一覧の読み込みに失敗しました"
+          onRetry={() => setRetryNonce((n) => n + 1)}
+        />
       ) : filtered.length === 0 ? (
         <p className="faint">サークルがありません</p>
       ) : (

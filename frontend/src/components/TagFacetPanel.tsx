@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { TagFacet } from '@/api/types';
 import { useTagStore } from '@/store/tagStore';
+import FetchError from './FetchError';
 import styles from './TagFacetPanel.module.css';
 
 interface Props {
@@ -101,7 +102,11 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
           <div className="spinner" />
         </div>
       ) : failed ? (
-        <p className="error">タグ一覧の読み込みに失敗しました</p>
+        <FetchError
+          message="タグ一覧の読み込みに失敗しました"
+          // 共有 tagStore 経由なので、再試行は store の強制再取得(refresh)を呼ぶ(issue #70)
+          onRetry={() => void useTagStore.getState().refresh()}
+        />
       ) : grouped.length === 0 ? (
         <p className="faint">タグがありません</p>
       ) : (

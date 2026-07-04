@@ -120,6 +120,26 @@ describe('TagFacetPanel クライアントサイド絞り込み', () => {
   });
 });
 
+describe('TagFacetPanel fetch 失敗時の再試行導線 (issue #70)', () => {
+  it('fetch 失敗でエラーメッセージと再試行ボタンが表示され、クリックで store が再取得されて表示に戻る', async () => {
+    fetchTagsMock
+      .mockRejectedValueOnce(new Error('Network error'))
+      .mockResolvedValueOnce({ items: SAMPLE_TAGS });
+
+    renderPanel();
+
+    // 共有 tagStore の error 経由でエラー表示になる
+    await screen.findByText('タグ一覧の読み込みに失敗しました');
+
+    // 再試行 → store の refresh() が走り、成功すると一覧が表示される
+    fireEvent.click(screen.getByRole('button', { name: '再試行' }));
+
+    await screen.findByText('ファンタジー');
+    expect(fetchTagsMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('タグ一覧の読み込みに失敗しました')).toBeNull();
+  });
+});
+
 describe('TagFacetPanel 選択・除外の挙動(既存動作の維持)', () => {
   it('クリックで onToggle にタグ id が渡る', async () => {
     const { onToggle } = renderPanel();

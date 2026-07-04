@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { HistoryItem, HistorySort, HistoryOrder } from '@/api/types';
 import { deleteHistory, fetchHistory } from '@/api/client';
 import Thumbnail from '@/components/Thumbnail';
+import FetchError from '@/components/FetchError';
 import { basename, formatDateTime } from '@/utils/format';
 import styles from './HistoryPage.module.css';
 
@@ -13,6 +14,8 @@ export default function HistoryPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // fetch 失敗時の再試行用。increment するとデータ取得 effect が再実行される(issue #70)
+  const [retryNonce, setRetryNonce] = useState(0);
 
   // 次へページの有無は total(絞り込み後の全件数)で判定する。
   // 以前は items.length >= limit のヒューリスティックだったため、作品数がちょうど
@@ -59,7 +62,7 @@ export default function HistoryPage() {
         setLoading(false);
       });
     return () => ac.abort();
-  }, [page, q, sort, order]);
+  }, [page, q, sort, order, retryNonce]);
 
   // 1 件削除: confirm → API 呼び出し → 一覧から該当行をローカル除去
   const onDeleteOne = async (item: HistoryItem) => {
@@ -122,7 +125,7 @@ export default function HistoryPage() {
           <div className="spinner" />
         </div>
       ) : error ? (
-        <p className="muted">{error}</p>
+        <FetchError message={error} onRetry={() => setRetryNonce((n) => n + 1)} />
       ) : items.length === 0 ? (
         <p className={styles.empty}>{q ? '該当する履歴がありません' : 'まだ再生履歴がありません'}</p>
       ) : (
