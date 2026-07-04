@@ -56,7 +56,7 @@
 - [x] #65 [P3] スキャナのタイトル抽出の区切り文字対応
 - [x] #38 [P3] バックエンドの細かな品質改善
 - [x] #70 [P3] コードレビュー小粒指摘まとめ(依存メジャーバージョン追従のみ見送り。React 19 / Vite 7 等への更新は別途計画する)
-- [ ] k8s マニフェスト整備(design.md §10。単一レプリカ Deployment + PVC + NFS read-only)— issue 未起票
+- [x] k8s マニフェスト整備(design.md §10。deploy/k8s/ に Deployment(Recreate)+ Service + PVC + Ingress 例)
 
 ## アイデア置き場(未起票・必要になったら)
 
