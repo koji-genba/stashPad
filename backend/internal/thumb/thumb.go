@@ -147,9 +147,11 @@ func walkDepth(dir string, depth, maxDepth int, callback func(string)) error {
 		path := filepath.Join(dir, e.Name())
 		if e.IsDir() {
 			if depth < maxDepth {
-				if err := walkDepth(path, depth+1, maxDepth, callback); err != nil {
-					continue // サブディレクトリ読み込み失敗は無視して続行
-				}
+				// サブディレクトリの読み込み失敗(権限なし・壊れた symlink 等)は
+				// 意図的に無視し、残りのエントリの探索を続行する。
+				// walkDepth がエラーを返すのはこの ReadDir 失敗時のみで、
+				// その場合も他の候補からサムネイルを選べれば十分なため。
+				_ = walkDepth(path, depth+1, maxDepth, callback)
 			}
 		} else {
 			callback(path)

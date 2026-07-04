@@ -41,7 +41,7 @@ func (s *Server) handleListCircles(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "サークル一覧取得失敗: "+err.Error())
+		respondInternalError(w, "サークル一覧取得失敗", err)
 		return
 	}
 	defer rows.Close()
@@ -51,13 +51,13 @@ func (s *Server) handleListCircles(w http.ResponseWriter, r *http.Request) {
 		var name string
 		var workCount int
 		if err := rows.Scan(&name, &workCount); err != nil {
-			respondError(w, http.StatusInternalServerError, "行スキャン失敗: "+err.Error())
+			respondInternalError(w, "行スキャン失敗", err)
 			return
 		}
 		items = append(items, circleFacetItem{Name: name, WorkCount: workCount})
 	}
 	if err := rows.Err(); err != nil {
-		respondError(w, http.StatusInternalServerError, "行読み込み失敗: "+err.Error())
+		respondInternalError(w, "行読み込み失敗", err)
 		return
 	}
 

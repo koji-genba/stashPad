@@ -70,6 +70,19 @@ func parseLimitParam(s string) (limit int, ok bool) {
 	return v, true
 }
 
+// parseIntParam はクエリパラメータを正の整数にパースする。
+// 空文字・非数値・0 以下の値はデフォルト値を返す(handleHistory の page 等で使用)。
+func parseIntParam(s string, defaultVal int) int {
+	if s == "" {
+		return defaultVal
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v <= 0 {
+		return defaultVal
+	}
+	return v
+}
+
 // parseTagIDs はカンマ区切りのタグ ID 文字列を int64 スライスに変換する。
 // 非数値・空文字は無視する(既存の tags パラメータと同じ挙動)。
 func parseTagIDs(param string) []int64 {

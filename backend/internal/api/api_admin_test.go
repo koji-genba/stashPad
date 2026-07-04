@@ -12,6 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/koji-genba/stashpad/backend/internal/config"
+	"github.com/koji-genba/stashpad/backend/internal/db"
 )
 
 // makeWorkDir はライブラリルート配下に作品フォルダを作り、files で指定された
@@ -549,5 +552,34 @@ func TestScan(t *testing.T) {
 	database.QueryRow("SELECT COUNT(*) FROM works WHERE rj_number='RJ950001'").Scan(&cnt)
 	if cnt != 1 {
 		t.Errorf("RJ950001 の登録数 = %d, want 1", cnt)
+	}
+}
+
+// 全ライブラリルートが読めない場合(NAS 未マウント等)は、固定の「スキャン失敗」に
+// 丸めず、対処を促すメッセージ付きの 503 を返すこと(issue #48 / #70)
+func TestScanAllRootsUnreadableReturns503(t *testing.T) {
+	tmp := t.TempDir()
+	database, err := db.Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("DB オープン失敗: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	cfg := &config.Config{
+		LibraryRoots: []string{filepath.Join(tmp, "not-mounted")},
+		DataDir:      tmp,
+		Addr:         ":0",
+	}
+	h := New(database, cfg).Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/scan", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body = %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("マウント")) {
+		t.Errorf("body = %s, want マウント状態の確認を促すメッセージ", rec.Body.String())
 	}
 }

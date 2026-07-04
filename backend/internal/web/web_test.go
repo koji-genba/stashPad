@@ -67,3 +67,64 @@ func TestServesServiceUnavailableWhenNotBuilt(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
 }
+
+// SPA フォールバックは読み取り専用。GET/HEAD 以外のメソッドで未知パスへ
+// アクセスした場合は index.html を返さず 405 を返す(issue #70)。
+func TestNonGETMethodsReturnMethodNotAllowed(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<html></html>")},
+	}
+	handler := newHandler(fsys)
+
+	for _, method := range []string{
+		http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
+	} {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/unknown", nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Errorf("%s /unknown status = %d, want %d", method, rec.Code, http.StatusMethodNotAllowed)
+			}
+			if allow := rec.Header().Get("Allow"); !strings.Contains(allow, "GET") {
+				t.Errorf("Allow ヘッダ = %q, want GET を含む", allow)
+			}
+		})
+	}
+}
+
+// GET / は従来どおり index.html(200)を返すことの確認(メソッド制限のリグレッション防止)。
+func TestGetRootServesIndex(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<html>ok</html>")},
+	}
+	handler := newHandler(fsys)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Body.String(), "ok") {
+		t.Errorf("GET / body = %q, want index.html の内容", rec.Body.String())
+	}
+}
+
+// HEAD はメソッド制限の対象外(GET と同様に扱う)ことの確認。
+func TestHeadRequestAllowed(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<html></html>")},
+	}
+	handler := newHandler(fsys)
+
+	req := httptest.NewRequest(http.MethodHead, "/works/123", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HEAD /works/123 status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}

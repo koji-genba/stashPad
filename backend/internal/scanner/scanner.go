@@ -5,6 +5,7 @@ package scanner
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +15,11 @@ import (
 	"strings"
 	"sync"
 )
+
+// ErrAllRootsUnreadable は全ライブラリルートが読めずスキャンを中断したことを示す。
+// NAS 未マウント等の一時障害が典型で、API 層はこれを識別してユーザーに対処を促す
+// メッセージを返す(内部データを含まないためそのまま表示してよい)。
+var ErrAllRootsUnreadable = errors.New("全ライブラリルートが読めないためスキャンを中断しました")
 
 // rjPattern は "RJ" に続く 6〜8 桁の数字にマッチする。
 var rjPattern = regexp.MustCompile(`^(RJ\d{6,8})`)
@@ -135,8 +141,7 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 	// DB に一切触れずに中断する(markMissingPaths による全件 NULL 化を防ぐ)。
 	if len(failedRoots) == len(roots) {
 		return Result{}, fmt.Errorf(
-			"全ライブラリルート (%d 件) が読めないためスキャンを中断しました: マウント状態を確認してください",
-			len(roots),
+			"%w (%d 件): マウント状態を確認してください", ErrAllRootsUnreadable, len(roots),
 		)
 	}
 
@@ -273,6 +278,14 @@ func upsertByRJ(db execQuerier, rjNumber, absPath, dirName string) (newlyRegiste
 
 	// root_path を更新(NULL → パス の場合は「CSV 行にリンク」と判定)
 	wasNull := !currentRootPath.Valid
+	if !wasNull {
+		// 別の非 NULL パスからの上書き = 同一 RJ 番号のフォルダが複数ルート
+		// (または同一ルート内の複数フォルダ)に存在する可能性が高い。
+		// 後勝ちで上書きする挙動は従来どおりだが、静かに切り替わると
+		// 気付けないためログに残す(issue #70)。
+		log.Printf("スキャン: %s の root_path を上書きします(同一 RJ 番号のフォルダが複数存在する可能性): %q → %q",
+			rjNumber, currentRootPath.String, absPath)
+	}
 	if _, uErr := db.Exec(
 		"UPDATE works SET root_path=?, updated_at=datetime('now') WHERE id=?",
 		absPath, id,

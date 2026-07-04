@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"errors"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -119,6 +120,9 @@ func TestScanAllRootsFailReturnsErrorWithoutTouchingDB(t *testing.T) {
 	_, err = Scan(db, []string{libA, libB}, nil)
 	if err == nil {
 		t.Fatal("全ルートが読めない場合 Scan はエラーを返すべき")
+	}
+	if !errors.Is(err, ErrAllRootsUnreadable) {
+		t.Errorf("err = %v, want ErrAllRootsUnreadable を含む(API 側が識別して対処メッセージを返すため)", err)
 	}
 
 	var rootPath sql.NullString

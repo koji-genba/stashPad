@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 )
 
 // tagFacetItem は GET /api/tags の items 要素。
@@ -62,7 +61,7 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "タグ一覧取得失敗: "+err.Error())
+		respondInternalError(w, "タグ一覧取得失敗", err)
 		return
 	}
 	defer rows.Close()
@@ -73,13 +72,13 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 		var name, cat string
 		var workCount int
 		if err := rows.Scan(&id, &name, &cat, &workCount); err != nil {
-			respondError(w, http.StatusInternalServerError, "行スキャン失敗: "+err.Error())
+			respondInternalError(w, "行スキャン失敗", err)
 			return
 		}
 		items = append(items, tagFacetItem{ID: id, Name: name, Category: cat, WorkCount: workCount})
 	}
 	if err := rows.Err(); err != nil {
-		respondError(w, http.StatusInternalServerError, "行読み込み失敗: "+err.Error())
+		respondInternalError(w, "行読み込み失敗", err)
 		return
 	}
 
@@ -93,27 +92,13 @@ func (s *Server) handleCleanupTags(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM work_tags)`,
 	)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "タグクリーンアップ失敗: "+err.Error())
+		respondInternalError(w, "タグクリーンアップ失敗", err)
 		return
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "件数取得失敗: "+err.Error())
+		respondInternalError(w, "件数取得失敗", err)
 		return
 	}
 	respondJSON(w, http.StatusOK, tagCleanupResult{Deleted: n})
-}
-
-// ---- 未使用インポート回避用ヘルパー ------------------------------------------
-
-// parseIntParam はクエリパラメータを整数にパースする(エラー時はデフォルト値を返す)。
-func parseIntParam(s string, defaultVal int) int {
-	if s == "" {
-		return defaultVal
-	}
-	v, err := strconv.Atoi(s)
-	if err != nil || v <= 0 {
-		return defaultVal
-	}
-	return v
 }

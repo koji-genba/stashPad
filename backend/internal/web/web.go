@@ -41,6 +41,16 @@ func newHandler(sub fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(sub))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 静的ファイル配信と SPA フォールバックは読み取り専用のため、
+		// GET/HEAD 以外のメソッド(未知パスへの POST 等)には index.html を
+		// 返さず 405 を返す(issue #70)。/api 配下は呼び出し側(chi)で
+		// 先にマッチするため、ここに来るのは API 以外のパスのみ。
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if p != "" && p != "index.html" && exists(sub, p) {
 			if ct, ok := extraContentTypes[path.Ext(p)]; ok {

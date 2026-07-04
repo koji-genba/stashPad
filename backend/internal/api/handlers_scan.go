@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -23,7 +24,13 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	res, err := scanner.Scan(s.db, s.cfg.LibraryRoots, gen)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "スキャン失敗: "+err.Error())
+		// 全ルート不読(NAS 未マウント等)はユーザーが対処できる一時障害なので、
+		// 固定の 500 文言に丸めず具体的なメッセージを 503 で返す(パス等の内部情報は含まれない)
+		if errors.Is(err, scanner.ErrAllRootsUnreadable) {
+			respondError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		respondInternalError(w, "スキャン失敗", err)
 		return
 	}
 

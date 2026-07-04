@@ -98,7 +98,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		)`
 	var total int
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
-		respondError(w, http.StatusInternalServerError, "件数取得失敗: "+err.Error())
+		respondInternalError(w, "件数取得失敗", err)
 		return
 	}
 
@@ -125,7 +125,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Query(query, dataArgs...)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "履歴取得失敗: "+err.Error())
+		respondInternalError(w, "履歴取得失敗", err)
 		return
 	}
 	defer rows.Close()
@@ -141,7 +141,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			playCount    int
 		)
 		if err := rows.Scan(&workID, &workTitle, &thumbPath, &lastPlayedAt, &lastFilePath, &playCount); err != nil {
-			respondError(w, http.StatusInternalServerError, "行スキャン失敗: "+err.Error())
+			respondInternalError(w, "行スキャン失敗", err)
 			return
 		}
 
@@ -158,7 +158,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		respondError(w, http.StatusInternalServerError, "行読み込み失敗: "+err.Error())
+		respondInternalError(w, "行読み込み失敗", err)
 		return
 	}
 
@@ -198,13 +198,13 @@ func (s *Server) handleDeleteHistory(w http.ResponseWriter, r *http.Request) {
 		res, err = s.db.Exec("DELETE FROM play_history WHERE work_id=?", workID)
 	}
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "履歴削除失敗: "+err.Error())
+		respondInternalError(w, "履歴削除失敗", err)
 		return
 	}
 
 	deleted, err := res.RowsAffected()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "件数取得失敗: "+err.Error())
+		respondInternalError(w, "件数取得失敗", err)
 		return
 	}
 

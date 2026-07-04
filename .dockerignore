@@ -1,0 +1,31 @@
+# Docker ビルドコンテキストから除外するファイル(issue #70)。
+# Dockerfile のビルドに必要なのは frontend ソース一式(package.json /
+# package-lock.json 含む)と backend ソース一式(go.mod / go.sum 含む)のみ。
+
+# Git メタデータ・CI 設定
+.git
+.github
+.gitignore
+
+# ドキュメント類(ビルドに不要)
+docs
+*.md
+
+# deploy(docker-compose はイメージビルドに不要)
+deploy
+
+# frontend: 依存とビルド成果物は Docker 内で生成する
+frontend/node_modules
+frontend/dist
+frontend/*.tsbuildinfo
+
+# backend: ローカルビルドの成果物(embed 用 dist は Docker 内で
+# frontend ステージから COPY されるため、ローカルの残骸は除外)
+backend/internal/web/dist
+backend/stashpad
+
+# 実行時データ・SQLite
+data
+*.db
+*.db-wal
+*.db-shm

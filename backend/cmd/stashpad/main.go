@@ -67,6 +67,13 @@ func main() {
 		log.Fatalf("設定エラー: %v", err)
 	}
 
+	// ライブラリルートの存在検証(issue #70)。設定ミスや NAS 未マウントに
+	// 起動時点で気付けるよう警告を出す。起動は止めない(全ルート不存在でも
+	// スキャナ側の全滅ガード(issue #48)が DB の全件 NULL 化を防ぐため)。
+	for _, warn := range config.CheckLibraryRoots(cfg.LibraryRoots) {
+		log.Printf("警告: %s", warn)
+	}
+
 	// data ディレクトリとサムネイルディレクトリを作成
 	thumbsDir := filepath.Join(cfg.DataDir, "thumbs")
 	if err := os.MkdirAll(thumbsDir, 0o755); err != nil {

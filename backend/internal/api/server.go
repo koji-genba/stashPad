@@ -181,6 +181,16 @@ func respondError(w http.ResponseWriter, status int, msg string) {
 	respondJSON(w, status, map[string]string{"error": msg})
 }
 
+// respondInternalError は 500 系のレスポンスを返す。
+// err.Error() をそのままクライアントに返すと内部実装の詳細(SQL・ファイルパス等)が
+// 漏れるため、クライアントには固定の日本語メッセージのみを返し、詳細は log.Printf で
+// サーバログにだけ残す(issue #70)。400/404 系は操作ヒントとして err.Error() を
+// そのまま返す方針を維持しており、本ヘルパーは 500 系のみに使うこと。
+func respondInternalError(w http.ResponseWriter, msg string, err error) {
+	log.Printf("%s: %v", msg, err)
+	respondError(w, http.StatusInternalServerError, msg)
+}
+
 // scanConflictMsg はスキャン系処理が競合した際のエラーメッセージ。
 // POST /api/scan と POST /api/thumbnails/rebuild で共通のロック・文言を使う。
 const scanConflictMsg = "スキャンまたはサムネイル一括再生成が実行中です"

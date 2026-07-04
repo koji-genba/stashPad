@@ -172,7 +172,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	countQuery := "SELECT COUNT(*) FROM works w WHERE 1=1" + whereClause
 	var total int
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
-		respondError(w, http.StatusInternalServerError, "件数取得失敗: "+err.Error())
+		respondInternalError(w, "件数取得失敗", err)
 		return
 	}
 
@@ -193,7 +193,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Query(dataQuery, dataArgs...)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "一覧取得失敗: "+err.Error())
+		respondInternalError(w, "一覧取得失敗", err)
 		return
 	}
 	defer rows.Close()
@@ -206,7 +206,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 		var hasFolder bool
 
 		if err := rows.Scan(&id, &rj, &title, &circle, &ageRating, &hasFolder, &thumbPath, &favoritedAt); err != nil {
-			respondError(w, http.StatusInternalServerError, "スキャン失敗: "+err.Error())
+			respondInternalError(w, "スキャン失敗", err)
 			return
 		}
 
@@ -225,7 +225,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		respondError(w, http.StatusInternalServerError, "行読み込み失敗: "+err.Error())
+		respondInternalError(w, "行読み込み失敗", err)
 		return
 	}
 
@@ -303,7 +303,7 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "DB 取得失敗: "+err.Error())
+		respondInternalError(w, "DB 取得失敗", err)
 		return
 	}
 
@@ -316,7 +316,7 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 		 ORDER BY t.category, t.name`, workID,
 	)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "タグ取得失敗: "+err.Error())
+		respondInternalError(w, "タグ取得失敗", err)
 		return
 	}
 	defer tagRows.Close()
@@ -326,7 +326,7 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 		var tid int64
 		var name, cat string
 		if err := tagRows.Scan(&tid, &name, &cat); err != nil {
-			respondError(w, http.StatusInternalServerError, "タグスキャン失敗: "+err.Error())
+			respondInternalError(w, "タグスキャン失敗", err)
 			return
 		}
 		tags = append(tags, workTagItem{ID: tid, Name: name, Category: cat})
@@ -420,7 +420,7 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 	// 存在確認(DB エラーは 500、不存在は 404 を返す)
 	var exists bool
 	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id=?)", workID).Scan(&exists); err != nil {
-		respondError(w, http.StatusInternalServerError, "DB エラー: "+err.Error())
+		respondInternalError(w, "DB エラー", err)
 		return
 	}
 	if !exists {
@@ -477,7 +477,7 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 	args = append(args, workID)
 	query := "UPDATE works SET " + strings.Join(setClauses, ", ") + " WHERE id=?"
 	if _, err := s.db.Exec(query, args...); err != nil {
-		respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
+		respondInternalError(w, "更新失敗", err)
 		return
 	}
 
@@ -512,7 +512,7 @@ func (s *Server) handleAddTag(w http.ResponseWriter, r *http.Request) {
 	// 作品存在確認(DB エラーは 500、不存在は 404 を返す)
 	var exists bool
 	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id=?)", workID).Scan(&exists); err != nil {
-		respondError(w, http.StatusInternalServerError, "DB エラー: "+err.Error())
+		respondInternalError(w, "DB エラー", err)
 		return
 	}
 	if !exists {
@@ -525,14 +525,14 @@ func (s *Server) handleAddTag(w http.ResponseWriter, r *http.Request) {
 		"INSERT INTO tags (name, category) VALUES (?, 'custom') ON CONFLICT(name, category) DO NOTHING",
 		name,
 	); err != nil {
-		respondError(w, http.StatusInternalServerError, "タグ作成失敗: "+err.Error())
+		respondInternalError(w, "タグ作成失敗", err)
 		return
 	}
 	var tagID int64
 	if err := s.db.QueryRow(
 		"SELECT id FROM tags WHERE name=? AND category='custom'", name,
 	).Scan(&tagID); err != nil {
-		respondError(w, http.StatusInternalServerError, "タグ ID 取得失敗: "+err.Error())
+		respondInternalError(w, "タグ ID 取得失敗", err)
 		return
 	}
 
@@ -540,7 +540,7 @@ func (s *Server) handleAddTag(w http.ResponseWriter, r *http.Request) {
 		"INSERT INTO work_tags (work_id, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
 		workID, tagID,
 	); err != nil {
-		respondError(w, http.StatusInternalServerError, "タグリンク失敗: "+err.Error())
+		respondInternalError(w, "タグリンク失敗", err)
 		return
 	}
 
@@ -565,7 +565,7 @@ func (s *Server) handleDeleteTag(w http.ResponseWriter, r *http.Request) {
 		"DELETE FROM work_tags WHERE work_id=? AND tag_id=?",
 		workID, tagID,
 	); err != nil {
-		respondError(w, http.StatusInternalServerError, "タグ削除失敗: "+err.Error())
+		respondInternalError(w, "タグ削除失敗", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -588,7 +588,7 @@ func (s *Server) handleWorkThumbnail(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "作品が見つかりません")
 		return
 	} else if err != nil {
-		respondError(w, http.StatusInternalServerError, "DB 取得失敗: "+err.Error())
+		respondInternalError(w, "DB 取得失敗", err)
 		return
 	}
 
@@ -603,14 +603,14 @@ func (s *Server) handleWorkThumbnail(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "サムネイルファイルが見つかりません")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, "ファイルオープン失敗: "+err.Error())
+		respondInternalError(w, "ファイルオープン失敗", err)
 		return
 	}
 	defer f.Close()
 
 	st, err := f.Stat()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Stat 失敗: "+err.Error())
+		respondInternalError(w, "Stat 失敗", err)
 		return
 	}
 
@@ -644,7 +644,7 @@ func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) 
 		respondError(w, http.StatusNotFound, "作品が見つかりません")
 		return
 	} else if err != nil {
-		respondError(w, http.StatusInternalServerError, "DB 取得失敗: "+err.Error())
+		respondInternalError(w, "DB 取得失敗", err)
 		return
 	}
 
@@ -674,7 +674,7 @@ func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) 
 
 	regenerated, outPath, err := gen.Refresh(workID, rootPath.String)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "サムネイル再生成失敗: "+err.Error())
+		respondInternalError(w, "サムネイル再生成失敗", err)
 		return
 	}
 
@@ -683,7 +683,7 @@ func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) 
 			"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
 			outPath, workID,
 		); uErr != nil {
-			respondError(w, http.StatusInternalServerError, "thumbnail_path 更新失敗: "+uErr.Error())
+			respondInternalError(w, "thumbnail_path 更新失敗", uErr)
 			return
 		}
 	}
@@ -692,7 +692,7 @@ func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) 
 	if _, uErr := s.db.Exec(
 		"UPDATE works SET thumb_checked_at=datetime('now') WHERE id=?", workID,
 	); uErr != nil {
-		respondError(w, http.StatusInternalServerError, "thumb_checked_at 更新失敗: "+uErr.Error())
+		respondInternalError(w, "thumb_checked_at 更新失敗", uErr)
 		return
 	}
 
@@ -724,7 +724,7 @@ func (s *Server) handleRebuildThumbnails(w http.ResponseWriter, r *http.Request)
 	rows, err := s.db.Query("SELECT id, root_path FROM works WHERE root_path IS NOT NULL")
 	if err != nil {
 		s.scanMu.Unlock()
-		respondError(w, http.StatusInternalServerError, "作品一覧取得失敗: "+err.Error())
+		respondInternalError(w, "作品一覧取得失敗", err)
 		return
 	}
 
@@ -734,7 +734,7 @@ func (s *Server) handleRebuildThumbnails(w http.ResponseWriter, r *http.Request)
 		if err := rows.Scan(&we.id, &we.rootPath); err != nil {
 			rows.Close()
 			s.scanMu.Unlock()
-			respondError(w, http.StatusInternalServerError, "行読み込み失敗: "+err.Error())
+			respondInternalError(w, "行読み込み失敗", err)
 			return
 		}
 		works = append(works, we)
@@ -742,7 +742,7 @@ func (s *Server) handleRebuildThumbnails(w http.ResponseWriter, r *http.Request)
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		s.scanMu.Unlock()
-		respondError(w, http.StatusInternalServerError, "クエリエラー: "+err.Error())
+		respondInternalError(w, "クエリエラー", err)
 		return
 	}
 
@@ -881,7 +881,7 @@ func (s *Server) handleWorkEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "DB エラー: "+err.Error())
+		respondInternalError(w, "DB エラー", err)
 		return
 	}
 	if rootPath == "" {
@@ -902,7 +902,7 @@ func (s *Server) handleWorkEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if resolveErr != nil {
-		respondError(w, http.StatusInternalServerError, "パス解決失敗: "+resolveErr.Error())
+		respondInternalError(w, "パス解決失敗", resolveErr)
 		return
 	}
 
@@ -919,7 +919,7 @@ func (s *Server) handleWorkEntries(w http.ResponseWriter, r *http.Request) {
 
 	dirEntries, err := os.ReadDir(resolvedPath)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "ディレクトリ読み込み失敗: "+err.Error())
+		respondInternalError(w, "ディレクトリ読み込み失敗", err)
 		return
 	}
 
@@ -928,6 +928,9 @@ func (s *Server) handleWorkEntries(w http.ResponseWriter, r *http.Request) {
 	for _, e := range dirEntries {
 		info, err := e.Info()
 		if err != nil {
+			// 壊れた symlink・ReadDir と Info の間に消えたファイル等。一覧からは
+			// 除外する(従来どおり)が、静かに消えると原因調査が難しいためログに残す(issue #70)。
+			log.Printf("エントリ情報取得失敗のためスキップ: %s: %v", filepath.Join(resolvedPath, e.Name()), err)
 			continue
 		}
 		item := entryItem{
@@ -1003,7 +1006,7 @@ func (s *Server) handleWorkFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "DB エラー: "+err.Error())
+		respondInternalError(w, "DB エラー", err)
 		return
 	}
 	if rootPath == "" {
@@ -1028,7 +1031,7 @@ func (s *Server) handleWorkFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if resolveErr != nil {
-		respondError(w, http.StatusInternalServerError, "パス解決失敗: "+resolveErr.Error())
+		respondInternalError(w, "パス解決失敗", resolveErr)
 		return
 	}
 
@@ -1038,14 +1041,14 @@ func (s *Server) handleWorkFile(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "ファイルが見つかりません")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, "ファイルオープン失敗: "+err.Error())
+		respondInternalError(w, "ファイルオープン失敗", err)
 		return
 	}
 	defer f.Close()
 
 	st, err := f.Stat()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Stat 失敗: "+err.Error())
+		respondInternalError(w, "Stat 失敗", err)
 		return
 	}
 	if st.IsDir() {
@@ -1119,7 +1122,7 @@ func (s *Server) handleRecordPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "DB エラー: "+err.Error())
+		respondInternalError(w, "DB エラー", err)
 		return
 	}
 	if rootPath == "" {
@@ -1137,7 +1140,7 @@ func (s *Server) handleRecordPlay(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "ファイルが見つかりません")
 		return
 	} else if resolveErr != nil {
-		respondError(w, http.StatusInternalServerError, "パス解決失敗: "+resolveErr.Error())
+		respondInternalError(w, "パス解決失敗", resolveErr)
 		return
 	}
 
@@ -1145,7 +1148,7 @@ func (s *Server) handleRecordPlay(w http.ResponseWriter, r *http.Request) {
 		"INSERT INTO play_history (work_id, file_path) VALUES (?, ?)",
 		workID, body.Path,
 	); err != nil {
-		respondError(w, http.StatusInternalServerError, "履歴記録失敗: "+err.Error())
+		respondInternalError(w, "履歴記録失敗", err)
 		return
 	}
 

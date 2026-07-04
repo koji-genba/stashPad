@@ -119,6 +119,7 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
 - `q` は空白(半角・全角・タブ)区切りで複数語の AND。各語はタイトル・サークル・RJ 番号への部分一致。`-語` で除外(`-` 単体は無視)
 - `tags` は AND 条件(指定タグを全部持つ作品のみ)。`exclude_tags` は指定タグを 1 つでも持つ作品を除外(`NOT EXISTS`)
 - `sort`: `purchase_date`(デフォルト) / `title` / `created_at` / `circle`
+  - 既知の制限: `title` / `circle` のソートは SQLite 既定の BINARY 照合(Unicode コードポイント順)で行われるため、日本語の五十音順にはならない(ICU 拡張なしの SQLite 単体では実現できないため当面この挙動を仕様とする。issue #70)
 - `has_folder` = `root_path IS NOT NULL`。false の作品は一覧で「未取込」表示
 - `hidden`: 未指定/`0` は可視作品のみ、`1` は非表示作品のみ(設定画面の非表示一覧用)。デフォルトで非表示作品は一覧に出ない
 - **NULL 許容フィールド(`rj_number` / `circle` / `age_rating` / `thumbnail_url`)は値が無い場合でもキー自体を省略せず `null` を返す**(フロントの型定義 `string | null` と実際の契約を一致させるための決定。issue #57/#38-2。レスポンスは typed struct から生成しており、`items` 要素だけでなく `GET /api/works/{id}` の NULL 許容フィールド・`GET /api/history` の `work.thumbnail_url` も同様に明示 null)

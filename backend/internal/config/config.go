@@ -62,3 +62,24 @@ func Load() (*Config, error) {
 		ScanOnStart:  scanOnStart,
 	}, nil
 }
+
+// CheckLibraryRoots は各ライブラリルートを os.Stat で確認し、
+// 存在しない・ディレクトリでないルートについて警告メッセージを返す(issue #70)。
+// 設定ミスや NAS 未マウントに起動時点で気付けるようにするのが目的。
+// 起動は止めない: 全ルート不存在でもスキャナ側の全滅ガード(issue #48)が
+// DB の全件 NULL 化を防ぐため、警告ログのみで十分。
+func CheckLibraryRoots(roots []string) []string {
+	var warnings []string
+	for _, root := range roots {
+		st, err := os.Stat(root)
+		switch {
+		case err != nil:
+			warnings = append(warnings, fmt.Sprintf(
+				"ライブラリルート %q にアクセスできません(未マウント・パス誤りの可能性): %v", root, err))
+		case !st.IsDir():
+			warnings = append(warnings, fmt.Sprintf(
+				"ライブラリルート %q はディレクトリではありません", root))
+		}
+	}
+	return warnings
+}

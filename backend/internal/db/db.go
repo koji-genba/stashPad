@@ -19,8 +19,12 @@ var migrationsFS embed.FS
 // PRAGMA は database/sql のプール内の全コネクションに効かせる必要があるため、
 // Exec ではなく DSN パラメータで指定する(modernc.org/sqlite の _pragma 構文)。
 func Open(path string) (*sql.DB, error) {
+	// synchronous=NORMAL は WAL 運用の定石: WAL ではチェックポイント時のみ fsync すれば
+	// 電源断でも DB が壊れない耐久性が保てるため、コミット毎に fsync する FULL(既定)から
+	// 落として書き込みを速くする(直近トランザクションがロールバックされる可能性は許容)。
 	dsn := "file:" + path +
 		"?_pragma=journal_mode(WAL)" +
+		"&_pragma=synchronous(NORMAL)" +
 		"&_pragma=foreign_keys(1)" +
 		"&_pragma=busy_timeout(5000)"
 	db, err := sql.Open("sqlite", dsn)
