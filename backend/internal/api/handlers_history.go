@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -56,6 +57,22 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		args = append(args, likeContains(keyword))
 	}
 
+	// total は一覧に出る行の総数(= 履歴を持つ作品数)。メインクエリと同じ JOIN/WHERE
+	// (hidden 除外・q フィルタ)を適用した上で作品単位に DISTINCT した件数を数える。
+	// play_history の生行数(作品ごとに複数行ありうる)と混同しないよう、メインクエリ側の
+	// rn=1 集約と揃えて「作品単位」で数える。
+	countQuery := `
+		SELECT COUNT(*) FROM (
+			SELECT DISTINCT w.id
+			FROM play_history ph
+			JOIN works w ON w.id=ph.work_id AND w.hidden=0` + innerWhere + `
+		)`
+	var total int
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		respondError(w, http.StatusInternalServerError, "件数取得失敗: "+err.Error())
+		return
+	}
+
 	query := `
 		SELECT id, title, thumbnail_path, last_played_at, last_file_path, play_count
 		FROM (
@@ -73,9 +90,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		WHERE rn=1
 		ORDER BY ` + sortCol + ` ` + order + `, id DESC
 		LIMIT ? OFFSET ?`
-	args = append(args, limit, offset)
+	// countQuery で args を使い切っているため、limit/offset の追加で裏配列を
+	// 破壊しないよう独立スライスへコピーしてから足す。
+	dataArgs := append(slices.Clone(args), limit, offset)
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.db.Query(query, dataArgs...)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "履歴取得失敗: "+err.Error())
 		return
@@ -119,6 +138,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]any{
 		"items": items,
+		"total": total,
 		"page":  page,
 		"limit": limit,
 	})

@@ -8,10 +8,16 @@ import styles from './HistoryPage.module.css';
 
 export default function HistoryPage() {
   const [items, setItems] = useState<HistoryItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [limit, setLimit] = useState(40);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
+
+  // 次へページの有無は total(絞り込み後の全件数)で判定する。
+  // 以前は items.length >= limit のヒューリスティックだったため、作品数がちょうど
+  // limit の倍数のとき最終ページでも「次へ」が有効になり空ページに遷移するバグがあった(issue #60)。
+  const hasMore = page * limit < total;
 
   // 検索・ソート用 state
   const [qInput, setQInput] = useState('');         // 入力欄の生値
@@ -41,7 +47,8 @@ export default function HistoryPage() {
     fetchHistory({ page, q, sort, order }, ac.signal)
       .then((d) => {
         setItems(d.items);
-        setHasMore(d.items.length >= d.limit);
+        setTotal(d.total);
+        setLimit(d.limit);
         setLoading(false);
       })
       .catch((e: unknown) => {
@@ -59,6 +66,8 @@ export default function HistoryPage() {
     try {
       await deleteHistory(item.work.id);
       setItems((prev) => prev.filter((it) => it.work.id !== item.work.id));
+      // 削除した分だけ total もローカルでデクリメントし、ページング判定とのずれを防ぐ。
+      setTotal((prev) => Math.max(0, prev - 1));
     } catch (e) {
       setError(e instanceof Error ? e.message : '削除に失敗しました');
     } finally {
@@ -116,6 +125,7 @@ export default function HistoryPage() {
         <p className={styles.empty}>{q ? '該当する履歴がありません' : 'まだ再生履歴がありません'}</p>
       ) : (
         <>
+          <div className={styles.resultCount}>{total} 件</div>
           <ul className={styles.list}>
             {items.map((item) => (
               <li key={item.work.id} className={styles.rowWrapper}>

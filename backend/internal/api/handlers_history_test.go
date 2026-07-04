@@ -31,6 +31,18 @@ func decodeHistory(t *testing.T, body []byte) []historyItem {
 	return resp.Items
 }
 
+// decodeHistoryTotal は履歴レスポンスの total をデコードする。
+func decodeHistoryTotal(t *testing.T, body []byte) int {
+	t.Helper()
+	var resp struct {
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, body)
+	}
+	return resp.Total
+}
+
 // TestHistoryAggregation は作品単位の集計(最終ファイル・再生回数・最終再生日時)を検証する。
 // window 関数による last_file_path 取得が相関サブクエリと同じ結果になることを担保する。
 func TestHistoryAggregation(t *testing.T) {
@@ -134,6 +146,125 @@ func TestHistoryKeywordLikeSpecialChars(t *testing.T) {
 	items := decodeHistory(t, w.Body.Bytes())
 	if len(items) != 1 || items[0].Work.ID != 211 {
 		t.Errorf("items = %+v, want 1 件(work id=211)", items)
+	}
+}
+
+// TestHistoryTotalIsWorkCountNotRowCount は total が「一覧に出る行の総数(作品単位)」であり、
+// play_history の生行数ではないことを検証する(issue #60)。
+// A 作品は 3 回再生されているが、一覧上は 1 行に集約されるため total は 3(作品数)であるべき。
+func TestHistoryTotalIsWorkCountNotRowCount(t *testing.T) {
+	h, database, _ := newTestServer(t)
+
+	if _, err := database.Exec(`
+		INSERT INTO works (id, rj_number, title) VALUES
+		  (601, 'RJ500501', '猫の物語'),
+		  (602, 'RJ500502', '犬の日記'),
+		  (603, 'RJ500503', '鳥の歌');
+		INSERT INTO play_history (work_id, file_path, played_at) VALUES
+		  (601, 'a/01.mp3', '2026-01-01 10:00:00'),
+		  (601, 'a/02.mp3', '2026-01-02 10:00:00'),
+		  (601, 'a/03.mp3', '2026-01-03 10:00:00'),
+		  (602, 'b/01.mp3', '2026-01-05 10:00:00'),
+		  (603, 'c/01.mp3', '2025-12-31 10:00:00'),
+		  (603, 'c/02.mp3', '2026-01-01 09:00:00');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, "/api/history")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 3 {
+		t.Fatalf("items 数 = %d, want 3", len(items))
+	}
+	if total := decodeHistoryTotal(t, w.Body.Bytes()); total != 3 {
+		t.Errorf("total = %d, want 3(play_history の生行数 6 ではなく作品数)", total)
+	}
+}
+
+// TestHistoryTotalWithKeywordFilter は q フィルタ適用時、total が絞り込み後の作品数になることを検証する。
+func TestHistoryTotalWithKeywordFilter(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	if _, err := database.Exec(`
+		INSERT INTO works (id, rj_number, title) VALUES
+		  (611, 'RJ500511', '猫の物語'),
+		  (612, 'RJ500512', '犬の日記'),
+		  (613, 'RJ500513', '猫カフェ巡り');
+		INSERT INTO play_history (work_id, file_path, played_at) VALUES
+		  (611, 'a.mp3', '2026-01-01 10:00:00'),
+		  (612, 'b.mp3', '2026-01-02 10:00:00'),
+		  (613, 'c.mp3', '2026-01-03 10:00:00');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, "/api/history?q="+url.QueryEscape("猫"))
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 2 {
+		t.Fatalf("items 数 = %d, want 2", len(items))
+	}
+	if total := decodeHistoryTotal(t, w.Body.Bytes()); total != 2 {
+		t.Errorf("total = %d, want 2(絞り込み後の作品数と一致すべき)", total)
+	}
+
+	// フィルタなしの場合は 3 件全部が total に反映される。
+	w = doGet(t, h, "/api/history")
+	if total := decodeHistoryTotal(t, w.Body.Bytes()); total != 3 {
+		t.Errorf("フィルタなし total = %d, want 3", total)
+	}
+}
+
+// TestHistoryTotalExceedsPageLimit は limit(40)を超える作品数のとき、
+// total がページ内の items 件数ではなく全件数を返すことを検証する。
+// これは「作品数がちょうど limit の倍数のとき最終ページでも次へが有効になる」バグ(issue #60)の
+// 直接の再現・修正確認テスト。
+func TestHistoryTotalExceedsPageLimit(t *testing.T) {
+	h, database, _ := newTestServer(t)
+
+	const workCount = 45 // limit(40) を超える件数
+	for i := 0; i < workCount; i++ {
+		workID := 1000 + i
+		rj := "RJ9" + itoa(int64(i+10000))
+		if _, err := database.Exec(
+			`INSERT INTO works (id, rj_number, title) VALUES (?, ?, ?)`,
+			workID, rj, "作品"+itoa(int64(i)),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(
+			`INSERT INTO play_history (work_id, file_path, played_at) VALUES (?, ?, ?)`,
+			workID, "a.mp3", "2026-01-01 00:00:00",
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 1 ページ目: items は limit(40)件だが total は全件(45)
+	w := doGet(t, h, "/api/history?page=1")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 40 {
+		t.Fatalf("1 ページ目 items 数 = %d, want 40", len(items))
+	}
+	if total := decodeHistoryTotal(t, w.Body.Bytes()); total != workCount {
+		t.Errorf("1 ページ目 total = %d, want %d", total, workCount)
+	}
+
+	// 2 ページ目: 残り 5 件、total は変わらず 45
+	w = doGet(t, h, "/api/history?page=2")
+	items = decodeHistory(t, w.Body.Bytes())
+	if len(items) != 5 {
+		t.Fatalf("2 ページ目 items 数 = %d, want 5", len(items))
+	}
+	if total := decodeHistoryTotal(t, w.Body.Bytes()); total != workCount {
+		t.Errorf("2 ページ目 total = %d, want %d", total, workCount)
 	}
 }
 

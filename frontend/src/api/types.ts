@@ -97,6 +97,7 @@ export interface HistoryItem {
 
 export interface HistoryResponse {
   items: HistoryItem[];
+  total: number;
   page: number;
   limit: number;
 }
