@@ -722,7 +722,26 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 	}
 	close(jobs)
 
-	// 結果収集・DB 更新(SQLite は書き込みを直列化するためここで順次実行)
+	// 結果収集・DB 更新(SQLite は書き込みを直列化するためここで順次実行)。
+	// UPDATE をまとめて 1 トランザクションにすることで、作品数分の fsync を避ける。
+	// tx が取得できない場合でも結果チャネルは最後まで drain する必要があるため、
+	// Begin 失敗時は s.db.Exec への個別コミットにフォールバックする。
+	//
+	// execer はここでのみ使う最小限のインターフェース(*sql.DB と *sql.Tx の両方を満たす)。
+	type execer interface {
+		Exec(query string, args ...any) (sql.Result, error)
+	}
+	var execTarget execer = s.db
+	tx, txErr := s.db.Begin()
+	if txErr != nil {
+		log.Printf("サムネイル一括再生成: トランザクション開始失敗、個別コミットにフォールバックします: %v", txErr)
+	} else {
+		execTarget = tx
+		// Commit 済みの tx に対する Rollback は何もせずエラーを返すだけなので、
+		// 正常系の Commit 後に無条件で defer しても問題ない(早期 return・panic からの保護)。
+		defer func() { _ = tx.Rollback() }()
+	}
+
 	for range works {
 		res := <-results
 		if res.err != nil {
@@ -732,7 +751,7 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 			continue
 		}
 		if res.regenerated && res.outPath != "" {
-			if _, uErr := s.db.Exec(
+			if _, uErr := execTarget.Exec(
 				"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
 				res.outPath, res.id,
 			); uErr != nil {
@@ -742,6 +761,12 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 			}
 		}
 		s.rebuildProgress.addChecked(1)
+	}
+
+	if tx != nil {
+		if cErr := tx.Commit(); cErr != nil {
+			log.Printf("サムネイル一括再生成: トランザクションのコミット失敗: %v", cErr)
+		}
 	}
 }
 

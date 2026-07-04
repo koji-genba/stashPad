@@ -32,6 +32,20 @@ type ThumbnailGenerator interface {
 	Generate(workID int64, rootPath string) (string, error)
 }
 
+// execQuerier は upsert 系ヘルパーが必要とする最小限のインターフェース。
+// *sql.DB と *sql.Tx はどちらもこれを満たすため、Scan からは *sql.Tx を渡して
+// バッチをトランザクションにまとめられる一方、既存テストのように *sql.DB を
+// 直接渡すことも変わらず可能。
+type execQuerier interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// upsertChunkSize は upsert ループを何件ごとにコミットするかの単位。
+// ルート全体を 1 トランザクションにすると巨大ライブラリでロールバック/失敗時の
+// コストが大きくなるため、件数で区切って BEGIN...COMMIT を繰り返す。
+const upsertChunkSize = 500
+
 // Scan はすべてのライブラリルートをスキャンしてワークを upsert し、
 // 消えたパスの root_path を NULL に戻す。
 // thumbGen が nil の場合はサムネイル生成をスキップする。
@@ -50,6 +64,20 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 	}
 	var thumbJobs []thumbJob
 
+	// upsert ループ全体を(500 件チャンク単位の)トランザクションでまとめ、
+	// 作品ごとの db.Exec による fsync を減らす。1 件の upsert 失敗で
+	// トランザクション全体を失いたくないため、SQLite が自動 abort しない
+	// ことを利用し「ログして継続」した上で最後に Commit する。
+	tx, err := db.Begin()
+	if err != nil {
+		return Result{}, fmt.Errorf("スキャン用トランザクション開始失敗: %w", err)
+	}
+	// 正常系では明示的に Commit する。Commit 済みの tx に対する Rollback は
+	// 何もせずエラーを返すだけなので、パニックや早期 return からの保護として
+	// 無条件に defer しておいて問題ない。
+	defer func() { _ = tx.Rollback() }()
+
+	chunkCount := 0
 	for _, root := range roots {
 		entries, err := os.ReadDir(root)
 		if err != nil {
@@ -67,23 +95,40 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 			foundPaths[absPath] = true
 			res.WorksFound++
 
-			n, linked, workID, err := upsertWorkNoThumb(db, absPath, dirName)
-			if err != nil {
-				log.Printf("スキャン: upsert 失敗 %q: %v", absPath, err)
-				continue
-			}
-			if n {
-				res.NewlyRegistered++
-			}
-			if linked {
-				res.LinkedToCSV++
+			n, linked, workID, uErr := upsertWorkNoThumb(tx, absPath, dirName)
+			if uErr != nil {
+				log.Printf("スキャン: upsert 失敗 %q: %v", absPath, uErr)
+			} else {
+				if n {
+					res.NewlyRegistered++
+				}
+				if linked {
+					res.LinkedToCSV++
+				}
+
+				// サムネイル生成ジョブを積む
+				if thumbGen != nil && workID > 0 {
+					thumbJobs = append(thumbJobs, thumbJob{workID: workID, absPath: absPath})
+				}
 			}
 
-			// サムネイル生成ジョブを積む
-			if thumbGen != nil && workID > 0 {
-				thumbJobs = append(thumbJobs, thumbJob{workID: workID, absPath: absPath})
+			chunkCount++
+			if chunkCount >= upsertChunkSize {
+				if cErr := tx.Commit(); cErr != nil {
+					return res, fmt.Errorf("upsert トランザクションのコミット失敗: %w", cErr)
+				}
+				newTx, bErr := db.Begin()
+				if bErr != nil {
+					return res, fmt.Errorf("upsert トランザクション再開失敗: %w", bErr)
+				}
+				tx = newTx
+				chunkCount = 0
 			}
 		}
+	}
+
+	if cErr := tx.Commit(); cErr != nil {
+		return res, fmt.Errorf("upsert トランザクションのコミット失敗: %w", cErr)
 	}
 
 	// 全ルートが読み込み失敗した場合は NAS 未マウント等の一時障害とみなし、
@@ -162,7 +207,7 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 
 // upsertWorkNoThumb は 1 つのフォルダを works テーブルに upsert する(サムネイル生成なし)。
 // 返り値は (新規作成されたか, CSV 既存行に root_path がリンクされたか, 作成/更新された work の ID, エラー)。
-func upsertWorkNoThumb(db *sql.DB, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, workID int64, err error) {
+func upsertWorkNoThumb(db execQuerier, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, workID int64, err error) {
 	m := rjPattern.FindStringSubmatch(dirName)
 
 	if m != nil {
@@ -179,7 +224,7 @@ func upsertWorkNoThumb(db *sql.DB, absPath, dirName string) (newlyRegistered boo
 // upsertByRJ は RJ 番号でワークを upsert する。
 // 既存の CSV 行(rj_number 一致、root_path が NULL)があればリンクする。
 // 既存の root_path が同一であればスキップ(何も変えない)。
-func upsertByRJ(db *sql.DB, rjNumber, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, workID int64, err error) {
+func upsertByRJ(db execQuerier, rjNumber, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, workID int64, err error) {
 	// タイトル候補: "RJxxxxxx_" 以降の文字列。アンダースコアがなければフォルダ名全体
 	title := dirName
 	if idx := firstUnderscoreAfterRJ(dirName); idx >= 0 {
@@ -241,7 +286,7 @@ func upsertByRJ(db *sql.DB, rjNumber, absPath, dirName string) (newlyRegistered 
 // root_path 一致で見つからない場合、NAS 一時障害等で NULL 化された孤児行
 // (root_path IS NULL かつ rj_number IS NULL かつ同一タイトル)への再リンクを試みてから
 // INSERT する(issue #48: 重複行によるタグ・履歴の消失を防ぐ)。
-func upsertByPath(db *sql.DB, absPath, dirName string) (newlyRegistered bool, workID int64, err error) {
+func upsertByPath(db execQuerier, absPath, dirName string) (newlyRegistered bool, workID int64, err error) {
 	var id int64
 	row := db.QueryRow("SELECT id FROM works WHERE root_path=?", absPath)
 	scanErr := row.Scan(&id)
@@ -284,7 +329,7 @@ func upsertByPath(db *sql.DB, absPath, dirName string) (newlyRegistered bool, wo
 
 // findOrphanWorkByTitle は root_path・rj_number がともに NULL で、
 // title が一致する行を 1 件探す。見つからなければ found=false を返す。
-func findOrphanWorkByTitle(db *sql.DB, title string) (id int64, found bool, err error) {
+func findOrphanWorkByTitle(db execQuerier, title string) (id int64, found bool, err error) {
 	row := db.QueryRow(
 		"SELECT id FROM works WHERE root_path IS NULL AND rj_number IS NULL AND title=? ORDER BY id LIMIT 1",
 		title,
@@ -327,14 +372,34 @@ func markMissingPaths(db *sql.DB, foundPaths map[string]bool, failedRoots []stri
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
+	// 以降は db.Exec によるトランザクション開始が必要になるため、SELECT のカーソルは
+	// ここで明示的に閉じておく(defer によるクローズも安全のため残す)。
+	rows.Close()
+
+	if len(toNull) == 0 {
+		return 0, nil
+	}
+
+	// NULL 化 UPDATE ループを 1 トランザクションにまとめ、件数分の fsync を避ける。
+	// upsert ループと同様、1 件の失敗でトランザクション全体を失わないよう
+	// ログして継続し、最後に Commit する。
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("root_path NULL 化用トランザクション開始失敗: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 
 	for _, r := range toNull {
-		if _, err := db.Exec(
+		if _, err := tx.Exec(
 			"UPDATE works SET root_path=NULL, updated_at=datetime('now') WHERE id=?",
 			r.id,
 		); err != nil {
 			log.Printf("root_path NULL 化失敗 id=%d: %v", r.id, err)
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("root_path NULL 化用トランザクションのコミット失敗: %w", err)
 	}
 	return len(toNull), nil
 }
