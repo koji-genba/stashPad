@@ -17,7 +17,9 @@ COPY --from=frontend /app/frontend/dist/ ./internal/web/dist/
 RUN CGO_ENABLED=0 go build -o /stashpad ./cmd/stashpad
 
 # ---- stage 3: 実行イメージ ----
-FROM gcr.io/distroless/static
+# nonroot タグ: uid/gid 65532 で実行(非 root)。/data はこの uid が書けるようにすること。
+FROM gcr.io/distroless/static:nonroot
 COPY --from=backend /stashpad /stashpad
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD ["/stashpad", "-healthcheck"]
 ENTRYPOINT ["/stashpad"]

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,7 +18,49 @@ import (
 	"github.com/koji-genba/stashpad/backend/internal/db"
 )
 
+// defaultHealthzPort は STASHPAD_ADDR 未設定時のヘルスチェック用ポート。
+// config.Load() のデフォルト(":8080")と整合させること。
+const defaultHealthzPort = "8080"
+
+// healthzURL は STASHPAD_ADDR 形式のリッスンアドレス(例 ":8080" や
+// "0.0.0.0:8080")から、自プロセスへのヘルスチェック用 URL を組み立てる。
+// ホスト部分は無視し、常に localhost 経由で接続する
+// (コンテナ内から自分自身に接続するだけなので、バインドアドレスがどうであれ
+// localhost で到達できる)。
+func healthzURL(addr string) string {
+	port := defaultHealthzPort
+	if addr != "" {
+		if _, p, err := net.SplitHostPort(addr); err == nil && p != "" {
+			port = p
+		}
+	}
+	return "http://localhost:" + port + "/api/healthz"
+}
+
+// runHealthcheck は `-healthcheck` 引数で起動された場合の処理本体。
+// Docker HEALTHCHECK から呼ばれ、GET /api/healthz が 200 を返せば正常(exit 0)、
+// それ以外(接続失敗・非 200)は異常(exit 1)とみなす。
+func runHealthcheck() int {
+	url := healthzURL(os.Getenv("STASHPAD_ADDR"))
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
+}
+
 func main() {
+	// Docker HEALTHCHECK 用: config.Load() より前に処理し、
+	// 必須環境変数(STASHPAD_LIBRARY_ROOTS 等)の検証に影響されないようにする。
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		os.Exit(runHealthcheck())
+	}
+
 	// 設定読み込み
 	cfg, err := config.Load()
 	if err != nil {

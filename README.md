@@ -82,6 +82,8 @@ docker compose up -d
 
 Dockerfile は multi-stage(node → golang → distroless)で、`docker compose up` だけでフロントエンドのビルドと embed まで完結する。メディアは必ず **read-only**(`:ro`)でマウントすること。
 
+実行イメージは `gcr.io/distroless/static:nonroot`(uid/gid 65532)で**非 root 実行**になっている。`./data`(SQLite + サムネイルキャッシュ)はこの uid が書き込める権限にしておくこと(例: `chown 65532:65532 data`。chown できない環境では `chmod 777 data` でも動くが権限は緩くなる点に注意)。また、コンテナには `HEALTHCHECK`(`/stashpad -healthcheck` が `GET /api/healthz` を叩く)が組み込まれており、`docker compose ps` 等で稼働状態を確認できる。
+
 ## 運用上の注意
 
 stashPad は家庭内 LAN での利用を前提としています(認証なし)。外出先から使う場合は VPN(Tailscale 等)経由でアクセスし、直接インターネットへ公開しないでください。
