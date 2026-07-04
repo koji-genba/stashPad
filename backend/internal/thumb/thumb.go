@@ -9,6 +9,7 @@ import (
 	_ "image/gif" // GIF デコード登録
 	"image/jpeg"
 	_ "image/png" // PNG デコード登録
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,6 +19,11 @@ import (
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // WebP デコード登録
 )
+
+// defaultMaxPixels はサムネイル生成時にデコードを許可する画像の最大ピクセル数(幅×高さ)。
+// 20000x20000 の PNG のような decompression bomb が worker pool で同時に複数枚展開されると
+// OOM でコンテナが落ちるリスクがあるため、デコード前にヘッダ情報だけで足切りする(#69)。
+const defaultMaxPixels = 100_000_000 // 100MP(例: 10000x10000)
 
 // priorityPattern はサムネイル優先ファイル名のパターン(大文字小文字無視)。
 // thumbnail.* の特別ルールより低い優先度として使う。
@@ -29,11 +35,16 @@ var thumbnailPattern = regexp.MustCompile(`(?i)^thumbnail\.(jpg|jpeg|png|webp)$`
 // Generator はサムネイル生成器。
 type Generator struct {
 	ThumbsDir string // {DATA_DIR}/thumbs
+
+	// maxPixels はデコードを許可する画像の最大ピクセル数(幅×高さ)。
+	// New() で defaultMaxPixels が設定される。テストでは小さい値に差し替えて
+	// decompression bomb ガードの挙動を検証できる。
+	maxPixels int64
 }
 
 // New は Generator を生成する。
 func New(thumbsDir string) *Generator {
-	return &Generator{ThumbsDir: thumbsDir}
+	return &Generator{ThumbsDir: thumbsDir, maxPixels: defaultMaxPixels}
 }
 
 // Generate は workID の作品フォルダ rootPath からサムネイルを生成し、
@@ -80,7 +91,7 @@ func (g *Generator) Refresh(workID int64, rootPath string) (regenerated bool, ou
 		return false, outPath, nil
 	}
 
-	if err := generateThumbnail(chosen, outPath); err != nil {
+	if err := g.generateThumbnail(chosen, outPath); err != nil {
 		return false, "", fmt.Errorf("サムネイル生成失敗 %q: %w", chosen, err)
 	}
 	_ = os.WriteFile(srcRecord, []byte(chosen), 0o644)
@@ -187,12 +198,33 @@ func chooseBestImage(rootPath string, candidates []string) string {
 }
 
 // generateThumbnail は src 画像を読み込み、長辺 512px・jpeg q85 で dst に保存する。
-func generateThumbnail(src, dst string) error {
+// decompression bomb 対策として、全ピクセルを展開する image.Decode の前に
+// image.DecodeConfig でヘッダだけ読み、寸法が g.maxPixels を超える場合はデコードせずエラーを返す。
+func (g *Generator) generateThumbnail(src, dst string) error {
 	f, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("ソース画像オープン失敗: %w", err)
 	}
 	defer f.Close()
+
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		// DecodeConfig が失敗するファイルは通常 Decode も失敗するため、
+		// ここで即エラーを返し全ピクセル展開は行わない。
+		return fmt.Errorf("画像ヘッダデコード失敗: %w", err)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return fmt.Errorf("画像サイズが不正です (%dx%d)", cfg.Width, cfg.Height)
+	}
+	// int64 での乗算によりオーバーフローを避ける。
+	pixels := int64(cfg.Width) * int64(cfg.Height)
+	if pixels > g.maxPixels {
+		return fmt.Errorf("画像が大きすぎます (%dx%d)", cfg.Width, cfg.Height)
+	}
+
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("ソース画像シーク失敗: %w", err)
+	}
 
 	img, _, err := image.Decode(f)
 	if err != nil {
