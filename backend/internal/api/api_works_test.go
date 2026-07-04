@@ -325,6 +325,98 @@ func TestPatchWorkBadJSONAndNotFound(t *testing.T) {
 	}
 }
 
+// PATCH title を TrimSpace 後に空文字になる場合は 400(作品名を空にできる
+// 現状バグの修正、issue #63)。
+func TestPatchWorkTitleEmptyRejected(t *testing.T) {
+	h, database, id := newTestServer(t)
+
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":"   "}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("空白のみ title status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+	w = doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":""}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("空文字 title status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+
+	// title が変更されていないこと
+	var title string
+	if err := database.QueryRow("SELECT title FROM works WHERE id=?", id).Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if title != "テスト作品" {
+		t.Errorf("拒否されたはずの title 更新が反映された: %q", title)
+	}
+}
+
+// PATCH title の前後の空白が TrimSpace されて保存されること。
+func TestPatchWorkTitleTrimmed(t *testing.T) {
+	h, database, id := newTestServer(t)
+
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":"  新タイトル  "}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var title string
+	if err := database.QueryRow("SELECT title FROM works WHERE id=?", id).Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if title != "新タイトル" {
+		t.Errorf("title = %q, want trim 済みの \"新タイトル\"", title)
+	}
+}
+
+// PATCH title が 200 rune を超える場合は 400。
+func TestPatchWorkTitleTooLong(t *testing.T) {
+	h, _, id := newTestServer(t)
+	long := strings.Repeat("あ", 201)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":"`+long+`"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("201文字 title status = %d, want 400", w.Code)
+	}
+}
+
+// PATCH circle に空文字を指定すると「サークル情報の削除」として NULL になること
+// (判断: circle は元々 NULL 許容のフィールドで、CSV 側も空文字を nullIfEmpty で
+// NULL 化している。フロントに既存の編集 UI はまだ無いため、既存のドメイン表現
+// 〈「サークル無し」= NULL〉に揃えるのが自然と判断した)。
+// 削除であっても Circle キー自体は非 nil で PATCH されているので manually_edited は立つ
+// (CSV 再インポートで復元されないようにする、issue #64 の意図を維持)。
+func TestPatchWorkCircleEmptyClears(t *testing.T) {
+	h, database, id := newTestServer(t)
+	if _, err := database.Exec("UPDATE works SET circle='元サークル' WHERE id=?", id); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"circle":""}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var circle sql.NullString
+	var manuallyEdited int
+	if err := database.QueryRow("SELECT circle, manually_edited FROM works WHERE id=?", id).
+		Scan(&circle, &manuallyEdited); err != nil {
+		t.Fatal(err)
+	}
+	if circle.Valid {
+		t.Errorf("circle が NULL になっていない: %q", circle.String)
+	}
+	if manuallyEdited != 1 {
+		t.Errorf("manually_edited = %d, want 1(circle 削除も手動編集扱い)", manuallyEdited)
+	}
+}
+
+// PATCH circle が 200 rune を超える場合は 400。
+func TestPatchWorkCircleTooLong(t *testing.T) {
+	h, _, id := newTestServer(t)
+	long := strings.Repeat("あ", 201)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"circle":"`+long+`"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("201文字 circle status = %d, want 400", w.Code)
+	}
+}
+
 // PATCH title で manually_edited が立つこと(issue #64 案 A)。
 func TestPatchWorkTitleSetsManuallyEdited(t *testing.T) {
 	h, database, id := newTestServer(t)
@@ -503,6 +595,50 @@ func TestAddTagErrors(t *testing.T) {
 	w = doJSON(t, h, http.MethodPost, "/api/works/99999/tags", `{"name":"x"}`)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("存在しない作品 status = %d, want 404", w.Code)
+	}
+}
+
+// name が空白のみの場合も TrimSpace 後に空 → 400(issue #63)。
+func TestAddTagWhitespaceOnlyRejected(t *testing.T) {
+	h, _, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/tags", id), `{"name":"   "}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("空白のみ name status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+}
+
+// name の前後の空白が TrimSpace されて登録されること。
+func TestAddTagNameTrimmed(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/tags", id), `{"name":"  タグ  "}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Name != "タグ" {
+		t.Errorf("レスポンスの name = %q, want trim 済みの \"タグ\"", resp.Name)
+	}
+	var cnt int
+	if err := database.QueryRow("SELECT COUNT(*) FROM tags WHERE name='タグ'").Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 1 {
+		t.Errorf("trim 済み名でタグが登録されていない: count = %d", cnt)
+	}
+}
+
+// name が 101 文字(rune 数)を超える場合は 400。
+func TestAddTagNameTooLong(t *testing.T) {
+	h, _, id := newTestServer(t)
+	long := strings.Repeat("あ", 101)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/tags", id), `{"name":"`+long+`"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("101文字 name status = %d, want 400", w.Code)
 	}
 }
 
@@ -881,6 +1017,69 @@ func TestRecordPlayErrors(t *testing.T) {
 	w = doJSON(t, h, http.MethodPost, "/api/works/99999/plays", `{"path":"x.mp3"}`)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("存在しない作品 status = %d, want 404", w.Code)
+	}
+}
+
+// path がパストラバーサル(../)の場合、media.ResolvePath の ErrForbidden を
+// 400 にマップして記録を拒否すること(issue #63。ブラウズ系の 403 とは異なり、
+// 再生記録 API では「不正な入力」として 400 で返す設計とした)。
+func TestRecordPlayTraversalPathRejected(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/plays", id), `{"path":"../../etc/passwd"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("traversal path status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+
+	// 履歴に記録されていないこと
+	var cnt int
+	if err := database.QueryRow("SELECT COUNT(*) FROM play_history WHERE work_id=?", id).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 0 {
+		t.Errorf("拒否されたはずの再生が記録された: count = %d", cnt)
+	}
+}
+
+// path が作品フォルダ内に存在しない場合、media.ResolvePath の ErrNotFound を
+// 404 にマップして記録を拒否すること。
+func TestRecordPlayNonexistentPathRejected(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/plays", id), `{"path":"mp3/nonexistent.mp3"}`)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("存在しない path status = %d, want 404, body = %s", w.Code, w.Body.String())
+	}
+	var cnt int
+	if err := database.QueryRow("SELECT COUNT(*) FROM play_history WHERE work_id=?", id).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 0 {
+		t.Errorf("拒否されたはずの再生が記録された: count = %d", cnt)
+	}
+}
+
+// path が長すぎる場合(1000 byte 超)は 400。
+func TestRecordPlayPathTooLong(t *testing.T) {
+	h, _, id := newTestServer(t)
+	long := strings.Repeat("a", 1001)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/plays", id), `{"path":"`+long+`"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("長すぎる path status = %d, want 400", w.Code)
+	}
+}
+
+// root_path が NULL(フォルダ未登録)の作品への再生記録は 404 で拒否されること
+// (パスの実在を検証できないため)。
+func TestRecordPlayNoRootFolderRejected(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	res, err := database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ690000', 'フォルダなし')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/plays", id), `{"path":"a.mp3"}`)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("root_path NULL status = %d, want 404, body = %s", w.Code, w.Body.String())
 	}
 }
 

@@ -14,7 +14,9 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/koji-genba/stashpad/backend/internal/media"
@@ -317,7 +319,19 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 
 // ---- 作品編集 ----------------------------------------------------------------
 
+// maxTitleRunes / maxCircleRunes は手動編集で許容する文字数の上限(rune 数)。
+// 極端に長い値が UI 崩れや DB 肥大化の原因になるのを防ぐための緩い上限であり、
+// 厳密な仕様値ではない(issue #63)。
+const (
+	maxTitleRunes  = 200
+	maxCircleRunes = 200
+)
+
 // handlePatchWork は PATCH /api/works/{id} を処理する(タイトル等の手動編集)。
+//
+// title / circle / hidden / favorite / manually_edited への反映は単一の UPDATE 文に
+// 統合する(issue #63)。各フィールドは JSON に「キーが存在する場合のみ」動的に
+// SET 句へ積み、存在しないフィールドには触れない(以前の複数 db.Exec と同じ部分更新の意味論を維持)。
 func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 	workID, err := parseWorkID(r)
 	if err != nil {
@@ -336,6 +350,35 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// title: TrimSpace 後に空文字になる場合は 400(作品名を空にできてしまう
+	// バグの修正)。長さも緩く上限を設ける。
+	var trimmedTitle string
+	if body.Title != nil {
+		trimmedTitle = strings.TrimSpace(*body.Title)
+		if trimmedTitle == "" {
+			respondError(w, http.StatusBadRequest, "作品名を空にすることはできません")
+			return
+		}
+		if utf8.RuneCountInString(trimmedTitle) > maxTitleRunes {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("作品名は%d文字以内で指定してください", maxTitleRunes))
+			return
+		}
+	}
+
+	// circle: 空文字は「サークル情報の削除」として NULL 化を許す。circle は元々
+	// NULL 許容カラムで、CSV インポート側(nullIfEmpty)も空文字を NULL に揃えている。
+	var trimmedCircle string
+	var circleClear bool
+	if body.Circle != nil {
+		trimmedCircle = strings.TrimSpace(*body.Circle)
+		if trimmedCircle == "" {
+			circleClear = true
+		} else if utf8.RuneCountInString(trimmedCircle) > maxCircleRunes {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("サークル名は%d文字以内で指定してください", maxCircleRunes))
+			return
+		}
+	}
+
 	// 存在確認(DB エラーは 500、不存在は 404 を返す)
 	var exists bool
 	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id=?)", workID).Scan(&exists); err != nil {
@@ -347,25 +390,20 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 動的 SET 句の組み立て。JSON にキーが存在するフィールドのみ積む。
+	setClauses := make([]string, 0, 5)
+	args := make([]any, 0, 5)
+
 	if body.Title != nil {
-		// title の手動編集は manually_edited を立てる。CSV 再インポートが
-		// このフラグの立った作品の title/circle を上書きしないようにするため(issue #64 案 A)。
-		if _, err := s.db.Exec(
-			"UPDATE works SET title=?, manually_edited=1, updated_at=datetime('now') WHERE id=?",
-			*body.Title, workID,
-		); err != nil {
-			respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
-			return
-		}
+		setClauses = append(setClauses, "title=?")
+		args = append(args, trimmedTitle)
 	}
 	if body.Circle != nil {
-		// circle の手動編集も同様に manually_edited を立てる(issue #64 案 A)。
-		if _, err := s.db.Exec(
-			"UPDATE works SET circle=?, manually_edited=1, updated_at=datetime('now') WHERE id=?",
-			*body.Circle, workID,
-		); err != nil {
-			respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
-			return
+		if circleClear {
+			setClauses = append(setClauses, "circle=NULL")
+		} else {
+			setClauses = append(setClauses, "circle=?")
+			args = append(args, trimmedCircle)
 		}
 	}
 	if body.Hidden != nil {
@@ -374,33 +412,35 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 		if *body.Hidden {
 			hiddenVal = 1
 		}
-		if _, err := s.db.Exec(
-			"UPDATE works SET hidden=?, updated_at=datetime('now') WHERE id=?",
-			hiddenVal, workID,
-		); err != nil {
-			respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
-			return
-		}
+		setClauses = append(setClauses, "hidden=?")
+		args = append(args, hiddenVal)
 	}
 	if body.Favorite != nil {
 		// true → 現在時刻を記録(登録順ソートに使う)、false → NULL に戻す
 		if *body.Favorite {
-			if _, err := s.db.Exec(
-				"UPDATE works SET favorited_at=datetime('now'), updated_at=datetime('now') WHERE id=?",
-				workID,
-			); err != nil {
-				respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
-				return
-			}
+			setClauses = append(setClauses, "favorited_at=datetime('now')")
 		} else {
-			if _, err := s.db.Exec(
-				"UPDATE works SET favorited_at=NULL, updated_at=datetime('now') WHERE id=?",
-				workID,
-			); err != nil {
-				respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
-				return
-			}
+			setClauses = append(setClauses, "favorited_at=NULL")
 		}
+	}
+	// Title または Circle が非 nil のときだけ manually_edited=1 を立てる
+	// (hidden/favorite のみの PATCH では立てない。issue #64 案 A の挙動を維持)。
+	if body.Title != nil || body.Circle != nil {
+		setClauses = append(setClauses, "manually_edited=1")
+	}
+
+	// SET 句が1つも無い(空 body 等)場合は何もせず 204 を返す(以前からの挙動を維持)。
+	if len(setClauses) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	setClauses = append(setClauses, "updated_at=datetime('now')")
+	args = append(args, workID)
+	query := "UPDATE works SET " + strings.Join(setClauses, ", ") + " WHERE id=?"
+	if _, err := s.db.Exec(query, args...); err != nil {
+		respondError(w, http.StatusInternalServerError, "更新失敗: "+err.Error())
+		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -423,8 +463,11 @@ func (s *Server) handleAddTag(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "JSON パース失敗: "+err.Error())
 		return
 	}
-	if body.Name == "" {
-		respondError(w, http.StatusBadRequest, "name が空です")
+	// タグ名は TrimSpace 後に空文字、または 100 rune 超過なら 400。
+	name := strings.TrimSpace(body.Name)
+	const maxTagNameRunes = 100
+	if name == "" || utf8.RuneCountInString(name) > maxTagNameRunes {
+		respondError(w, http.StatusBadRequest, "タグ名は1〜100文字で指定してください")
 		return
 	}
 
@@ -442,14 +485,14 @@ func (s *Server) handleAddTag(w http.ResponseWriter, r *http.Request) {
 	// custom タグ upsert
 	if _, err := s.db.Exec(
 		"INSERT INTO tags (name, category) VALUES (?, 'custom') ON CONFLICT(name, category) DO NOTHING",
-		body.Name,
+		name,
 	); err != nil {
 		respondError(w, http.StatusInternalServerError, "タグ作成失敗: "+err.Error())
 		return
 	}
 	var tagID int64
 	if err := s.db.QueryRow(
-		"SELECT id FROM tags WHERE name=? AND category='custom'", body.Name,
+		"SELECT id FROM tags WHERE name=? AND category='custom'", name,
 	).Scan(&tagID); err != nil {
 		respondError(w, http.StatusInternalServerError, "タグ ID 取得失敗: "+err.Error())
 		return
@@ -463,7 +506,7 @@ func (s *Server) handleAddTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusCreated, map[string]any{"id": tagID, "name": body.Name, "category": "custom"})
+	respondJSON(w, http.StatusCreated, map[string]any{"id": tagID, "name": name, "category": "custom"})
 }
 
 // handleDeleteTag は DELETE /api/works/{id}/tags/{tag_id} を処理する。
@@ -989,7 +1032,16 @@ func (s *Server) handleWorkFile(w http.ResponseWriter, r *http.Request) {
 
 // ---- 再生履歴 ----------------------------------------------------------------
 
+// maxPlayPathBytes は再生記録 path の長さ上限(byte 数)。DB 肥大化・異常系入力の
+// 防止が目的の緩い上限で、実際のファイルパスがこれを超えることは想定しない(issue #63)。
+const maxPlayPathBytes = 1000
+
 // handleRecordPlay は POST /api/works/{id}/plays を処理する。
+//
+// path は media.ResolvePath(handleWorkFile 等と同じパストラバーサル検証)で
+// 作品ルート配下に実在することを確認してから記録する。ブラウズ系エンドポイントは
+// トラバーサル検出を 403 で返すが、本エンドポイントは「不正な再生記録リクエスト」
+// として 400 に、対象ファイル不在は 404 にマップする(issue #63 の仕様に合わせた設計判断)。
 func (s *Server) handleRecordPlay(w http.ResponseWriter, r *http.Request) {
 	workID, err := parseWorkID(r)
 	if err != nil {
@@ -1008,15 +1060,37 @@ func (s *Server) handleRecordPlay(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "path が空です")
 		return
 	}
+	if len(body.Path) > maxPlayPathBytes {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("path は%dバイト以内で指定してください", maxPlayPathBytes))
+		return
+	}
 
-	// 作品存在確認(DB エラーは 500、不存在は 404 を返す)
-	var exists bool
-	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id=?)", workID).Scan(&exists); err != nil {
+	// 作品のルートフォルダを取得(不存在は 404、DB エラーは 500)。
+	rootPath, err := s.getWorkRootPath(workID)
+	if err == sql.ErrNoRows {
+		respondError(w, http.StatusNotFound, "作品が見つかりません")
+		return
+	}
+	if err != nil {
 		respondError(w, http.StatusInternalServerError, "DB エラー: "+err.Error())
 		return
 	}
-	if !exists {
-		respondError(w, http.StatusNotFound, "作品が見つかりません")
+	if rootPath == "" {
+		// root_path が NULL(フォルダ未登録)の作品はパスの実在を検証できないため拒否する。
+		respondError(w, http.StatusNotFound, "作品フォルダが登録されていません")
+		return
+	}
+
+	// パストラバーサル検証。ErrForbidden→400、ErrNotFound→404 にマップする
+	// (handleWorkFile 等のブラウズ系は 403/404 だが、再生記録はここでは 400/404 とする)。
+	if _, resolveErr := media.ResolvePath(rootPath, body.Path); resolveErr == media.ErrForbidden {
+		respondError(w, http.StatusBadRequest, "不正な path です")
+		return
+	} else if resolveErr == media.ErrNotFound {
+		respondError(w, http.StatusNotFound, "ファイルが見つかりません")
+		return
+	} else if resolveErr != nil {
+		respondError(w, http.StatusInternalServerError, "パス解決失敗: "+resolveErr.Error())
 		return
 	}
 
