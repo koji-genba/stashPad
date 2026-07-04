@@ -84,6 +84,10 @@ Dockerfile は multi-stage(node → golang → distroless)で、`docker compose 
 
 実行イメージは `gcr.io/distroless/static:nonroot`(uid/gid 65532)で**非 root 実行**になっている。`./data`(SQLite + サムネイルキャッシュ)はこの uid が書き込める権限にしておくこと(例: `chown 65532:65532 data`。chown できない環境では `chmod 777 data` でも動くが権限は緩くなる点に注意)。また、コンテナには `HEALTHCHECK`(`/stashpad -healthcheck` が `GET /api/healthz` を叩く)が組み込まれており、`docker compose ps` 等で稼働状態を確認できる。
 
+### k8s へのデプロイ
+
+本番運用で k8s を使う場合は [deploy/k8s/](deploy/k8s/)(Deployment / Service / PVC / Ingress 例)を参照。`kubectl apply -k deploy/k8s/` でまとめて適用できる。プレースホルダ(イメージ名・NFS server/path・Ingress ホスト名等)は [deploy/k8s/README.md](deploy/k8s/README.md) を参照して書き換えること。
+
 ## 運用上の注意
 
 stashPad は家庭内 LAN での利用を前提としています(認証なし)。外出先から使う場合は VPN(Tailscale 等)経由でアクセスし、直接インターネットへ公開しないでください。

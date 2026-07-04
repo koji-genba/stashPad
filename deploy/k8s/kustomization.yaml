@@ -1,0 +1,9 @@
+# kubectl apply -k deploy/k8s/ でまとめて適用するための一覧。
+# 個別に kubectl apply -f deploy/k8s/ で適用してもよい(参照関係はなく単純な集合)。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml

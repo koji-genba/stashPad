@@ -1,0 +1,14 @@
+# stashPad Service(ClusterIP)。deploy/k8s/ingress.yaml から backend として参照する。
+apiVersion: v1
+kind: Service
+metadata:
+  name: stashpad
+  labels:
+    app: stashpad
+spec:
+  selector:
+    app: stashpad
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
