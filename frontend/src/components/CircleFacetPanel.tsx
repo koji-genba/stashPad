@@ -1,6 +1,10 @@
 // サークルファセット。絞り込み入力付き。選択は単一(完全一致)。
 // 選択中サークルを再クリックすると解除される。
-import { useEffect, useState } from 'react';
+//
+// #27: パネル初回マウント時に q なしで全件を 1 回だけ fetch し、以降の入力による
+// 絞り込みはクライアントサイド(name.toLowerCase().includes)で行う。サーバへの
+// デバウンス再フェッチは行わない。
+import { useEffect, useMemo, useState } from 'react';
 import type { CircleFacet } from '@/api/types';
 import { fetchCircles } from '@/api/client';
 import styles from './CircleFacetPanel.module.css';
@@ -20,31 +24,35 @@ export default function CircleFacetPanel({ selected, onSelect }: Props) {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
+  // 初回マウント時に全件を 1 回だけ fetch する。以降の絞り込みはクライアントサイドで行うため
+  // q には依存しない。
   useEffect(() => {
     const ac = new AbortController();
-    // デバウンス: 入力 250ms 後に fetch
-    const t = setTimeout(() => {
-      setLoading(true);
-      setFailed(false);
-      fetchCircles(q ? { q } : {}, ac.signal)
-        .then((d) => {
-          setCircles(d.items);
-          setLoading(false);
-        })
-        .catch(() => {
-          if (ac.signal.aborted) return;
-          setFailed(true);
-          setLoading(false);
-        });
-    }, q ? 250 : 0);
+    setLoading(true);
+    setFailed(false);
+    fetchCircles({}, ac.signal)
+      .then((d) => {
+        setCircles(d.items);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (ac.signal.aborted) return;
+        setFailed(true);
+        setLoading(false);
+      });
     return () => {
-      clearTimeout(t);
       ac.abort();
     };
-  }, [q]);
+  }, []);
 
-  const displayed = circles.slice(0, MAX_DISPLAY);
-  const hasMore = circles.length > MAX_DISPLAY;
+  const filtered = useMemo(() => {
+    if (!q) return circles;
+    const needle = q.toLowerCase();
+    return circles.filter((c) => c.name.toLowerCase().includes(needle));
+  }, [circles, q]);
+
+  const displayed = filtered.slice(0, MAX_DISPLAY);
+  const hasMore = filtered.length > MAX_DISPLAY;
 
   return (
     <div className={styles.panel}>
@@ -61,7 +69,7 @@ export default function CircleFacetPanel({ selected, onSelect }: Props) {
         </div>
       ) : failed ? (
         <p className="error">サークル一覧の読み込みに失敗しました</p>
-      ) : circles.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <p className="faint">サークルがありません</p>
       ) : (
         <>
