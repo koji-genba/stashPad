@@ -306,6 +306,97 @@ RJ600001,CSVタイトル2,CSVシリーズ2,CSVサークル2,2026/02/02,ボイス
 	}
 }
 
+// TestImportContinuesAfterFieldCountMismatch は CSV の途中行が列数不一致でも、
+// その行だけがエラーとして収集され、残りの行のインポートは継続することをテストする
+// (issue #70。以前は csv.Reader.ReadAll() を使っていたため、1行でも列数が
+// 合わない行があると CSV 全体の読み込みがそこで失敗し、後続行が一切取り込まれなかった)。
+func TestImportContinuesAfterFieldCountMismatch(t *testing.T) {
+	db := openTestDB(t)
+
+	// 2行目(RJ000002)だけ列が1つ多い(列数不一致)。1・3行目は正常。
+	csvData := "rj_number,title\n" +
+		"RJ000001,Good1\n" +
+		"RJ000002,Good2,Extra\n" +
+		"RJ000003,Good3\n"
+
+	res, err := Import(db, strings.NewReader(csvData))
+	if err != nil {
+		t.Fatalf("Import 自体はエラーを返すべきではない: %v", err)
+	}
+
+	// 正常な2行(1・3行目)は取り込まれる
+	if res.Created != 2 {
+		t.Errorf("Created = %d, want 2", res.Created)
+	}
+	// 不正行1件がエラーとして収集される
+	if len(res.Errors) != 1 {
+		t.Fatalf("Errors 数 = %d, want 1; errors=%v", len(res.Errors), res.Errors)
+	}
+	if !strings.Contains(res.Errors[0], "行3") {
+		t.Errorf("エラーメッセージに行番号3が含まれない: %q", res.Errors[0])
+	}
+
+	// 正常行は実際に DB に反映されている
+	for _, rj := range []string{"RJ000001", "RJ000003"} {
+		var exists bool
+		if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE rj_number=?)", rj).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Errorf("%s が取り込まれていない", rj)
+		}
+	}
+	// 不正行 RJ000002 は取り込まれない
+	var badExists bool
+	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE rj_number='RJ000002')").Scan(&badExists); err != nil {
+		t.Fatal(err)
+	}
+	if badExists {
+		t.Error("列数不一致行 RJ000002 が取り込まれてしまった")
+	}
+}
+
+// TestImportLinkedCountNotInflatedOnReimport は、既にCSVデータが結び付いている
+// 作品を再度インポートしても Linked が水増しされないことをテストする(issue #70)。
+// 1回目のインポートで「スキャン済み(root_path 有り、CSV データ無し)」作品に
+// CSV が初めて結び付くので Linked=1。2回目は既に結び付いているので Linked=0 になるべき。
+func TestImportLinkedCountNotInflatedOnReimport(t *testing.T) {
+	db := openTestDB(t)
+
+	// root_path が設定されている(スキャン済み、CSV データ無し)works を事前に登録
+	if _, err := db.Exec(
+		`INSERT INTO works (rj_number, title, root_path)
+		 VALUES ('RJ777778', 'スキャン済み2', '/media/RJ777778_作品')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
+RJ777778,CSVのタイトル,,,,,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
+`
+
+	res1, err := Import(db, strings.NewReader(csvData))
+	if err != nil {
+		t.Fatalf("1回目 Import 失敗: %v", err)
+	}
+	if res1.Linked != 1 {
+		t.Errorf("1回目 Linked = %d, want 1(初めて CSV と結び付いた)", res1.Linked)
+	}
+
+	// 2回目: 同じ CSV を再インポート。root_path は変わっていないが、既に
+	// CSV データが入っているので「新たにリンクされた」わけではない。
+	res2, err := Import(db, strings.NewReader(csvData))
+	if err != nil {
+		t.Fatalf("2回目 Import 失敗: %v", err)
+	}
+	if res2.Updated != 1 {
+		t.Errorf("2回目 Updated = %d, want 1", res2.Updated)
+	}
+	if res2.Linked != 0 {
+		t.Errorf("2回目 Linked = %d, want 0(水増し: 既にリンク済みのはずなのに再カウントされた)", res2.Linked)
+	}
+}
+
 // TestImportMultipleTagsReimport はタグが多い作品を 2 回インポートしても
 // タグ件数が正しいことをテスト(二重リンクが起きないことの確認)。
 func TestImportMultipleTagsReimport(t *testing.T) {

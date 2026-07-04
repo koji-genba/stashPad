@@ -47,6 +47,29 @@ func likeContains(s string) string {
 	return "%" + escapeLike(s) + "%"
 }
 
+// maxFacetLimit は /api/tags・/api/circles の ?limit= に許す上限値(issue #38-3)。
+const maxFacetLimit = 1000
+
+// parseLimitParam はクエリの limit パラメータをパースする。
+// 空文字・非数値は「指定なし」として (0, false) を返し、呼び出し側は LIMIT 句を付けない
+// (従来どおり全件取得)。指定がある場合は 1〜maxFacetLimit にクランプして (limit, true) を返す。
+func parseLimitParam(s string) (limit int, ok bool) {
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, false
+	}
+	if v < 1 {
+		v = 1
+	}
+	if v > maxFacetLimit {
+		v = maxFacetLimit
+	}
+	return v, true
+}
+
 // parseTagIDs はカンマ区切りのタグ ID 文字列を int64 スライスに変換する。
 // 非数値・空文字は無視する(既存の tags パラメータと同じ挙動)。
 func parseTagIDs(param string) []int64 {

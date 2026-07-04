@@ -7,7 +7,7 @@ interface Props {
   title: string;
   circle?: string | null;
   ageRating?: string | null;
-  thumbnailUrl: string;
+  thumbnailUrl?: string | null;
   hasFolder?: boolean;
   /** 右下に出す補助テキスト(履歴の再生回数など) */
   badge?: string;

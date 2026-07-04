@@ -44,6 +44,7 @@ const sampleWork: WorkDetail = {
   hidden: false,
   favorited: false,
   tags: [],
+  thumbnail_url: null,
 };
 
 function renderPage(initialUrl: string) {

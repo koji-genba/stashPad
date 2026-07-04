@@ -8,6 +8,35 @@ import (
 	"strings"
 )
 
+// historyWorkSummary は GET /api/history の items[].work。
+// thumbnail_url は NULL 許容(*string)で、サムネ無しは明示的に null を返す(issue #57)。
+type historyWorkSummary struct {
+	ID           int64   `json:"id"`
+	Title        string  `json:"title"`
+	ThumbnailURL *string `json:"thumbnail_url"`
+}
+
+// historyEntry は GET /api/history の items 要素。
+type historyEntry struct {
+	Work         historyWorkSummary `json:"work"`
+	LastPlayedAt string             `json:"last_played_at"`
+	LastFilePath string             `json:"last_file_path"`
+	PlayCount    int                `json:"play_count"`
+}
+
+// historyResponse は GET /api/history のレスポンス。
+type historyResponse struct {
+	Items []historyEntry `json:"items"`
+	Total int            `json:"total"`
+	Page  int            `json:"page"`
+	Limit int            `json:"limit"`
+}
+
+// deleteHistoryResult は DELETE /api/history のレスポンス。
+type deleteHistoryResult struct {
+	Deleted int64 `json:"deleted"`
+}
+
 // historySortColumns は sort パラメータと ORDER BY 句の対応(ホワイトリスト)。
 // 値はサブクエリのカラム名のみで、パラメータ値を SQL に直接埋めない。
 var historySortColumns = map[string]string{
@@ -101,7 +130,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	items := make([]map[string]any, 0)
+	items := make([]historyEntry, 0)
 	for rows.Next() {
 		var (
 			workID       int64
@@ -116,19 +145,16 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		workObj := map[string]any{
-			"id":    workID,
-			"title": workTitle,
-		}
+		workObj := historyWorkSummary{ID: workID, Title: workTitle}
 		if thumbPath.Valid {
-			workObj["thumbnail_url"] = "/api/works/" + itoa(workID) + "/thumbnail"
+			workObj.ThumbnailURL = strPtr("/api/works/" + itoa(workID) + "/thumbnail")
 		}
 
-		items = append(items, map[string]any{
-			"work":           workObj,
-			"last_played_at": lastPlayedAt,
-			"last_file_path": lastFilePath,
-			"play_count":     playCount,
+		items = append(items, historyEntry{
+			Work:         workObj,
+			LastPlayedAt: lastPlayedAt,
+			LastFilePath: lastFilePath,
+			PlayCount:    playCount,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -136,11 +162,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{
-		"items": items,
-		"total": total,
-		"page":  page,
-		"limit": limit,
+	respondJSON(w, http.StatusOK, historyResponse{
+		Items: items,
+		Total: total,
+		Page:  page,
+		Limit: limit,
 	})
 }
 
@@ -182,5 +208,5 @@ func (s *Server) handleDeleteHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+	respondJSON(w, http.StatusOK, deleteHistoryResult{Deleted: deleted})
 }

@@ -20,7 +20,7 @@ export interface WorkListItem {
   circle: string | null;
   age_rating: string | null;
   has_folder: boolean;
-  thumbnail_url: string;
+  thumbnail_url: string | null;
   favorited: boolean;
 }
 
@@ -54,6 +54,7 @@ export interface WorkDetail {
   hidden: boolean;
   favorited: boolean;
   tags: Tag[];
+  thumbnail_url: string | null;
 }
 
 /** GET /api/works/{id}/entries の entries 要素 */
@@ -88,7 +89,7 @@ export interface HistoryItem {
   work: {
     id: number;
     title: string;
-    thumbnail_url: string;
+    thumbnail_url: string | null;
   };
   last_played_at: string;
   last_file_path: string;

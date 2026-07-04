@@ -5,8 +5,27 @@ import (
 	"strconv"
 )
 
+// tagFacetItem は GET /api/tags の items 要素。
+type tagFacetItem struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Category  string `json:"category"`
+	WorkCount int    `json:"work_count"`
+}
+
+// tagsListResponse は GET /api/tags のレスポンス。
+type tagsListResponse struct {
+	Items []tagFacetItem `json:"items"`
+}
+
+// tagCleanupResult は POST /api/tags/cleanup のレスポンス。
+type tagCleanupResult struct {
+	Deleted int64 `json:"deleted"`
+}
+
 // handleListTags は GET /api/tags を処理する。
 // ?category= でカテゴリ絞り込み、?q= でタグ名部分一致、作品数付きで返す。
+// ?limit= で件数上限を指定できる(未指定なら全件。1〜1000 にクランプ。issue #38-3)。
 func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	category := q.Get("category")
@@ -36,6 +55,10 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 		GROUP BY t.id
 		HAVING COUNT(w.id) > 0
 		ORDER BY work_count DESC, t.name ASC`
+	if limit, ok := parseLimitParam(q.Get("limit")); ok {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -44,7 +67,7 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	items := make([]map[string]any, 0)
+	items := make([]tagFacetItem, 0)
 	for rows.Next() {
 		var id int64
 		var name, cat string
@@ -53,19 +76,14 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusInternalServerError, "行スキャン失敗: "+err.Error())
 			return
 		}
-		items = append(items, map[string]any{
-			"id":         id,
-			"name":       name,
-			"category":   cat,
-			"work_count": workCount,
-		})
+		items = append(items, tagFacetItem{ID: id, Name: name, Category: cat, WorkCount: workCount})
 	}
 	if err := rows.Err(); err != nil {
 		respondError(w, http.StatusInternalServerError, "行読み込み失敗: "+err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{"items": items})
+	respondJSON(w, http.StatusOK, tagsListResponse{Items: items})
 }
 
 // handleCleanupTags は POST /api/tags/cleanup を処理する。
@@ -83,7 +101,7 @@ func (s *Server) handleCleanupTags(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "件数取得失敗: "+err.Error())
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"deleted": n})
+	respondJSON(w, http.StatusOK, tagCleanupResult{Deleted: n})
 }
 
 // ---- 未使用インポート回避用ヘルパー ------------------------------------------

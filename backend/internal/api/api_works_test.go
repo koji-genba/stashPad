@@ -181,27 +181,45 @@ func TestGetWorkFullMetadata(t *testing.T) {
 	}
 }
 
-// NULL フィールドはキー自体が省略されること(setIfValid の挙動)
-func TestGetWorkOmitsNullFields(t *testing.T) {
+// NULL フィールドはキーを省略せず明示的に null で返ること(issue #57)。
+// 以前は setIfValid でキー自体を省略していたが、フロントの `string | null` 型定義との
+// 契約を一致させるため typed struct + 明示 null に変更した。
+func TestGetWorkNullFieldsAreExplicitNull(t *testing.T) {
 	h, _, id := newTestServer(t)
 	// newTestServer は circle/series 等を設定していない
 	w := doGet(t, h, urlf("/api/works/%d", id))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
+
+	// 生 JSON 文字列としても明示 null になっていること(キー省略の再発を検出しやすくする)。
+	for _, needle := range []string{
+		`"circle":null`, `"series_name":null`, `"purchase_date":null`,
+		`"work_type":null`, `"age_rating":null`, `"file_format":null`,
+		`"file_size_text":null`, `"thumbnail_url":null`,
+	} {
+		if !strings.Contains(w.Body.String(), needle) {
+			t.Errorf("レスポンスに %q が含まれない: %s", needle, w.Body.String())
+		}
+	}
+
 	var raw map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"circle", "series_name", "purchase_date",
 		"work_type", "age_rating", "file_format", "file_size_text", "thumbnail_url"} {
-		if _, ok := raw[key]; ok {
-			t.Errorf("NULL フィールド %q がキーとして存在する", key)
+		v, ok := raw[key]
+		if !ok {
+			t.Errorf("NULL フィールド %q のキー自体が省略された", key)
+		}
+		if v != nil {
+			t.Errorf("NULL フィールド %q = %v, want null", key, v)
 		}
 	}
-	// rj_number は設定済みなので存在する
-	if _, ok := raw["rj_number"]; !ok {
-		t.Error("rj_number が省略された")
+	// rj_number は設定済みなので値ありで存在する
+	if v, ok := raw["rj_number"]; !ok || v == nil {
+		t.Error("rj_number が省略/null になった")
 	}
 }
 
@@ -693,6 +711,45 @@ func TestDeleteTagBadID(t *testing.T) {
 
 // ---- GET /api/works 未カバー分岐 ---------------------------------------------
 
+// GET /api/works の items も NULL フィールド(circle/age_rating/thumbnail_url)を
+// 明示的な null で返すこと(キー省略ではない。issue #57)。
+// newTestServer が作る作品は circle/age_rating が NULL、thumbnail_path 未設定。
+func TestListWorksNullFieldsAreExplicitNull(t *testing.T) {
+	h, _, _ := newTestServer(t)
+
+	w := doGet(t, h, "/api/works")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	for _, needle := range []string{`"circle":null`, `"age_rating":null`, `"thumbnail_url":null`} {
+		if !strings.Contains(w.Body.String(), needle) {
+			t.Errorf("レスポンスに %q が含まれない: %s", needle, w.Body.String())
+		}
+	}
+
+	var body struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("items 数 = %d, want 1", len(body.Items))
+	}
+	for _, key := range []string{"circle", "age_rating", "thumbnail_url"} {
+		v, ok := body.Items[0][key]
+		if !ok {
+			t.Errorf("NULL フィールド %q のキー自体が省略された", key)
+		}
+		if v != nil {
+			t.Errorf("NULL フィールド %q = %v, want null", key, v)
+		}
+	}
+	if v, ok := body.Items[0]["rj_number"]; !ok || v == nil {
+		t.Error("rj_number が省略/null になった")
+	}
+}
+
 // q キーワード検索が title / circle / rj_number それぞれにヒットすること
 func TestListWorksKeyword(t *testing.T) {
 	h, database, _ := newTestServer(t)
@@ -1145,6 +1202,38 @@ func TestHistoryThumbnailURL(t *testing.T) {
 	}
 }
 
+// history の work にサムネが無い場合、thumbnail_url はキー省略ではなく明示的な
+// null で返ること(issue #57)。
+func TestHistoryThumbnailURLExplicitNullWhenMissing(t *testing.T) {
+	h, database, id := newTestServer(t)
+	// newTestServer の作品は thumbnail_path 未設定
+	database.Exec("INSERT INTO play_history (work_id, file_path) VALUES (?, 'a.mp3')", id)
+
+	w := doGet(t, h, "/api/history")
+	if !strings.Contains(w.Body.String(), `"thumbnail_url":null`) {
+		t.Errorf("thumbnail_url が明示 null になっていない: %s", w.Body.String())
+	}
+
+	var body struct {
+		Items []struct {
+			Work map[string]any `json:"work"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("items 数 = %d, want 1", len(body.Items))
+	}
+	v, ok := body.Items[0].Work["thumbnail_url"]
+	if !ok {
+		t.Error("thumbnail_url のキー自体が省略された")
+	}
+	if v != nil {
+		t.Errorf("thumbnail_url = %v, want null", v)
+	}
+}
+
 // ---- GET /api/tags の category / q フィルタ -----------------------------------
 
 func TestListTagsFilters(t *testing.T) {
@@ -1191,6 +1280,47 @@ func TestListTagsLikeSpecialChars(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &body)
 	if len(body.Items) != 1 || body.Items[0].Name != "100%OFFタグ" {
 		t.Errorf("q=100%%OFF items = %+v, want [100%%OFFタグ]", body.Items)
+	}
+}
+
+// ?limit= で件数が絞られ、未指定なら全件返ること(issue #38-3)。
+func TestListTagsLimit(t *testing.T) {
+	h, database, id := newTestServer(t)
+	database.Exec(`INSERT INTO tags (name, category) VALUES
+		('あ','custom'), ('い','custom'), ('う','custom')`)
+	database.Exec("INSERT INTO work_tags (work_id, tag_id) SELECT ?, id FROM tags", id)
+
+	// 未指定 → 全件(3件)
+	w := doGet(t, h, "/api/tags")
+	var body struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 3 {
+		t.Fatalf("未指定 items 数 = %d, want 3", len(body.Items))
+	}
+
+	// limit=1 → 1件のみ
+	w = doGet(t, h, "/api/tags?limit=1")
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 1 {
+		t.Errorf("limit=1 items 数 = %d, want 1", len(body.Items))
+	}
+
+	// limit=0 は 1 にクランプされる
+	w = doGet(t, h, "/api/tags?limit=0")
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 1 {
+		t.Errorf("limit=0 items 数 = %d, want 1(下限クランプ)", len(body.Items))
+	}
+
+	// limit=9999 は 1000 にクランプされる(が母数が3件なので3件のまま)
+	w = doGet(t, h, "/api/tags?limit=9999")
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 3 {
+		t.Errorf("limit=9999 items 数 = %d, want 3(上限クランプでも母数までしか出ない)", len(body.Items))
 	}
 }
 

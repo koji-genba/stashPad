@@ -25,12 +25,29 @@ import (
 
 // ---- 作品一覧 ----------------------------------------------------------------
 
+// workListItem は GET /api/works の items 要素。
+//
+// NULL 許容カラム(rj_number/circle/age_rating/thumbnail_url)は *string にして
+// omitempty を付けない。値が NULL の場合は JSON で明示的に `null` を返す
+// (以前は setIfValid でキー自体を省略していたが、フロントの `string | null` 型定義と
+// 実際の契約を一致させるため typed struct + 明示 null に統一する。issue #57/#38-2)。
+type workListItem struct {
+	ID           int64   `json:"id"`
+	RJNumber     *string `json:"rj_number"`
+	Title        string  `json:"title"`
+	Circle       *string `json:"circle"`
+	AgeRating    *string `json:"age_rating"`
+	HasFolder    bool    `json:"has_folder"`
+	ThumbnailURL *string `json:"thumbnail_url"`
+	Favorited    bool    `json:"favorited"`
+}
+
 // worksListResponse は GET /api/works のレスポンス。
 type worksListResponse struct {
-	Items []map[string]any `json:"items"`
-	Total int              `json:"total"`
-	Page  int              `json:"page"`
-	Limit int              `json:"limit"`
+	Items []workListItem `json:"items"`
+	Total int            `json:"total"`
+	Page  int            `json:"page"`
+	Limit int            `json:"limit"`
 }
 
 // handleListWorks は GET /api/works を処理する。
@@ -181,7 +198,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	items := make([]map[string]any, 0)
+	items := make([]workListItem, 0)
 	for rows.Next() {
 		var id int64
 		var rj, circle, ageRating, thumbPath, favoritedAt sql.NullString
@@ -193,23 +210,17 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		item := map[string]any{
-			"id":         id,
-			"title":      title,
-			"has_folder": hasFolder,
-			"favorited":  favoritedAt.Valid,
-		}
-		if rj.Valid {
-			item["rj_number"] = rj.String
-		}
-		if circle.Valid {
-			item["circle"] = circle.String
-		}
-		if ageRating.Valid {
-			item["age_rating"] = ageRating.String
+		item := workListItem{
+			ID:        id,
+			RJNumber:  nullableString(rj),
+			Title:     title,
+			Circle:    nullableString(circle),
+			AgeRating: nullableString(ageRating),
+			HasFolder: hasFolder,
+			Favorited: favoritedAt.Valid,
 		}
 		if thumbPath.Valid {
-			item["thumbnail_url"] = fmt.Sprintf("/api/works/%d/thumbnail", id)
+			item.ThumbnailURL = strPtr(fmt.Sprintf("/api/works/%d/thumbnail", id))
 		}
 		items = append(items, item)
 	}
@@ -227,6 +238,33 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- 作品詳細 ----------------------------------------------------------------
+
+// workTagItem は GET /api/works/{id} の tags 要素。
+type workTagItem struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Category string `json:"category"`
+}
+
+// workDetailResponse は GET /api/works/{id} のレスポンス。
+// workListItem と同様、NULL 許容カラムは *string で明示的に null を返す(issue #57/#38-2)。
+type workDetailResponse struct {
+	ID           int64         `json:"id"`
+	RJNumber     *string       `json:"rj_number"`
+	Title        string        `json:"title"`
+	Circle       *string       `json:"circle"`
+	SeriesName   *string       `json:"series_name"`
+	PurchaseDate *string       `json:"purchase_date"`
+	WorkType     *string       `json:"work_type"`
+	AgeRating    *string       `json:"age_rating"`
+	FileFormat   *string       `json:"file_format"`
+	FileSizeText *string       `json:"file_size_text"`
+	HasFolder    bool          `json:"has_folder"`
+	Tags         []workTagItem `json:"tags"`
+	Hidden       bool          `json:"hidden"`
+	Favorited    bool          `json:"favorited"`
+	ThumbnailURL *string       `json:"thumbnail_url"`
+}
 
 // handleGetWork は GET /api/works/{id} を処理する。
 func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +321,7 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tagRows.Close()
 
-	tags := make([]map[string]any, 0)
+	tags := make([]workTagItem, 0)
 	for tagRows.Next() {
 		var tid int64
 		var name, cat string
@@ -291,27 +329,27 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusInternalServerError, "タグスキャン失敗: "+err.Error())
 			return
 		}
-		tags = append(tags, map[string]any{"id": tid, "name": name, "category": cat})
+		tags = append(tags, workTagItem{ID: tid, Name: name, Category: cat})
 	}
 
-	result := map[string]any{
-		"id":         id,
-		"title":      title,
-		"has_folder": rootPath.Valid,
-		"tags":       tags,
-		"hidden":     hiddenInt != 0, // INTEGER 0/1 を bool に変換
-		"favorited":  favoritedAt.Valid,
+	result := workDetailResponse{
+		ID:           id,
+		RJNumber:     nullableString(rjNumber),
+		Title:        title,
+		Circle:       nullableString(circle),
+		SeriesName:   nullableString(seriesName),
+		PurchaseDate: nullableString(purchaseDate),
+		WorkType:     nullableString(workType),
+		AgeRating:    nullableString(ageRating),
+		FileFormat:   nullableString(fileFormat),
+		FileSizeText: nullableString(fileSizeText),
+		HasFolder:    rootPath.Valid,
+		Tags:         tags,
+		Hidden:       hiddenInt != 0, // INTEGER 0/1 を bool に変換
+		Favorited:    favoritedAt.Valid,
 	}
-	setIfValid(result, "rj_number", rjNumber)
-	setIfValid(result, "circle", circle)
-	setIfValid(result, "series_name", seriesName)
-	setIfValid(result, "purchase_date", purchaseDate)
-	setIfValid(result, "work_type", workType)
-	setIfValid(result, "age_rating", ageRating)
-	setIfValid(result, "file_format", fileFormat)
-	setIfValid(result, "file_size_text", fileSizeText)
 	if thumbPath.Valid {
-		result["thumbnail_url"] = fmt.Sprintf("/api/works/%d/thumbnail", id)
+		result.ThumbnailURL = strPtr(fmt.Sprintf("/api/works/%d/thumbnail", id))
 	}
 
 	respondJSON(w, http.StatusOK, result)
@@ -926,11 +964,20 @@ func (s *Server) handleWorkEntries(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{
-		"path":    relPath,
-		"parent":  parent,
-		"entries": result,
+	respondJSON(w, http.StatusOK, entriesListResponse{
+		Path:    relPath,
+		Parent:  parent,
+		Entries: result,
 	})
+}
+
+// entriesListResponse は GET /api/works/{id}/entries のレスポンス。
+// このエンドポイントに NULL 許容フィールドは無いため純粋な typed struct 化のみ
+// (契約は変わらない。issue #38-2)。
+type entriesListResponse struct {
+	Path    string      `json:"path"`
+	Parent  string      `json:"parent"`
+	Entries []entryItem `json:"entries"`
 }
 
 // sortEntries は entryItem スライスを自然順でソートする。
@@ -1126,9 +1173,17 @@ func parseWorkID(r *http.Request) (int64, error) {
 	return strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 }
 
-// setIfValid は NullString が有効な場合のみ map にセットする。
-func setIfValid(m map[string]any, key string, v sql.NullString) {
-	if v.Valid {
-		m[key] = v.String
+// nullableString は sql.NullString を *string に変換する。NULL(Valid=false)なら nil を
+// 返し、typed struct 経由で JSON エンコードした際にキー自体は残したまま値だけ `null` になる
+// (以前の setIfValid はキーそのものを省略していたが、それを廃止した。issue #57/#38-2)。
+func nullableString(v sql.NullString) *string {
+	if !v.Valid {
+		return nil
 	}
+	return &v.String
+}
+
+// strPtr は string の値から *string を作る小さなヘルパー(複合リテラルの & を避けるため)。
+func strPtr(s string) *string {
+	return &s
 }
