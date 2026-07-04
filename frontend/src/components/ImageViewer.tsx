@@ -19,6 +19,7 @@ const DOUBLE_CLICK_ZOOM_STEP = Math.log(2.5);
 const PRELOAD_AHEAD = 3;
 
 /** スケール値からズーム中かどうかを判定する(テスト容易化のため純関数として切り出し) */
+// eslint-disable-next-line react-refresh/only-export-components -- テスト用の純関数エクスポート。コンポーネントと分離するリファクタは対象外
 export function isZoomed(scale: number): boolean {
   return scale > ZOOM_THRESHOLD;
 }
@@ -41,6 +42,8 @@ export default function ImageViewer() {
   // ページ切替時に transform をリセットし、常に等倍から始める
   useEffect(() => {
     transformRef.current?.resetTransform(0);
+    // ページ切替時にズーム状態も等倍に戻す意図的な setState
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setZoomed(false);
   }, [index]);
 

@@ -58,6 +58,8 @@ export default function FileBrowser({ workId, workTitle }: Props) {
 
   useEffect(() => {
     const ac = new AbortController();
+    // fetch 開始前にローディング表示へ切り替える意図的な setState(データ取得 effect の定型)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     fetchEntries(workId, path, ac.signal)

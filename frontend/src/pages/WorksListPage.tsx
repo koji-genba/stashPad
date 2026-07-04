@@ -57,6 +57,7 @@ export default function WorksListPage() {
   // 毎レンダーで最新の q を ref に書き込む。デバウンスエフェクトの deps に
   // q を入れると URL 更新直後に無駄な再実行が生じるため、ref 経由で参照する。
   const qRef = useRef(q);
+  // eslint-disable-next-line react-hooks/refs -- 上のコメントの通り、最新の q を常に反映させるための意図的なレンダー中書き込み
   qRef.current = q;
   const [data, setData] = useState<WorksResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,11 +71,13 @@ export default function WorksListPage() {
 
   // 検索ボックスは URL と同期(戻る等で反映)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 上のコメントの通り、URL 変化を入力欄に反映する意図的な setState
     setQInput(q);
   }, [q]);
 
   // ページ番号入力欄も URL と同期(前へ/次へ・戻る等で反映)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 上のコメントの通り、URL 変化を入力欄に反映する意図的な setState
     setPageInput(String(page));
   }, [page]);
 
@@ -112,6 +115,8 @@ export default function WorksListPage() {
 
   useEffect(() => {
     const ac = new AbortController();
+    // fetch 開始前にローディング表示へ切り替える意図的な setState(データ取得 effect の定型)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     fetchWorks(

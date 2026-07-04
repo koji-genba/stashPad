@@ -42,6 +42,8 @@ export default function HistoryPage() {
   // データ取得
   useEffect(() => {
     const ac = new AbortController();
+    // fetch 開始前にローディング表示へ切り替える意図的な setState(データ取得 effect の定型)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     fetchHistory({ page, q, sort, order }, ac.signal)

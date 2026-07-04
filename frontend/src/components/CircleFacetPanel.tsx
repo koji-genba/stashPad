@@ -28,6 +28,8 @@ export default function CircleFacetPanel({ selected, onSelect }: Props) {
   // q には依存しない。
   useEffect(() => {
     const ac = new AbortController();
+    // fetch 開始前にローディング表示へ切り替える意図的な setState(データ取得 effect の定型)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setFailed(false);
     fetchCircles({}, ac.signal)

@@ -49,6 +49,7 @@ export default function WorkDetailPage() {
   useEffect(() => {
     if (!Number.isFinite(workId)) {
       // /works/abc 等。work=null のまま loading を落とし「作品が見つかりません」表示にする
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setWork(null);
       setLoading(false);
       return;
@@ -73,6 +74,8 @@ export default function WorkDetailPage() {
   useEffect(() => {
     if (!Number.isFinite(workId)) return;
     let active = true;
+    // 作品切替時に前回のキャッシュバスト値をクリアする意図的な setState
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setThumbBust(null);
     refreshThumbnail(workId)
       .then((r) => {

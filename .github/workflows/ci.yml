@@ -1,4 +1,4 @@
-# CI: バックエンド(go vet / go test)、フロントエンド(typecheck / vitest)、
+# CI: バックエンド(go vet / go test)、フロントエンド(lint / typecheck / vitest)、
 # embed 込みビルド検証(Dockerfile と同じ流れ)を PR と main push で実行する。
 name: CI
 
@@ -24,7 +24,7 @@ jobs:
       - run: go test ./...
 
   frontend:
-    name: frontend (typecheck / vitest)
+    name: frontend (lint / typecheck / vitest)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -37,6 +37,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npm run typecheck
       - run: npm test
 

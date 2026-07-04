@@ -213,6 +213,8 @@ export default function SettingsPage() {
 
   // マウント時に非表示作品一覧をロード
   useEffect(() => {
+    // loadHiddenWorks は内部で setHiddenLoading(true) を同期的に呼ぶ意図的な setState
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadHiddenWorks();
   }, []);
 

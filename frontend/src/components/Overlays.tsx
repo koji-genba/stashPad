@@ -66,6 +66,8 @@ function TextModal() {
   useEscapeToClose(text !== null, close);
 
   useEffect(() => {
+    // 対象ファイル切替時に前回の表示内容をクリアする意図的な setState
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setContent(null);
     setError(null);
     if (!text) return;
