@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { useOverlayStore } from '@/store/overlayStore';
+import { __resetForTests } from './useGuardedHistoryNav';
 import { useOverlayHistorySync, MEDIA_OVERLAY_FLAG } from './useOverlayHistorySync';
 
 function resetStore() {
@@ -63,7 +64,10 @@ function statusText() {
 }
 
 describe('useOverlayHistorySync', () => {
-  beforeEach(resetStore);
+  beforeEach(() => {
+    resetStore();
+    __resetForTests();
+  });
   afterEach(cleanup);
 
   it('store が開くとフラグ付きエントリが積まれ、戻るで閉じる', async () => {

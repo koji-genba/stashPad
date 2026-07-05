@@ -7,6 +7,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { useOverlayStore } from '@/store/overlayStore';
 import { __resetForTests } from '@/hooks/useBodyScrollLock';
+import { __resetForTests as __resetGuardedNavForTests } from '@/hooks/useGuardedHistoryNav';
 import { MEDIA_OVERLAY_FLAG } from '@/hooks/useOverlayHistorySync';
 import Overlays from './Overlays';
 
@@ -51,6 +52,7 @@ describe('Overlays の Escape / スクロールロック (issue #52)', () => {
   beforeEach(() => {
     resetStore();
     __resetForTests();
+    __resetGuardedNavForTests();
     document.body.style.overflow = '';
   });
   afterEach(cleanup);
@@ -102,6 +104,7 @@ describe('Overlays の history 同期 (issue #52)', () => {
   beforeEach(() => {
     resetStore();
     __resetForTests();
+    __resetGuardedNavForTests();
   });
   afterEach(cleanup);
 

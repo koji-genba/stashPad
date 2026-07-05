@@ -58,3 +58,14 @@ export function useGuardedHistoryNav(): GuardedHistoryNav {
     },
   };
 }
+
+/**
+ * テスト専用: モジュール共有ガード(lastPushKey/lastBackKey/resetForKey)をリセットする。
+ * useBodyScrollLock の __resetForTests と同じ流儀。ガードはモジュールシングルトンなので、
+ * 同一テストファイル内の各 it 間で状態が漏れないよう beforeEach から呼ぶ。
+ */
+export function __resetForTests(): void {
+  lastPushKey = null;
+  lastBackKey = null;
+  resetForKey = null;
+}

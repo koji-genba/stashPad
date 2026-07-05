@@ -29,15 +29,31 @@ function keyFor(workId: number, path: string): string {
   return `${workId}:${path}`;
 }
 
+/** 値が PositionEntry の形(position/duration/updatedAt が全て number)を満たすか判定する */
+function isValidEntry(value: unknown): value is PositionEntry {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.position === 'number' &&
+    typeof v.duration === 'number' &&
+    typeof v.updatedAt === 'number'
+  );
+}
+
+// 「妥当な JSON だが形が壊れている」エントリ(null・数値以外の position 等)を読み込み時に
+// 捨てる。ここで弾いておくことで、loadResumePosition が誤った値(型が違う position 等)を
+// 返す穴と、enforceLru が壊れたエントリの updatedAt を読んで例外を投げる穴の両方を塞ぐ。
 function readStore(): PositionStore {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as PositionStore;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const store: PositionStore = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (isValidEntry(value)) store[key] = value;
     }
-    return {};
+    return store;
   } catch {
     return {};
   }
@@ -78,7 +94,7 @@ export function loadResumePosition(workId: number, path: string): number | null 
   try {
     const store = readStore();
     const entry = store[keyFor(workId, path)];
-    return entry ? entry.position : null;
+    return typeof entry?.position === 'number' ? entry.position : null;
   } catch {
     return null;
   }

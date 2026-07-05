@@ -82,6 +82,15 @@ describe('Thumbnail', () => {
     expect(img.style.visibility).toBe('hidden');
   });
 
+  // PR #79 レビュー: 空文字は null/undefined と違い ?? では弾かれず、そのまま
+  // src="" として img に渡ると現在のページ URL への無駄なリクエストが発生してしまう。
+  it('src が空文字なら img に src 属性を付けず、プレースホルダ表示になる', () => {
+    render(<Thumbnail src="" alt="x" />);
+    const img = screen.getByAltText('x') as HTMLImageElement;
+    expect(img.hasAttribute('src')).toBe(false);
+    expect(img.style.visibility).toBe('hidden');
+  });
+
   it('src が null → 値ありに変わると broken が解除され src 属性が付く', () => {
     const { rerender } = render(<Thumbnail src={null} alt="x" />);
     rerender(<Thumbnail src="/api/works/3/thumbnail" alt="x" />);

@@ -88,6 +88,67 @@ describe('HistoryPage 履歴削除', () => {
   });
 });
 
+// 非先頭ページで表示中の全行を削除すると行き止まりになる問題の回帰テスト(PR #79 レビュー)。
+// 履歴 41 件・limit 40 で 2 ページ目(1 件)を削除すると items が空になり、
+// ページャ自体が非空分岐の内側にあるため消えてしまい、total>0 なのに
+// 「まだ再生履歴がありません」から復帰できなくなっていた。
+// 修正: 削除後に残 items が 0 かつ page>1 なら前ページへ戻し、再フェッチさせる。
+describe('HistoryPage 非先頭ページの全件削除', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('2 ページ目の最後の 1 件を削除すると 1 ページ目へ戻って再フェッチする', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    const page1Items = Array.from({ length: 40 }, (_, i) => ({
+      work: { id: i + 1, title: `作品${i + 1}`, thumbnail_url: '' },
+      last_played_at: '2026-01-01T00:00:00Z',
+      last_file_path: `f${i}.mp3`,
+      play_count: 1,
+    }));
+    const page2Item = {
+      work: { id: 999, title: '最後の作品', thumbnail_url: '' },
+      last_played_at: '2025-12-01T00:00:00Z',
+      last_file_path: 'last.mp3',
+      play_count: 1,
+    };
+
+    // mockImplementationOnce を使い、3 回目以降の呼び出しは(このテストでは起きないはずだが)
+    // vi.mock 側のデフォルト実装にフォールバックさせて他 describe への汚染を避ける
+    vi.mocked(fetchHistory)
+      .mockImplementationOnce(async () => ({ items: page1Items, total: 41, page: 1, limit: 40 }))
+      .mockImplementationOnce(async () => ({ items: [page2Item], total: 41, page: 2, limit: 40 }))
+      .mockImplementationOnce(async () => ({ items: page1Items, total: 41, page: 1, limit: 40 }));
+
+    renderPage();
+    await screen.findByText('作品1');
+
+    fireEvent.click(screen.getByRole('button', { name: '次へ' }));
+    await screen.findByText('最後の作品');
+
+    const deleteButtons = screen.getAllByRole('button', { name: 'この作品の履歴を削除' });
+    fireEvent.click(deleteButtons[0]);
+
+    await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith(999));
+
+    // 前ページ(page=1)へ戻って再フェッチされ、「まだ再生履歴がありません」には陥らない。
+    // タイムアウトは検索欄の 300ms デバウンス effect(無関係に page を 1 に戻す)より
+    // 十分短く取り、その effect 経由の偶然の green化ではなく削除直後の再フェッチであることを保証する。
+    await waitFor(
+      () =>
+        expect(fetchHistory).toHaveBeenLastCalledWith(
+          expect.objectContaining({ page: 1 }),
+          expect.anything(),
+        ),
+      { timeout: 150 },
+    );
+    await screen.findByText('作品1');
+    expect(screen.queryByText('まだ再生履歴がありません')).toBeNull();
+  });
+});
+
 // total を用いた hasMore 判定(issue #60)。
 // items.length >= limit のヒューリスティックでは、作品数がちょうど limit の倍数のとき
 // 最終ページでも「次へ」が有効になり空ページに遷移してしまう。

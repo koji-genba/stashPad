@@ -201,3 +201,67 @@ describe('破損データ耐性', () => {
     spy.mockRestore();
   });
 });
+
+// PR #79 レビュー: 「妥当な JSON だが形が壊れている」エントリへの耐性。
+// JSON.parse 自体は成功するが、エントリが null だったり position が数値でないなど
+// PositionEntry の形を満たさない場合、loadResumePosition が誤った値を返したり、
+// LRU 上限到達時に enforceLru が updatedAt 読み取りで例外を投げる穴があった。
+describe('妥当な JSON だが形が壊れているエントリへの耐性', () => {
+  it('エントリが null の場合は無視して null を返す', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ '1:a.mp3': null }));
+    expect(() => loadResumePosition(1, 'a.mp3')).not.toThrow();
+    expect(loadResumePosition(1, 'a.mp3')).toBeNull();
+  });
+
+  it('position が文字列の場合は無視して null を返す(数値のふりをした不正値を弾く)', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ '1:a.mp3': { position: '100', duration: 300, updatedAt: Date.now() } }),
+    );
+    expect(loadResumePosition(1, 'a.mp3')).toBeNull();
+  });
+
+  it('duration や updatedAt が数値でないエントリも無視して null を返す', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        '1:a.mp3': { position: 100, duration: 'nope', updatedAt: Date.now() },
+        '2:b.mp3': { position: 100, duration: 300, updatedAt: null },
+      }),
+    );
+    expect(loadResumePosition(1, 'a.mp3')).toBeNull();
+    expect(loadResumePosition(2, 'b.mp3')).toBeNull();
+  });
+
+  it('壊れた形のエントリが混在していても recordProgress は例外を投げず新たな値を保存できる', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        '1:a.mp3': null,
+        '2:b.mp3': { position: 'bad', duration: 300, updatedAt: Date.now() },
+      }),
+    );
+    expect(() => recordProgress(3, 'c.mp3', 100, 300)).not.toThrow();
+    expect(loadResumePosition(3, 'c.mp3')).toBe(100);
+    // 壊れたエントリは読み込み時に捨てられている(書き戻したストアにも残らない)
+    expect(loadResumePosition(1, 'a.mp3')).toBeNull();
+    expect(loadResumePosition(2, 'b.mp3')).toBeNull();
+  });
+
+  it('LRU 上限到達時に不正エントリ(null)が混在していても enforceLru が例外を投げない', () => {
+    vi.useFakeTimers();
+    const base = 1_000_000;
+    const seed: Record<string, unknown> = {};
+    for (let i = 0; i < 199; i++) {
+      seed[`seed-${i}:t.mp3`] = { position: 100, duration: 300, updatedAt: base + i * 10_000 };
+    }
+    // 壊れたエントリ(null)を混在させる。修正前は enforceLru の
+    // `store[keys[i]].updatedAt` 読み取りで TypeError を投げていた。
+    seed['broken:entry.mp3'] = null;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(seed)); // 199 valid + 1 broken = 200 件
+
+    vi.setSystemTime(new Date(base + 199 * 10_000));
+    expect(() => recordProgress(999, 'new.mp3', 100, 300)).not.toThrow();
+    expect(loadResumePosition(999, 'new.mp3')).toBe(100);
+  });
+});

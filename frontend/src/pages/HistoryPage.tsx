@@ -70,9 +70,16 @@ export default function HistoryPage() {
     setDeletingIds((prev) => new Set(prev).add(item.work.id));
     try {
       await deleteHistory(item.work.id);
-      setItems((prev) => prev.filter((it) => it.work.id !== item.work.id));
+      const nextItems = items.filter((it) => it.work.id !== item.work.id);
+      setItems(nextItems);
       // 削除した分だけ total もローカルでデクリメントし、ページング判定とのずれを防ぐ。
       setTotal((prev) => Math.max(0, prev - 1));
+      // 非先頭ページの表示中の全行を削除して空になった場合、そのまま「まだ再生履歴が
+      // ありません」に落ちると total>0 なのに戻れない行き止まりになる(issue #79 レビュー)。
+      // 前ページへ戻すと、上のデータ取得 effect が page の変化を検知して再フェッチする。
+      if (nextItems.length === 0 && page > 1) {
+        setPage((p) => Math.max(1, p - 1));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : '削除に失敗しました');
     } finally {

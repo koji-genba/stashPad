@@ -52,6 +52,10 @@ export default function SettingsPage() {
   const [rebuildError, setRebuildError] = useState<string | null>(null);
   // ポーリング用の setInterval ハンドル。アンマウント時・完了時に必ずクリアする
   const rebuildPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // ポーリング中の fetch を追跡する AbortController。unmount/停止時に abort する
+  const rebuildAbortRef = useRef<AbortController | null>(null);
+  // 前回の fetch が完了していない間は次の tick で新たな fetch を発行しないためのガード
+  const rebuildInFlightRef = useRef(false);
 
   // 非表示作品一覧
   const [hiddenWorks, setHiddenWorks] = useState<WorkListItem[]>([]);
@@ -125,30 +129,48 @@ export default function SettingsPage() {
     }
   };
 
-  // ポーリングを止める(アンマウント時・完了時・エラー時に呼ぶ)
+  // ポーリングを止める(アンマウント時・完了時・エラー時に呼ぶ)。
+  // 進行中の in-flight fetch があれば abort し、次回開始時に備えてガードも解除する
+  // (既存のマウント時復帰パスの cancelled フラグと同じく、離脱後は結果を反映しない意図)
   const stopRebuildPolling = () => {
     if (rebuildPollRef.current !== null) {
       clearInterval(rebuildPollRef.current);
       rebuildPollRef.current = null;
     }
+    rebuildAbortRef.current?.abort();
+    rebuildAbortRef.current = null;
+    rebuildInFlightRef.current = false;
   };
 
-  // running=false になるまで status を 1 秒間隔でポーリングする
+  // running=false になるまで status を 1 秒間隔でポーリングする。
+  // 前回の fetch が完了していない間は tick をスキップする(in-flight ガード)。
+  // 各 tick の fetch は AbortController を保持し、stopRebuildPolling(unmount 含む)で
+  // 中断できるようにする(PR #79 レビュー)。
   const startRebuildPolling = () => {
     stopRebuildPolling();
-    rebuildPollRef.current = setInterval(async () => {
-      try {
-        const status = await fetchThumbnailRebuildStatus();
-        setRebuildStatus(status);
-        if (!status.running) {
+    rebuildPollRef.current = setInterval(() => {
+      if (rebuildInFlightRef.current) return;
+      const ac = new AbortController();
+      rebuildAbortRef.current = ac;
+      rebuildInFlightRef.current = true;
+      fetchThumbnailRebuildStatus(ac.signal)
+        .then((status) => {
+          if (ac.signal.aborted) return;
+          setRebuildStatus(status);
+          if (!status.running) {
+            stopRebuildPolling();
+            setRebuilding(false);
+          }
+        })
+        .catch((e: unknown) => {
+          if (ac.signal.aborted) return;
           stopRebuildPolling();
           setRebuilding(false);
-        }
-      } catch (e) {
-        stopRebuildPolling();
-        setRebuilding(false);
-        setRebuildError(e instanceof Error ? e.message : '進捗の取得に失敗しました');
-      }
+          setRebuildError(e instanceof Error ? e.message : '進捗の取得に失敗しました');
+        })
+        .finally(() => {
+          if (rebuildAbortRef.current === ac) rebuildInFlightRef.current = false;
+        });
     }, REBUILD_POLL_INTERVAL_MS);
   };
 
