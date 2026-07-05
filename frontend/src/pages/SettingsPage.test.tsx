@@ -22,9 +22,10 @@ vi.mock('@/api/client', () => ({
   deleteHistory: vi.fn().mockResolvedValue({ deleted: 5 }),
 }));
 
+const { tagStoreRefreshMock } = vi.hoisted(() => ({ tagStoreRefreshMock: vi.fn() }));
 vi.mock('@/store/tagStore', () => ({
   useTagStore: {
-    getState: () => ({ refresh: vi.fn() }),
+    getState: () => ({ refresh: tagStoreRefreshMock }),
   },
 }));
 
@@ -32,6 +33,7 @@ import SettingsPage from './SettingsPage';
 import {
   deleteHistory,
   fetchThumbnailRebuildStatus,
+  fetchWorks,
   importCsv,
   importMetadata,
   rebuildThumbnails,
@@ -119,6 +121,8 @@ describe('SettingsPage CSV インポート', () => {
 describe('SettingsPage メタデータのエクスポート/インポート', () => {
   beforeEach(() => {
     vi.mocked(importMetadata).mockReset();
+    tagStoreRefreshMock.mockClear();
+    vi.mocked(fetchWorks).mockClear();
   });
 
   afterEach(() => {
@@ -155,6 +159,34 @@ describe('SettingsPage メタデータのエクスポート/インポート', ()
     await screen.findByText((_, node) => node?.textContent === '一致 4');
     await screen.findByText((_, node) => node?.textContent === '見つからず 1');
     await screen.findByText((_, node) => node?.textContent === 'タグ付与 6');
+  });
+
+  it('インポート成功後に tagStore.refresh と非表示作品一覧の再取得が呼ばれる', async () => {
+    vi.mocked(importMetadata).mockResolvedValue({
+      matched: 4,
+      skipped: 1,
+      tags_added: 6,
+      errors: [],
+    });
+    const { container } = renderPage();
+
+    // マウント時の非表示作品一覧の初回取得分をクリアしてからカウントする
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+    vi.mocked(fetchWorks).mockClear();
+
+    const inputs = container.querySelectorAll('input[type="file"]');
+    const input = inputs[1] as HTMLInputElement;
+    const file = new File(['{"version":1,"works":[]}'], 'stashpad-metadata-20260705.json', {
+      type: 'application/json',
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'メタデータをインポート' }));
+
+    await waitFor(() => expect(importMetadata).toHaveBeenCalledWith(file));
+    await waitFor(() => expect(tagStoreRefreshMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(fetchWorks).toHaveBeenCalledWith({ hidden: true, limit: 200 }),
+    );
   });
 
   it('インポート失敗時にエラーメッセージを表示する', async () => {

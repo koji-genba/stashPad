@@ -100,6 +100,9 @@ export default function SettingsPage() {
     try {
       const result = await importMetadata(metadataFile);
       setMetadataImportResult(result);
+      // custom タグ・hidden がサーバ側で更新されるのでキャッシュ・一覧を再取得
+      useTagStore.getState().refresh();
+      await loadHiddenWorks();
     } catch (e) {
       setMetadataImportError(e instanceof Error ? e.message : 'インポートに失敗しました');
     } finally {
@@ -260,8 +263,6 @@ export default function SettingsPage() {
 
   // マウント時に非表示作品一覧をロード
   useEffect(() => {
-    // loadHiddenWorks は内部で setHiddenLoading(true) を同期的に呼ぶ意図的な setState
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadHiddenWorks();
   }, []);
 
