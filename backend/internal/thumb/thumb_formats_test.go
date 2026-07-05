@@ -43,7 +43,7 @@ func TestCollectImageCandidatesIncludesGif(t *testing.T) {
 	dir := t.TempDir()
 	createGIFTestImage(t, filepath.Join(dir, "cover.gif"), 100, 100)
 
-	candidates, err := collectImageCandidates(dir, 2)
+	candidates, _, err := collectImageCandidates(dir, 2)
 	if err != nil {
 		t.Fatalf("collectImageCandidates 失敗: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestCollectImageCandidatesExcludesAvif(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	candidates, err := collectImageCandidates(dir, 2)
+	candidates, _, err := collectImageCandidates(dir, 2)
 	if err != nil {
 		t.Fatalf("collectImageCandidates 失敗: %v", err)
 	}

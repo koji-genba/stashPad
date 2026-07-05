@@ -36,6 +36,11 @@ type Result struct {
 // thumb.Generator が実装する。
 type ThumbnailGenerator interface {
 	Refresh(workID int64, rootPath string) (regenerated bool, outPath string, candidateFound bool, err error)
+
+	// RemoveCache は workID に対応するサムネイルキャッシュファイル
+	// ({workID}.jpg / {workID}.src)を削除する。フォルダ消失で work の
+	// root_path が NULL 化された際に、古いサムネイルを露出させないために呼ばれる。
+	RemoveCache(workID int64) error
 }
 
 // execQuerier は upsert 系ヘルパーが必要とする最小限のインターフェース。
@@ -159,11 +164,23 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 
 	// ステップ2: 既存 works の root_path が消えていたら NULL に戻す。
 	// ただし読み込み失敗したルート配下は「消えた」と判定できないので対象外とする。
-	missing, err := markMissingPaths(db, foundPaths, failedRoots)
+	// thumbnail_path も同時に NULL 化する(残すと /api/works が has_folder=false でも
+	// 古いサムネイルの thumbnail_url を返してしまう。PR #89 レビュー指摘)。
+	missingIDs, err := markMissingPaths(db, foundPaths, failedRoots)
 	if err != nil {
 		return res, fmt.Errorf("消失パスの処理に失敗: %w", err)
 	}
-	res.MissingMarked = missing
+	res.MissingMarked = len(missingIDs)
+
+	// サムネイルのキャッシュファイル({id}.jpg / {id}.src)も削除する。
+	// DB クリアと別経路のファイル削除なので、失敗してもスキャン全体は継続しログのみ残す。
+	if thumbGen != nil {
+		for _, id := range missingIDs {
+			if rErr := thumbGen.RemoveCache(id); rErr != nil {
+				log.Printf("サムネイルキャッシュ削除失敗 work_id=%d: %v", id, rErr)
+			}
+		}
+	}
 
 	// ステップ3: サムネイル生成を worker pool で並列実行
 	if thumbGen != nil && len(thumbJobs) > 0 {
@@ -389,14 +406,17 @@ func findOrphanWorkByTitle(db execQuerier, title string) (id int64, found bool, 
 	return id, true, nil
 }
 
-// markMissingPaths は DB にある root_path のうち、foundPaths に含まれないものを NULL に戻す。
+// markMissingPaths は DB にある root_path のうち、foundPaths に含まれないものを
+// root_path・thumbnail_path とも NULL に戻す(thumbnail_path を残すと /api/works が
+// has_folder=false でも古いサムネイルの thumbnail_url を返してしまうため。
+// PR #89 レビュー指摘)。
 // ただし failedRoots 配下(読み込みに失敗したルート)にあるパスは、
 // 「実際に消えた」のか「読めなかっただけ」なのか区別できないため対象から除外する。
-// NULL 化した件数を返す。
-func markMissingPaths(db *sql.DB, foundPaths map[string]bool, failedRoots []string) (int, error) {
+// NULL 化した work の ID 一覧を返す(呼び出し元がサムネイルキャッシュファイルの削除に使う)。
+func markMissingPaths(db *sql.DB, foundPaths map[string]bool, failedRoots []string) ([]int64, error) {
 	rows, err := db.Query("SELECT id, root_path FROM works WHERE root_path IS NOT NULL")
 	if err != nil {
-		return 0, fmt.Errorf("root_path 一覧取得失敗: %w", err)
+		return nil, fmt.Errorf("root_path 一覧取得失敗: %w", err)
 	}
 	defer rows.Close()
 
@@ -408,21 +428,21 @@ func markMissingPaths(db *sql.DB, foundPaths map[string]bool, failedRoots []stri
 	for rows.Next() {
 		var r row
 		if err := rows.Scan(&r.id, &r.path); err != nil {
-			return 0, err
+			return nil, err
 		}
 		if !foundPaths[r.path] && !underFailedRoot(r.path, failedRoots) {
 			toNull = append(toNull, r)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return nil, err
 	}
 	// 以降は db.Exec によるトランザクション開始が必要になるため、SELECT のカーソルは
 	// ここで明示的に閉じておく(defer によるクローズも安全のため残す)。
 	rows.Close()
 
 	if len(toNull) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
 	// NULL 化 UPDATE ループを 1 トランザクションにまとめ、件数分の fsync を避ける。
@@ -430,23 +450,26 @@ func markMissingPaths(db *sql.DB, foundPaths map[string]bool, failedRoots []stri
 	// ログして継続し、最後に Commit する。
 	tx, err := db.Begin()
 	if err != nil {
-		return 0, fmt.Errorf("root_path NULL 化用トランザクション開始失敗: %w", err)
+		return nil, fmt.Errorf("root_path NULL 化用トランザクション開始失敗: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var nulledIDs []int64
 	for _, r := range toNull {
 		if _, err := tx.Exec(
-			"UPDATE works SET root_path=NULL, updated_at=datetime('now') WHERE id=?",
+			"UPDATE works SET root_path=NULL, thumbnail_path=NULL, updated_at=datetime('now') WHERE id=?",
 			r.id,
 		); err != nil {
 			log.Printf("root_path NULL 化失敗 id=%d: %v", r.id, err)
+			continue
 		}
+		nulledIDs = append(nulledIDs, r.id)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("root_path NULL 化用トランザクションのコミット失敗: %w", err)
+		return nil, fmt.Errorf("root_path NULL 化用トランザクションのコミット失敗: %w", err)
 	}
-	return len(toNull), nil
+	return nulledIDs, nil
 }
 
 // underFailedRoot は path がいずれかの failedRoots 配下(またはルート自身)にあるかを判定する。

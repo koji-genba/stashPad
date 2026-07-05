@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -42,7 +43,19 @@ type exportMetadataResponseBody struct {
 // カスタムタグ・お気に入り・非表示・手動編集のいずれか 1 つ以上を持つ作品だけを
 // JSON でダウンロードさせる(何も無い作品は対象外)。
 func (s *Server) handleExportMetadata(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Query(`
+	// works 取得と custom tags 取得を単一の読み取りトランザクションにまとめる。
+	// 別クエリのままだと、その間に並行編集が入った場合「実在しなかった状態」の
+	// バックアップが作られてしまう。SQLite(WAL モード)では BEGIN 時点の
+	// スナップショットが tx の生存中維持されるため、この tx 経由で読めば
+	// 一貫したスナップショットになる(PR #89 レビュー指摘)。
+	tx, err := s.db.Begin()
+	if err != nil {
+		respondInternalError(w, "トランザクション開始失敗", err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.Query(`
 		SELECT w.id, w.rj_number, w.root_path, w.title, w.circle,
 		       w.manually_edited, w.hidden, w.favorited_at
 		FROM works w
@@ -93,7 +106,7 @@ func (s *Server) handleExportMetadata(w http.ResponseWriter, r *http.Request) {
 
 	works := make([]metadataWorkItem, 0, len(collected))
 	for _, wr := range collected {
-		tags, err := s.customTagsForWork(wr.id)
+		tags, err := customTagsForWork(tx, wr.id)
 		if err != nil {
 			respondInternalError(w, "カスタムタグ取得失敗", err)
 			return
@@ -123,9 +136,16 @@ func (s *Server) handleExportMetadata(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, resp)
 }
 
+// metadataQuerier は customTagsForWork が必要とする最小限のインターフェース。
+// *sql.DB と *sql.Tx はどちらもこれを満たすため、エクスポート経路からは
+// 一貫したスナップショット読み取りのために *sql.Tx を渡す。
+type metadataQuerier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
 // customTagsForWork は work_id に紐づく category='custom' のタグ名一覧を名前昇順で返す。
-func (s *Server) customTagsForWork(workID int64) ([]string, error) {
-	rows, err := s.db.Query(`
+func customTagsForWork(q metadataQuerier, workID int64) ([]string, error) {
+	rows, err := q.Query(`
 		SELECT t.name FROM tags t
 		JOIN work_tags wt ON wt.tag_id = t.id
 		WHERE wt.work_id = ? AND t.category = 'custom'
@@ -181,14 +201,22 @@ type importMetadataResult struct {
 func (s *Server) handleImportMetadata(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxMetadataUploadBytes)
 
+	dec := json.NewDecoder(r.Body)
 	var req importMetadataRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := dec.Decode(&req); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			respondError(w, http.StatusRequestEntityTooLarge, "アップロードサイズが大きすぎます: "+err.Error())
 			return
 		}
 		respondError(w, http.StatusBadRequest, "JSON パース失敗: "+err.Error())
+		return
+	}
+	// Decode は先頭の JSON 値を読むだけで、`{...}{...}` のような連結/破損データが
+	// 後ろに残っていても検出しない。Token() で次のトークンを読もうとして io.EOF に
+	// なることを確認し、余剰データがあれば 400 で弾く(PR #89 レビュー指摘)。
+	if _, err := dec.Token(); err != io.EOF {
+		respondError(w, http.StatusBadRequest, "JSON パース失敗: ボディ末尾に余剰データがあります")
 		return
 	}
 

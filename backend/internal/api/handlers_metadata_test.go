@@ -364,3 +364,16 @@ func TestImportMetadataInvalidJSON(t *testing.T) {
 		t.Errorf("不正 JSON status = %d, want 400, body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestImportMetadataRejectsTrailingData は、正しい JSON オブジェクトの後に
+// 余剰データが連結されたボディ(例: `{...}{...}`)を 400 で拒否することをテスト
+// (PR #89 レビュー指摘)。json.Decoder は Decode 後に先頭のオブジェクトだけを
+// 読んで成功したように見えるため、Token() で io.EOF を確認する必要がある。
+func TestImportMetadataRejectsTrailingData(t *testing.T) {
+	h, _, _ := newTestServer(t)
+	body := `{"version":1,"exported_at":"2026-07-05T00:00:00Z","works":[]}{"version":1,"exported_at":"2026-07-05T00:00:00Z","works":[]}`
+	rec := doJSON(t, h, http.MethodPost, "/api/import/metadata", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("連結 JSON status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+}

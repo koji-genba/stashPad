@@ -82,7 +82,7 @@ func TestWalkDepthSubdirReadError(t *testing.T) {
 	})
 
 	// root の読み込みは成功し、cover.png が候補に含まれる
-	candidates, err := collectImageCandidates(dir, 2)
+	candidates, _, err := collectImageCandidates(dir, 2)
 	if err != nil {
 		t.Fatalf("collectImageCandidates 失敗: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestCollectImageCandidatesDepthLimit(t *testing.T) {
 	lv1 := filepath.Join(dir, "lv1")
 	createTestImage(t, filepath.Join(lv1, "shallow.png"), 100, 100)
 
-	candidates, err := collectImageCandidates(dir, 2)
+	candidates, _, err := collectImageCandidates(dir, 2)
 	if err != nil {
 		t.Fatal(err)
 	}

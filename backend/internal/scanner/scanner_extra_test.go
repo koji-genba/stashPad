@@ -18,10 +18,12 @@ import (
 // fakeThumbGen は ThumbnailGenerator インターフェースのフェイク実装。
 // 呼び出しを記録し、設定に応じて Refresh の結果を返す。
 type fakeThumbGen struct {
-	mu      sync.Mutex
-	calls   []thumbCall
-	errors  map[string]error // absPath → 返すエラー
-	empties map[string]bool  // absPath → 空文字を返すか
+	mu              sync.Mutex
+	calls           []thumbCall
+	errors          map[string]error // absPath → 返すエラー
+	empties         map[string]bool  // absPath → 空文字を返すか
+	removedCacheIDs []int64          // RemoveCache が呼ばれた workID の記録
+	removeCacheErr  error            // RemoveCache が返すエラー(テスト用)
 }
 
 type thumbCall struct {
@@ -47,6 +49,15 @@ func (f *fakeThumbGen) Refresh(workID int64, rootPath string) (bool, string, boo
 		return false, "", true, nil
 	}
 	return true, filepath.Join("/thumbs", fmt.Sprintf("%d.jpg", workID)), true, nil
+}
+
+// RemoveCache は ThumbnailGenerator インターフェースの RemoveCache を満たすフェイク実装。
+// 呼び出された workID を記録するだけで、実ファイル操作は行わない。
+func (f *fakeThumbGen) RemoveCache(workID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removedCacheIDs = append(f.removedCacheIDs, workID)
+	return f.removeCacheErr
 }
 
 // TestScanWithThumbnailGenerator はサムネイル生成経路のテスト。
