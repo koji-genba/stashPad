@@ -15,6 +15,7 @@ type Result struct {
 	Created int      `json:"created"`
 	Updated int      `json:"updated"`
 	Linked  int      `json:"linked"`
+	Skipped int      `json:"skipped"`
 	Errors  []string `json:"errors"`
 }
 
@@ -117,7 +118,7 @@ func importRow(tx *sql.Tx, res *Result, colIdx map[string]int, record []string, 
 	}
 
 	// works upsert
-	workID, created, linked, err := upsertWork(tx, WorkRow{
+	workID, created, linked, skipped, err := upsertWork(tx, WorkRow{
 		RJNumber:     rjNumber,
 		Title:        title,
 		SeriesName:   get("series_name"),
@@ -131,6 +132,10 @@ func importRow(tx *sql.Tx, res *Result, colIdx map[string]int, record []string, 
 	})
 	if err != nil {
 		return fmt.Errorf("works upsert 失敗: %w", err)
+	}
+	if skipped {
+		res.Skipped++
+		return nil
 	}
 
 	if created {
@@ -174,8 +179,8 @@ type WorkRow struct {
 }
 
 // upsertWork は rj_number をキーに works を upsert する。
-// 返り値: (workID, 新規作成か, root_path がリンクされたか)
-func upsertWork(tx *sql.Tx, row WorkRow) (workID int64, created bool, linked bool, err error) {
+// 返り値: (workID, 新規作成か, root_path がリンクされたか, 対象行なしでスキップしたか)
+func upsertWork(tx *sql.Tx, row WorkRow) (workID int64, created bool, linked bool, skipped bool, err error) {
 	var id int64
 	var currentRootPath sql.NullString
 	var manuallyEdited bool
@@ -196,27 +201,10 @@ func upsertWork(tx *sql.Tx, row WorkRow) (workID int64, created bool, linked boo
 	).Scan(&id, &currentRootPath, &manuallyEdited, &csvUntouched)
 
 	if scanErr == sql.ErrNoRows {
-		// 新規作成
-		res, insErr := tx.Exec(
-			`INSERT INTO works
-				(rj_number, title, series_name, circle, purchase_date,
-				 work_type, file_format, file_size_text, age_rating, event,
-				 updated_at)
-			 VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
-			nullIfEmpty(row.RJNumber), row.Title,
-			nullIfEmpty(row.SeriesName), nullIfEmpty(row.Circle),
-			nullIfEmpty(row.PurchaseDate), nullIfEmpty(row.WorkType),
-			nullIfEmpty(row.FileFormat), nullIfEmpty(row.FileSizeText),
-			nullIfEmpty(row.AgeRating), nullIfEmpty(row.Event),
-		)
-		if insErr != nil {
-			return 0, false, false, insErr
-		}
-		id, err = res.LastInsertId()
-		return id, true, false, err
+		return 0, false, false, true, nil
 	}
 	if scanErr != nil {
-		return 0, false, false, scanErr
+		return 0, false, false, false, scanErr
 	}
 
 	// 既存行の更新。「リンクされた」とみなすのは、root_path が付いている
@@ -259,9 +247,9 @@ func upsertWork(tx *sql.Tx, row WorkRow) (workID int64, created bool, linked boo
 		)
 	}
 	if uErr != nil {
-		return 0, false, false, uErr
+		return 0, false, false, false, uErr
 	}
-	return id, false, linkedFlag, nil
+	return id, false, linkedFlag, false, nil
 }
 
 // deleteCSVTags は work_id の CSV 由来カテゴリのタグ紐付けを削除する。
