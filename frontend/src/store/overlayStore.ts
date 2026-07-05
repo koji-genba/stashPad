@@ -2,6 +2,7 @@
 // FileBrowser から起動し、ルート直下の <Overlays> が描画する。
 import { create } from 'zustand';
 import type { Entry } from '@/api/types';
+import { joinPath } from '@/utils/format';
 
 export interface ImageViewerState {
   workId: number;
@@ -45,10 +46,9 @@ interface OverlayState {
 
   openText: (t: TextState) => void;
   closeText: () => void;
-}
 
-function joinPath(dir: string, name: string): string {
-  return dir ? `${dir.replace(/\/+$/, '')}/${name}` : name;
+  /** 開いているオーバーレイをすべて閉じる(history 同期の「戻る」処理用。issue #52) */
+  closeAll: () => void;
 }
 
 export const useOverlayStore = create<OverlayState>((set, get) => ({
@@ -89,4 +89,6 @@ export const useOverlayStore = create<OverlayState>((set, get) => ({
 
   openText: (text) => set({ text }),
   closeText: () => set({ text: null }),
+
+  closeAll: () => set({ image: null, video: null, text: null }),
 }));

@@ -32,6 +32,32 @@
   line-height: 1.4;
   margin: 0 0 8px;
 }
+.titleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.titleRow .title {
+  flex: 1;
+  min-width: 0;
+}
+.favoriteBtn {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 8px;
+}
+.favoriteBtn:hover {
+  background: var(--bg-hover);
+}
+.favoriteBtnActive {
+  color: #ffb300;
+  border-color: #ffb300;
+}
 .notImported {
   display: inline-block;
   background: var(--text-faint);

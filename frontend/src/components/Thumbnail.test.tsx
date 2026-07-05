@@ -64,4 +64,38 @@ describe('Thumbnail', () => {
     rerender(<Thumbnail src="/api/works/1/thumbnail" alt="x" />);
     expect(img.style.visibility).toBe('hidden');
   });
+
+  // issue #57: API は thumbnail_url をサムネ無しの場合キー省略ではなく明示的な
+  // null で返すようになった。Thumbnail はこれを受け取れて、プレースホルダ表示
+  // (既存の broken 画像フォールバックと同じ visibility:hidden)になる必要がある。
+  it('src が null なら img に src 属性を付けず、最初から隠された状態になる', () => {
+    render(<Thumbnail src={null} alt="x" />);
+    const img = screen.getByAltText('x') as HTMLImageElement;
+    expect(img.hasAttribute('src')).toBe(false);
+    expect(img.style.visibility).toBe('hidden');
+  });
+
+  it('src が undefined(省略)でも同様にプレースホルダ表示になる', () => {
+    render(<Thumbnail alt="x" />);
+    const img = screen.getByAltText('x') as HTMLImageElement;
+    expect(img.hasAttribute('src')).toBe(false);
+    expect(img.style.visibility).toBe('hidden');
+  });
+
+  // PR #79 レビュー: 空文字は null/undefined と違い ?? では弾かれず、そのまま
+  // src="" として img に渡ると現在のページ URL への無駄なリクエストが発生してしまう。
+  it('src が空文字なら img に src 属性を付けず、プレースホルダ表示になる', () => {
+    render(<Thumbnail src="" alt="x" />);
+    const img = screen.getByAltText('x') as HTMLImageElement;
+    expect(img.hasAttribute('src')).toBe(false);
+    expect(img.style.visibility).toBe('hidden');
+  });
+
+  it('src が null → 値ありに変わると broken が解除され src 属性が付く', () => {
+    const { rerender } = render(<Thumbnail src={null} alt="x" />);
+    rerender(<Thumbnail src="/api/works/3/thumbnail" alt="x" />);
+    const img = screen.getByAltText('x') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe('/api/works/3/thumbnail');
+    expect(img.style.visibility).not.toBe('hidden');
+  });
 });

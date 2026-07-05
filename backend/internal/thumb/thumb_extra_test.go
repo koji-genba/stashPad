@@ -270,7 +270,8 @@ func TestGenerateThumbnailPNGSource(t *testing.T) {
 	createTestImage(t, src, 1024, 768)
 
 	outPath := filepath.Join(thumbsDir, "gen_test.jpg")
-	if err := generateThumbnail(src, outPath); err != nil {
+	g := New(thumbsDir)
+	if err := g.generateThumbnail(src, outPath); err != nil {
 		t.Fatalf("generateThumbnail 失敗: %v", err)
 	}
 
@@ -300,7 +301,8 @@ func TestGenerateThumbnailInvalidSrc(t *testing.T) {
 	thumbsDir := t.TempDir()
 	outPath := filepath.Join(thumbsDir, "out.jpg")
 
-	err := generateThumbnail("/nonexistent/image.png", outPath)
+	g := New(thumbsDir)
+	err := g.generateThumbnail("/nonexistent/image.png", outPath)
 	if err == nil {
 		t.Error("存在しないソースファイルなのにエラーにならなかった")
 	}
@@ -318,7 +320,8 @@ func TestGenerateThumbnailInvalidImage(t *testing.T) {
 	}
 
 	outPath := filepath.Join(thumbsDir, "out.jpg")
-	err := generateThumbnail(notAnImage, outPath)
+	g := New(thumbsDir)
+	err := g.generateThumbnail(notAnImage, outPath)
 	if err == nil {
 		t.Error("無効な画像ファイルなのにエラーにならなかった")
 	}
@@ -335,7 +338,8 @@ func TestGenerateThumbnailCreatesOutputDir(t *testing.T) {
 
 	// 存在しないネストしたディレクトリへ出力
 	outPath := filepath.Join(base, "not", "yet", "created", "out.jpg")
-	if err := generateThumbnail(src, outPath); err != nil {
+	g := New(base)
+	if err := g.generateThumbnail(src, outPath); err != nil {
 		t.Fatalf("generateThumbnail 失敗(出力先を自動作成すべき): %v", err)
 	}
 	if _, err := os.Stat(outPath); err != nil {
@@ -378,16 +382,18 @@ func TestRefreshSourceChangedToNonPriority(t *testing.T) {
 }
 
 // TestIsImageFile は isImageFile が画像拡張子を正しく識別することをテスト。
+// gif はデコード可能な候補として true(#54)。avif は KindByExt 上は image だが
+// Go 標準ライブラリでデコードできないため候補から除外する(thumb_formats_test.go 参照)。
 func TestIsImageFile(t *testing.T) {
 	imageFiles := []string{"test.jpg", "test.jpeg", "test.png", "test.webp",
-		"test.JPG", "test.PNG"}
+		"test.gif", "test.JPG", "test.PNG"}
 	for _, f := range imageFiles {
 		if !isImageFile(f) {
 			t.Errorf("isImageFile(%q) = false, want true", f)
 		}
 	}
 
-	nonImageFiles := []string{"test.mp3", "test.mp4", "test.txt", "test.gif", "test.bmp"}
+	nonImageFiles := []string{"test.mp3", "test.mp4", "test.txt", "test.avif", "test.bmp"}
 	for _, f := range nonImageFiles {
 		if isImageFile(f) {
 			t.Errorf("isImageFile(%q) = true, want false", f)
@@ -440,5 +446,83 @@ func TestSrcRecordWrittenOnSkip(t *testing.T) {
 	// .src 記録が書き込まれているはず
 	if _, statErr := os.Stat(srcRecord); statErr != nil {
 		t.Error(".src 記録が書き込まれていない(スキップ後でも記録されるべき)")
+	}
+}
+
+// TestGenerateThumbnailExceedsMaxPixels は maxPixels を小さく注入した Generator で、
+// 上限を超える画像(幅×高さ > maxPixels)がエラーになりサムネイルが生成されないことをテスト(#69)。
+// image.Decode で全ピクセルを展開する前に image.DecodeConfig のヘッダ情報だけで判定できているはず。
+func TestGenerateThumbnailExceedsMaxPixels(t *testing.T) {
+	dir := t.TempDir()
+	thumbsDir := t.TempDir()
+
+	// 100x100 = 10000px。maxPixels=100 を注入すれば上限超過になる
+	src := filepath.Join(dir, "big.png")
+	createTestImage(t, src, 100, 100)
+
+	outPath := filepath.Join(thumbsDir, "out.jpg")
+	g := New(thumbsDir)
+	g.maxPixels = 100
+
+	err := g.generateThumbnail(src, outPath)
+	if err == nil {
+		t.Fatal("上限超過の画像なのにエラーにならなかった")
+	}
+
+	if _, statErr := os.Stat(outPath); statErr == nil {
+		t.Error("上限超過なのにサムネイルファイルが生成されている")
+	}
+}
+
+// TestGenerateThumbnailWithinMaxPixels は maxPixels 上限内であれば従来どおり
+// サムネイルが生成されることをテスト(#69)。
+func TestGenerateThumbnailWithinMaxPixels(t *testing.T) {
+	dir := t.TempDir()
+	thumbsDir := t.TempDir()
+
+	src := filepath.Join(dir, "small.png")
+	createTestImage(t, src, 100, 100) // 10000px
+
+	outPath := filepath.Join(thumbsDir, "out.jpg")
+	g := New(thumbsDir)
+	g.maxPixels = 20000 // 10000px は上限内
+
+	if err := g.generateThumbnail(src, outPath); err != nil {
+		t.Fatalf("上限内の画像なのにエラーになった: %v", err)
+	}
+	if _, statErr := os.Stat(outPath); statErr != nil {
+		t.Errorf("上限内なのにサムネイルファイルが生成されていない: %v", statErr)
+	}
+}
+
+// TestRefreshExceedsMaxPixels は Refresh 経由でも上限超過がエラーとして伝播し、
+// サムネイルが作られないことをテスト(#69)。scanner 側はこのエラーを
+// 「スキップ+ログ」で処理する(scanner.go の thumbGen.Generate 呼び出し部を参照)。
+func TestRefreshExceedsMaxPixels(t *testing.T) {
+	dir := t.TempDir()
+	thumbsDir := t.TempDir()
+
+	createTestImage(t, filepath.Join(dir, "cover.png"), 100, 100)
+
+	g := New(thumbsDir)
+	g.maxPixels = 100
+
+	regen, outPath, err := g.Refresh(400, dir)
+	if err == nil {
+		t.Fatal("上限超過の画像なのに Refresh がエラーを返さなかった")
+	}
+	if regen {
+		t.Error("エラー時に regenerated=true になっている")
+	}
+	if outPath != "" {
+		t.Errorf("エラー時に outPath = %q, want 空文字", outPath)
+	}
+}
+
+// TestDefaultMaxPixels は New() が既定の maxPixels(100MP)を設定することをテスト(#69)。
+func TestDefaultMaxPixels(t *testing.T) {
+	g := New(t.TempDir())
+	if g.maxPixels != defaultMaxPixels {
+		t.Errorf("g.maxPixels = %d, want %d", g.maxPixels, defaultMaxPixels)
 	}
 }

@@ -42,6 +42,17 @@
   padding: 2px 6px;
   border-radius: 4px;
 }
+.favoriteBadge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #ffd54f;
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+}
 .badge {
   position: absolute;
   bottom: 6px;

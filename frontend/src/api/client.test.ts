@@ -12,6 +12,7 @@ import {
   fetchHistory,
   fetchTags,
   fetchTextFile,
+  fetchThumbnailRebuildStatus,
   fetchWork,
   fetchWorks,
   fileUrl,
@@ -294,20 +295,37 @@ describe('fetchEntries', () => {
 // ---- fetchTextFile ----
 
 describe('fetchTextFile', () => {
-  it('ファイル URL を GET してテキストを返す', async () => {
-    const fetchMockWithText = vi.fn().mockResolvedValue({
+  it('ファイル URL を GET してテキストを返す(UTF-8)', async () => {
+    const buf = new TextEncoder().encode('テキストの内容').buffer;
+    const fetchMockWithBuffer = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       statusText: 'OK',
       json: vi.fn().mockResolvedValue({}),
-      text: vi.fn().mockResolvedValue('テキストの内容'),
+      arrayBuffer: vi.fn().mockResolvedValue(buf),
     });
-    vi.stubGlobal('fetch', fetchMockWithText);
+    vi.stubGlobal('fetch', fetchMockWithBuffer);
 
     const result = await fetchTextFile(1, 'readme.txt');
-    const [url] = fetchMockWithText.mock.calls[0] as [string, ...unknown[]];
+    const [url] = fetchMockWithBuffer.mock.calls[0] as [string, ...unknown[]];
     expect(url).toBe('/api/works/1/file?path=readme.txt');
     expect(result).toBe('テキストの内容');
+  });
+
+  it('Shift_JIS のバイト列を正しくデコードする(issue #53)', async () => {
+    // "あ" の Shift_JIS バイト列
+    const buf = new Uint8Array([0x82, 0xa0]).buffer;
+    const fetchMockWithBuffer = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: vi.fn().mockResolvedValue({}),
+      arrayBuffer: vi.fn().mockResolvedValue(buf),
+    });
+    vi.stubGlobal('fetch', fetchMockWithBuffer);
+
+    const result = await fetchTextFile(1, 'sjis.txt');
+    expect(result).toBe('あ');
   });
 
   it('HTTP エラー時に ApiRequestError をスローする', async () => {
@@ -435,8 +453,8 @@ describe('cleanupTags', () => {
 // ---- rebuildThumbnails ----
 
 describe('rebuildThumbnails', () => {
-  it('POST /api/thumbnails/rebuild を呼ぶ', async () => {
-    fetchMock = mockFetchOk({ checked: 10, regenerated: 2 });
+  it('POST /api/thumbnails/rebuild を呼び、202 の進捗スナップショットを返す', async () => {
+    fetchMock = mockFetchOk({ running: true, checked: 0, regenerated: 0, total: 10 }, 202);
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await rebuildThumbnails();
@@ -445,7 +463,20 @@ describe('rebuildThumbnails', () => {
       headers: undefined,
       body: undefined,
     });
-    expect(result).toEqual({ checked: 10, regenerated: 2 });
+    expect(result).toEqual({ running: true, checked: 0, regenerated: 0, total: 10 });
+  });
+});
+
+// ---- fetchThumbnailRebuildStatus ----
+
+describe('fetchThumbnailRebuildStatus', () => {
+  it('GET /api/thumbnails/rebuild/status を呼ぶ', async () => {
+    fetchMock = mockFetchOk({ running: true, checked: 3, regenerated: 1, total: 10 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchThumbnailRebuildStatus();
+    expect(fetchMock).toHaveBeenCalledWith('/api/thumbnails/rebuild/status', { signal: undefined });
+    expect(result).toEqual({ running: true, checked: 3, regenerated: 1, total: 10 });
   });
 });
 

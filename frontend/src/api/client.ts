@@ -1,7 +1,9 @@
 // API クライアント。全レスポンス型は ./types に定義。
 // エラーは一律 {"error": "..."} なので ApiRequestError に正規化する。
+import { decodeTextBuffer } from '@/utils/textDecode';
 import type {
   CirclesResponse,
+  DeleteHistoryResult,
   EntriesResponse,
   HistoryParams,
   HistoryResponse,
@@ -12,7 +14,7 @@ import type {
   Tag,
   TagCleanupResult,
   TagsResponse,
-  ThumbnailRebuildResult,
+  ThumbnailRebuildStatus,
   ThumbnailRefreshResult,
   WorkDetail,
   WorksResponse,
@@ -75,6 +77,8 @@ export interface WorksQuery {
   series?: string;
   /** true のとき非表示作品のみを返す */
   hidden?: boolean;
+  /** true のときお気に入り作品のみを返す */
+  favorite?: boolean;
   sort?: SortKey;
   order?: SortOrder;
   page?: number;
@@ -94,6 +98,7 @@ export function fetchWorks(query: WorksQuery, signal?: AbortSignal): Promise<Wor
   if (query.page) params.set('page', String(query.page));
   if (query.limit) params.set('limit', String(query.limit));
   if (query.hidden) params.set('hidden', '1');
+  if (query.favorite) params.set('favorite', '1');
   const qs = params.toString();
   return getJson<WorksResponse>(`${API_BASE}/works${qs ? `?${qs}` : ''}`, signal);
 }
@@ -113,6 +118,11 @@ export function removeTag(workId: number, tagId: number): Promise<void> {
 /** 作品の非表示状態を変更する(PATCH /api/works/{id}) */
 export function setWorkHidden(workId: number, hidden: boolean): Promise<void> {
   return sendJson<void>('PATCH', `${API_BASE}/works/${workId}`, { hidden });
+}
+
+/** 作品のお気に入り状態を変更する(PATCH /api/works/{id}) */
+export function setWorkFavorite(workId: number, favorite: boolean): Promise<void> {
+  return sendJson<void>('PATCH', `${API_BASE}/works/${workId}`, { favorite });
 }
 
 // ---- タグ ----
@@ -164,7 +174,13 @@ export function thumbnailUrl(workId: number): string {
   return `${API_BASE}/works/${workId}/thumbnail`;
 }
 
-/** テキストファイルの中身を取得 */
+/**
+ * テキストファイルの中身を取得する。
+ *
+ * DLsite 同梱テキスト(readme.txt・台本 txt 等)は Shift_JIS(CP932)率が高いため、
+ * `res.text()`(常に UTF-8 前提)は使わず、バイト列から `decodeTextBuffer` で
+ * UTF-8 として妥当なら UTF-8、不正バイト列なら Shift_JIS とみなしてデコードする(issue #53)。
+ */
 export async function fetchTextFile(
   workId: number,
   path: string,
@@ -172,7 +188,8 @@ export async function fetchTextFile(
 ): Promise<string> {
   const res = await fetch(fileUrl(workId, path), { signal });
   if (!res.ok) return parseError(res);
-  return res.text();
+  const buf = await res.arrayBuffer();
+  return decodeTextBuffer(buf);
 }
 
 // ---- 再生履歴 ----
@@ -188,6 +205,15 @@ export function fetchHistory(params: HistoryParams = {}, signal?: AbortSignal): 
   if (params.sort) sp.set('sort', params.sort);
   if (params.order) sp.set('order', params.order);
   return getJson<HistoryResponse>(`${API_BASE}/history?${sp.toString()}`, signal);
+}
+
+/**
+ * 再生履歴を削除する(DELETE /api/history)。
+ * workId を指定するとその作品の履歴のみ、省略すると全件削除する。
+ */
+export function deleteHistory(workId?: number): Promise<DeleteHistoryResult> {
+  const qs = workId !== undefined ? `?work_id=${workId}` : '';
+  return sendJson<DeleteHistoryResult>('DELETE', `${API_BASE}/history${qs}`);
 }
 
 // ---- 管理 ----
@@ -209,9 +235,20 @@ export function cleanupTags(): Promise<TagCleanupResult> {
   return sendJson<TagCleanupResult>('POST', `${API_BASE}/tags/cleanup`);
 }
 
-/** 全作品のサムネイルを再生成チェックする(時間がかかる場合がある) */
-export function rebuildThumbnails(): Promise<ThumbnailRebuildResult> {
-  return sendJson<ThumbnailRebuildResult>('POST', `${API_BASE}/thumbnails/rebuild`);
+/**
+ * 全作品のサムネイル再生成ジョブを開始する(非同期。issue #55)。
+ * 202 Accepted とともに開始時点の進捗スナップショット(running=true, total 確定済み)
+ * を返す。完了までの進捗は fetchThumbnailRebuildStatus でポーリングする。
+ */
+export function rebuildThumbnails(): Promise<ThumbnailRebuildStatus> {
+  return sendJson<ThumbnailRebuildStatus>('POST', `${API_BASE}/thumbnails/rebuild`);
+}
+
+/** サムネイル一括再生成ジョブの進捗を取得する(ポーリング用) */
+export function fetchThumbnailRebuildStatus(
+  signal?: AbortSignal,
+): Promise<ThumbnailRebuildStatus> {
+  return getJson<ThumbnailRebuildStatus>(`${API_BASE}/thumbnails/rebuild/status`, signal);
 }
 
 /** 単一作品のサムネイルを再生成チェックする(fire-and-forget で利用) */

@@ -70,6 +70,8 @@ cd backend && CGO_ENABLED=0 go build -o stashpad ./cmd/stashpad
 
 ※ `backend/internal/web/dist/` は `.gitkeep` のみコミットされており、未コピーでもビルド・テストは通る(その場合 UI は 503 を返す)。
 
+※ PWA 対応として `frontend/public/manifest.webmanifest` と `frontend/public/icons/` を配信している(`npm run build` で dist にコピーされる)。`.webmanifest` は Go の `mime.TypeByExtension` に未登録のため、`backend/internal/web/web.go` で `application/manifest+json` を明示的に付与している(distroless には `/etc/mime.types` も無いため)。
+
 ## Docker
 
 ```bash
@@ -79,6 +81,12 @@ docker compose up -d
 ```
 
 Dockerfile は multi-stage(node → golang → distroless)で、`docker compose up` だけでフロントエンドのビルドと embed まで完結する。メディアは必ず **read-only**(`:ro`)でマウントすること。
+
+実行イメージは `gcr.io/distroless/static:nonroot`(uid/gid 65532)で**非 root 実行**になっている。`./data`(SQLite + サムネイルキャッシュ)はこの uid が書き込める権限にしておくこと(例: `chown 65532:65532 data`。chown できない環境では `chmod 777 data` でも動くが権限は緩くなる点に注意)。また、コンテナには `HEALTHCHECK`(`/stashpad -healthcheck` が `GET /api/healthz` を叩く)が組み込まれており、`docker compose ps` 等で稼働状態を確認できる。
+
+### k8s へのデプロイ
+
+本番運用で k8s を使う場合は [deploy/k8s/](deploy/k8s/)(Deployment / Service / PVC / Ingress 例)を参照。`kubectl apply -k deploy/k8s/` でまとめて適用できる。プレースホルダ(イメージ名・NFS server/path・Ingress ホスト名等)は [deploy/k8s/README.md](deploy/k8s/README.md) を参照して書き換えること。
 
 ## 運用上の注意
 

@@ -383,6 +383,37 @@ describe('FileBrowser 再生中ファイルのインジケータ (issue #31)', (
   });
 });
 
+describe('FileBrowser fetch 失敗時の再試行導線 (issue #70)', () => {
+  beforeEach(() => {
+    // 呼び出し回数のアサーションのため、前のテストの履歴をクリアする
+    // (実装のモック関数自体は残す。mockClear は履歴のみ消す)
+    vi.mocked(fetchEntries).mockClear();
+  });
+
+  it('fetch 失敗でエラーメッセージと再試行ボタンが表示される', async () => {
+    vi.mocked(fetchEntries).mockRejectedValueOnce(new Error('エントリ取得失敗'));
+
+    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+
+    await screen.findByText('エントリ取得失敗');
+    expect(screen.getByRole('button', { name: '再試行' })).toBeInTheDocument();
+  });
+
+  it('再試行クリックで再 fetch され、成功すると一覧表示に戻る', async () => {
+    // 1 回目は失敗、2 回目以降は beforeEach の mockResolvedValue(mockEntries) が使われる
+    vi.mocked(fetchEntries).mockRejectedValueOnce(new Error('エントリ取得失敗'));
+
+    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+
+    await screen.findByText('エントリ取得失敗');
+    fireEvent.click(screen.getByRole('button', { name: '再試行' }));
+
+    await screen.findByText('track01.mp3');
+    expect(vi.mocked(fetchEntries)).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('エントリ取得失敗')).toBeNull();
+  });
+});
+
 describe('FileBrowser 行本体の挙動が維持される', () => {
   it('audio 行の行本体クリックは startFromEntries を呼ぶ(openEntry 維持)', async () => {
     await renderAndWait(1, 'テスト作品');

@@ -239,6 +239,164 @@ func TestBuildColumnIndex(t *testing.T) {
 	}
 }
 
+// TestImportPreservesManuallyEditedTitleCircle は manually_edited=1 の既存作品を
+// 再インポートしても title / circle が保持され、その他フィールドとタグは
+// 通常どおり更新されることをテスト(issue #64 案 A)。
+func TestImportPreservesManuallyEditedTitleCircle(t *testing.T) {
+	db := openTestDB(t)
+
+	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
+RJ600001,CSVタイトル,CSVシリーズ,CSVサークル,2026/01/01,ボイス・ASMR,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
+`
+
+	// 1回目インポートで作品を作成
+	if _, err := Import(db, strings.NewReader(csvData)); err != nil {
+		t.Fatalf("1回目 Import 失敗: %v", err)
+	}
+
+	var workID int64
+	if err := db.QueryRow("SELECT id FROM works WHERE rj_number='RJ600001'").Scan(&workID); err != nil {
+		t.Fatal(err)
+	}
+
+	// 手動編集をシミュレート: title/circle を書き換えて manually_edited=1 を立てる
+	if _, err := db.Exec(
+		"UPDATE works SET title='手動編集タイトル', circle='手動編集サークル', manually_edited=1 WHERE id=?",
+		workID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2回目インポート: series_name などを変更した CSV を再インポート
+	csvData2 := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
+RJ600001,CSVタイトル2,CSVシリーズ2,CSVサークル2,2026/02/02,ボイス・ASMR,ASMR,ボイス・ASMR,MP3,2GB,,R-15,,,,,
+`
+	res2, err := Import(db, strings.NewReader(csvData2))
+	if err != nil {
+		t.Fatalf("2回目 Import 失敗: %v", err)
+	}
+	if res2.Updated != 1 {
+		t.Errorf("2回目 Updated = %d, want 1", res2.Updated)
+	}
+
+	var title, circle, seriesName, fileSizeText, ageRating string
+	if err := db.QueryRow(
+		"SELECT title, circle, series_name, file_size_text, age_rating FROM works WHERE id=?", workID,
+	).Scan(&title, &circle, &seriesName, &fileSizeText, &ageRating); err != nil {
+		t.Fatal(err)
+	}
+
+	// title/circle は手動編集の値が保持される
+	if title != "手動編集タイトル" {
+		t.Errorf("title = %q, want 手動編集タイトル(手動編集が上書きされた)", title)
+	}
+	if circle != "手動編集サークル" {
+		t.Errorf("circle = %q, want 手動編集サークル(手動編集が上書きされた)", circle)
+	}
+
+	// その他フィールドは CSV の内容で更新される
+	if seriesName != "CSVシリーズ2" {
+		t.Errorf("series_name = %q, want CSVシリーズ2(更新されるべき)", seriesName)
+	}
+	if fileSizeText != "2GB" {
+		t.Errorf("file_size_text = %q, want 2GB(更新されるべき)", fileSizeText)
+	}
+	if ageRating != "R-15" {
+		t.Errorf("age_rating = %q, want R-15(更新されるべき)", ageRating)
+	}
+}
+
+// TestImportContinuesAfterFieldCountMismatch は CSV の途中行が列数不一致でも、
+// その行だけがエラーとして収集され、残りの行のインポートは継続することをテストする
+// (issue #70。以前は csv.Reader.ReadAll() を使っていたため、1行でも列数が
+// 合わない行があると CSV 全体の読み込みがそこで失敗し、後続行が一切取り込まれなかった)。
+func TestImportContinuesAfterFieldCountMismatch(t *testing.T) {
+	db := openTestDB(t)
+
+	// 2行目(RJ000002)だけ列が1つ多い(列数不一致)。1・3行目は正常。
+	csvData := "rj_number,title\n" +
+		"RJ000001,Good1\n" +
+		"RJ000002,Good2,Extra\n" +
+		"RJ000003,Good3\n"
+
+	res, err := Import(db, strings.NewReader(csvData))
+	if err != nil {
+		t.Fatalf("Import 自体はエラーを返すべきではない: %v", err)
+	}
+
+	// 正常な2行(1・3行目)は取り込まれる
+	if res.Created != 2 {
+		t.Errorf("Created = %d, want 2", res.Created)
+	}
+	// 不正行1件がエラーとして収集される
+	if len(res.Errors) != 1 {
+		t.Fatalf("Errors 数 = %d, want 1; errors=%v", len(res.Errors), res.Errors)
+	}
+	if !strings.Contains(res.Errors[0], "行3") {
+		t.Errorf("エラーメッセージに行番号3が含まれない: %q", res.Errors[0])
+	}
+
+	// 正常行は実際に DB に反映されている
+	for _, rj := range []string{"RJ000001", "RJ000003"} {
+		var exists bool
+		if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE rj_number=?)", rj).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Errorf("%s が取り込まれていない", rj)
+		}
+	}
+	// 不正行 RJ000002 は取り込まれない
+	var badExists bool
+	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE rj_number='RJ000002')").Scan(&badExists); err != nil {
+		t.Fatal(err)
+	}
+	if badExists {
+		t.Error("列数不一致行 RJ000002 が取り込まれてしまった")
+	}
+}
+
+// TestImportLinkedCountNotInflatedOnReimport は、既にCSVデータが結び付いている
+// 作品を再度インポートしても Linked が水増しされないことをテストする(issue #70)。
+// 1回目のインポートで「スキャン済み(root_path 有り、CSV データ無し)」作品に
+// CSV が初めて結び付くので Linked=1。2回目は既に結び付いているので Linked=0 になるべき。
+func TestImportLinkedCountNotInflatedOnReimport(t *testing.T) {
+	db := openTestDB(t)
+
+	// root_path が設定されている(スキャン済み、CSV データ無し)works を事前に登録
+	if _, err := db.Exec(
+		`INSERT INTO works (rj_number, title, root_path)
+		 VALUES ('RJ777778', 'スキャン済み2', '/media/RJ777778_作品')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
+RJ777778,CSVのタイトル,,,,,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
+`
+
+	res1, err := Import(db, strings.NewReader(csvData))
+	if err != nil {
+		t.Fatalf("1回目 Import 失敗: %v", err)
+	}
+	if res1.Linked != 1 {
+		t.Errorf("1回目 Linked = %d, want 1(初めて CSV と結び付いた)", res1.Linked)
+	}
+
+	// 2回目: 同じ CSV を再インポート。root_path は変わっていないが、既に
+	// CSV データが入っているので「新たにリンクされた」わけではない。
+	res2, err := Import(db, strings.NewReader(csvData))
+	if err != nil {
+		t.Fatalf("2回目 Import 失敗: %v", err)
+	}
+	if res2.Updated != 1 {
+		t.Errorf("2回目 Updated = %d, want 1", res2.Updated)
+	}
+	if res2.Linked != 0 {
+		t.Errorf("2回目 Linked = %d, want 0(水増し: 既にリンク済みのはずなのに再カウントされた)", res2.Linked)
+	}
+}
+
 // TestImportMultipleTagsReimport はタグが多い作品を 2 回インポートしても
 // タグ件数が正しいことをテスト(二重リンクが起きないことの確認)。
 func TestImportMultipleTagsReimport(t *testing.T) {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -180,27 +181,45 @@ func TestGetWorkFullMetadata(t *testing.T) {
 	}
 }
 
-// NULL フィールドはキー自体が省略されること(setIfValid の挙動)
-func TestGetWorkOmitsNullFields(t *testing.T) {
+// NULL フィールドはキーを省略せず明示的に null で返ること(issue #57)。
+// 以前は setIfValid でキー自体を省略していたが、フロントの `string | null` 型定義との
+// 契約を一致させるため typed struct + 明示 null に変更した。
+func TestGetWorkNullFieldsAreExplicitNull(t *testing.T) {
 	h, _, id := newTestServer(t)
 	// newTestServer は circle/series 等を設定していない
 	w := doGet(t, h, urlf("/api/works/%d", id))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
+
+	// 生 JSON 文字列としても明示 null になっていること(キー省略の再発を検出しやすくする)。
+	for _, needle := range []string{
+		`"circle":null`, `"series_name":null`, `"purchase_date":null`,
+		`"work_type":null`, `"age_rating":null`, `"file_format":null`,
+		`"file_size_text":null`, `"thumbnail_url":null`,
+	} {
+		if !strings.Contains(w.Body.String(), needle) {
+			t.Errorf("レスポンスに %q が含まれない: %s", needle, w.Body.String())
+		}
+	}
+
 	var raw map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"circle", "series_name", "purchase_date",
 		"work_type", "age_rating", "file_format", "file_size_text", "thumbnail_url"} {
-		if _, ok := raw[key]; ok {
-			t.Errorf("NULL フィールド %q がキーとして存在する", key)
+		v, ok := raw[key]
+		if !ok {
+			t.Errorf("NULL フィールド %q のキー自体が省略された", key)
+		}
+		if v != nil {
+			t.Errorf("NULL フィールド %q = %v, want null", key, v)
 		}
 	}
-	// rj_number は設定済みなので存在する
-	if _, ok := raw["rj_number"]; !ok {
-		t.Error("rj_number が省略された")
+	// rj_number は設定済みなので値ありで存在する
+	if v, ok := raw["rj_number"]; !ok || v == nil {
+		t.Error("rj_number が省略/null になった")
 	}
 }
 
@@ -324,6 +343,167 @@ func TestPatchWorkBadJSONAndNotFound(t *testing.T) {
 	}
 }
 
+// PATCH title を TrimSpace 後に空文字になる場合は 400(作品名を空にできる
+// 現状バグの修正、issue #63)。
+func TestPatchWorkTitleEmptyRejected(t *testing.T) {
+	h, database, id := newTestServer(t)
+
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":"   "}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("空白のみ title status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+	w = doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":""}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("空文字 title status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+
+	// title が変更されていないこと
+	var title string
+	if err := database.QueryRow("SELECT title FROM works WHERE id=?", id).Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if title != "テスト作品" {
+		t.Errorf("拒否されたはずの title 更新が反映された: %q", title)
+	}
+}
+
+// PATCH title の前後の空白が TrimSpace されて保存されること。
+func TestPatchWorkTitleTrimmed(t *testing.T) {
+	h, database, id := newTestServer(t)
+
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":"  新タイトル  "}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var title string
+	if err := database.QueryRow("SELECT title FROM works WHERE id=?", id).Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if title != "新タイトル" {
+		t.Errorf("title = %q, want trim 済みの \"新タイトル\"", title)
+	}
+}
+
+// PATCH title が 200 rune を超える場合は 400。
+func TestPatchWorkTitleTooLong(t *testing.T) {
+	h, _, id := newTestServer(t)
+	long := strings.Repeat("あ", 201)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":"`+long+`"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("201文字 title status = %d, want 400", w.Code)
+	}
+}
+
+// PATCH circle に空文字を指定すると「サークル情報の削除」として NULL になること
+// (判断: circle は元々 NULL 許容のフィールドで、CSV 側も空文字を nullIfEmpty で
+// NULL 化している。フロントに既存の編集 UI はまだ無いため、既存のドメイン表現
+// 〈「サークル無し」= NULL〉に揃えるのが自然と判断した)。
+// 削除であっても Circle キー自体は非 nil で PATCH されているので manually_edited は立つ
+// (CSV 再インポートで復元されないようにする、issue #64 の意図を維持)。
+func TestPatchWorkCircleEmptyClears(t *testing.T) {
+	h, database, id := newTestServer(t)
+	if _, err := database.Exec("UPDATE works SET circle='元サークル' WHERE id=?", id); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"circle":""}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var circle sql.NullString
+	var manuallyEdited int
+	if err := database.QueryRow("SELECT circle, manually_edited FROM works WHERE id=?", id).
+		Scan(&circle, &manuallyEdited); err != nil {
+		t.Fatal(err)
+	}
+	if circle.Valid {
+		t.Errorf("circle が NULL になっていない: %q", circle.String)
+	}
+	if manuallyEdited != 1 {
+		t.Errorf("manually_edited = %d, want 1(circle 削除も手動編集扱い)", manuallyEdited)
+	}
+}
+
+// PATCH circle が 200 rune を超える場合は 400。
+func TestPatchWorkCircleTooLong(t *testing.T) {
+	h, _, id := newTestServer(t)
+	long := strings.Repeat("あ", 201)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"circle":"`+long+`"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("201文字 circle status = %d, want 400", w.Code)
+	}
+}
+
+// PATCH title で manually_edited が立つこと(issue #64 案 A)。
+func TestPatchWorkTitleSetsManuallyEdited(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":"新タイトル"}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var manuallyEdited int
+	if err := database.QueryRow("SELECT manually_edited FROM works WHERE id=?", id).
+		Scan(&manuallyEdited); err != nil {
+		t.Fatal(err)
+	}
+	if manuallyEdited != 1 {
+		t.Errorf("manually_edited = %d, want 1(title PATCH で立つべき)", manuallyEdited)
+	}
+}
+
+// PATCH circle でも manually_edited が立つこと。
+func TestPatchWorkCircleSetsManuallyEdited(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"circle":"新サークル"}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var manuallyEdited int
+	if err := database.QueryRow("SELECT manually_edited FROM works WHERE id=?", id).
+		Scan(&manuallyEdited); err != nil {
+		t.Fatal(err)
+	}
+	if manuallyEdited != 1 {
+		t.Errorf("manually_edited = %d, want 1(circle PATCH で立つべき)", manuallyEdited)
+	}
+}
+
+// PATCH hidden のみでは manually_edited が立たないこと(title/circle 以外の
+// PATCH は「手動編集」として扱わない)。
+func TestPatchWorkHiddenOnlyDoesNotSetManuallyEdited(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"hidden":true}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var manuallyEdited int
+	if err := database.QueryRow("SELECT manually_edited FROM works WHERE id=?", id).
+		Scan(&manuallyEdited); err != nil {
+		t.Fatal(err)
+	}
+	if manuallyEdited != 0 {
+		t.Errorf("manually_edited = %d, want 0(hidden PATCH のみでは立たないべき)", manuallyEdited)
+	}
+}
+
+// PATCH favorite のみでは manually_edited が立たないこと。
+func TestPatchWorkFavoriteOnlyDoesNotSetManuallyEdited(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"favorite":true}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var manuallyEdited int
+	if err := database.QueryRow("SELECT manually_edited FROM works WHERE id=?", id).
+		Scan(&manuallyEdited); err != nil {
+		t.Fatal(err)
+	}
+	if manuallyEdited != 0 {
+		t.Errorf("manually_edited = %d, want 0(favorite PATCH のみでは立たないべき)", manuallyEdited)
+	}
+}
+
 // ---- POST /api/works/{id}/tags & DELETE --------------------------------------
 
 func TestAddTagCreateAndUpsert(t *testing.T) {
@@ -436,6 +616,50 @@ func TestAddTagErrors(t *testing.T) {
 	}
 }
 
+// name が空白のみの場合も TrimSpace 後に空 → 400(issue #63)。
+func TestAddTagWhitespaceOnlyRejected(t *testing.T) {
+	h, _, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/tags", id), `{"name":"   "}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("空白のみ name status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+}
+
+// name の前後の空白が TrimSpace されて登録されること。
+func TestAddTagNameTrimmed(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/tags", id), `{"name":"  タグ  "}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Name != "タグ" {
+		t.Errorf("レスポンスの name = %q, want trim 済みの \"タグ\"", resp.Name)
+	}
+	var cnt int
+	if err := database.QueryRow("SELECT COUNT(*) FROM tags WHERE name='タグ'").Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 1 {
+		t.Errorf("trim 済み名でタグが登録されていない: count = %d", cnt)
+	}
+}
+
+// name が 101 文字(rune 数)を超える場合は 400。
+func TestAddTagNameTooLong(t *testing.T) {
+	h, _, id := newTestServer(t)
+	long := strings.Repeat("あ", 101)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/tags", id), `{"name":"`+long+`"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("101文字 name status = %d, want 400", w.Code)
+	}
+}
+
 func TestDeleteTag(t *testing.T) {
 	h, database, id := newTestServer(t)
 
@@ -486,6 +710,45 @@ func TestDeleteTagBadID(t *testing.T) {
 }
 
 // ---- GET /api/works 未カバー分岐 ---------------------------------------------
+
+// GET /api/works の items も NULL フィールド(circle/age_rating/thumbnail_url)を
+// 明示的な null で返すこと(キー省略ではない。issue #57)。
+// newTestServer が作る作品は circle/age_rating が NULL、thumbnail_path 未設定。
+func TestListWorksNullFieldsAreExplicitNull(t *testing.T) {
+	h, _, _ := newTestServer(t)
+
+	w := doGet(t, h, "/api/works")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	for _, needle := range []string{`"circle":null`, `"age_rating":null`, `"thumbnail_url":null`} {
+		if !strings.Contains(w.Body.String(), needle) {
+			t.Errorf("レスポンスに %q が含まれない: %s", needle, w.Body.String())
+		}
+	}
+
+	var body struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("items 数 = %d, want 1", len(body.Items))
+	}
+	for _, key := range []string{"circle", "age_rating", "thumbnail_url"} {
+		v, ok := body.Items[0][key]
+		if !ok {
+			t.Errorf("NULL フィールド %q のキー自体が省略された", key)
+		}
+		if v != nil {
+			t.Errorf("NULL フィールド %q = %v, want null", key, v)
+		}
+	}
+	if v, ok := body.Items[0]["rj_number"]; !ok || v == nil {
+		t.Error("rj_number が省略/null になった")
+	}
+}
 
 // q キーワード検索が title / circle / rj_number それぞれにヒットすること
 func TestListWorksKeyword(t *testing.T) {
@@ -814,6 +1077,69 @@ func TestRecordPlayErrors(t *testing.T) {
 	}
 }
 
+// path がパストラバーサル(../)の場合、media.ResolvePath の ErrForbidden を
+// 400 にマップして記録を拒否すること(issue #63。ブラウズ系の 403 とは異なり、
+// 再生記録 API では「不正な入力」として 400 で返す設計とした)。
+func TestRecordPlayTraversalPathRejected(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/plays", id), `{"path":"../../etc/passwd"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("traversal path status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+
+	// 履歴に記録されていないこと
+	var cnt int
+	if err := database.QueryRow("SELECT COUNT(*) FROM play_history WHERE work_id=?", id).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 0 {
+		t.Errorf("拒否されたはずの再生が記録された: count = %d", cnt)
+	}
+}
+
+// path が作品フォルダ内に存在しない場合、media.ResolvePath の ErrNotFound を
+// 404 にマップして記録を拒否すること。
+func TestRecordPlayNonexistentPathRejected(t *testing.T) {
+	h, database, id := newTestServer(t)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/plays", id), `{"path":"mp3/nonexistent.mp3"}`)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("存在しない path status = %d, want 404, body = %s", w.Code, w.Body.String())
+	}
+	var cnt int
+	if err := database.QueryRow("SELECT COUNT(*) FROM play_history WHERE work_id=?", id).Scan(&cnt); err != nil {
+		t.Fatal(err)
+	}
+	if cnt != 0 {
+		t.Errorf("拒否されたはずの再生が記録された: count = %d", cnt)
+	}
+}
+
+// path が長すぎる場合(1000 byte 超)は 400。
+func TestRecordPlayPathTooLong(t *testing.T) {
+	h, _, id := newTestServer(t)
+	long := strings.Repeat("a", 1001)
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/plays", id), `{"path":"`+long+`"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("長すぎる path status = %d, want 400", w.Code)
+	}
+}
+
+// root_path が NULL(フォルダ未登録)の作品への再生記録は 404 で拒否されること
+// (パスの実在を検証できないため)。
+func TestRecordPlayNoRootFolderRejected(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	res, err := database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ690000', 'フォルダなし')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+
+	w := doJSON(t, h, http.MethodPost, urlf("/api/works/%d/plays", id), `{"path":"a.mp3"}`)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("root_path NULL status = %d, want 404, body = %s", w.Code, w.Body.String())
+	}
+}
+
 // ---- history 集計・順序・ページパラメータ ------------------------------------
 
 func TestHistoryAggregateAndOrder(t *testing.T) {
@@ -876,6 +1202,38 @@ func TestHistoryThumbnailURL(t *testing.T) {
 	}
 }
 
+// history の work にサムネが無い場合、thumbnail_url はキー省略ではなく明示的な
+// null で返ること(issue #57)。
+func TestHistoryThumbnailURLExplicitNullWhenMissing(t *testing.T) {
+	h, database, id := newTestServer(t)
+	// newTestServer の作品は thumbnail_path 未設定
+	database.Exec("INSERT INTO play_history (work_id, file_path) VALUES (?, 'a.mp3')", id)
+
+	w := doGet(t, h, "/api/history")
+	if !strings.Contains(w.Body.String(), `"thumbnail_url":null`) {
+		t.Errorf("thumbnail_url が明示 null になっていない: %s", w.Body.String())
+	}
+
+	var body struct {
+		Items []struct {
+			Work map[string]any `json:"work"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("items 数 = %d, want 1", len(body.Items))
+	}
+	v, ok := body.Items[0].Work["thumbnail_url"]
+	if !ok {
+		t.Error("thumbnail_url のキー自体が省略された")
+	}
+	if v != nil {
+		t.Errorf("thumbnail_url = %v, want null", v)
+	}
+}
+
 // ---- GET /api/tags の category / q フィルタ -----------------------------------
 
 func TestListTagsFilters(t *testing.T) {
@@ -903,6 +1261,66 @@ func TestListTagsFilters(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &body)
 	if len(body.Items) != 1 || body.Items[0].Name != "声優太郎" {
 		t.Errorf("q=声優 = %+v", body.Items)
+	}
+}
+
+// q に含まれる % がワイルドカード展開されずリテラル一致のみヒットすることを検証する(issue #50)。
+func TestListTagsLikeSpecialChars(t *testing.T) {
+	h, database, id := newTestServer(t)
+	database.Exec(`INSERT INTO tags (name, category) VALUES
+		('100%OFFタグ','custom'), ('100XOFFタグ','custom')`)
+	database.Exec("INSERT INTO work_tags (work_id, tag_id) SELECT ?, id FROM tags", id)
+
+	w := doGet(t, h, "/api/tags?q="+url.QueryEscape("100%OFF"))
+	var body struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 1 || body.Items[0].Name != "100%OFFタグ" {
+		t.Errorf("q=100%%OFF items = %+v, want [100%%OFFタグ]", body.Items)
+	}
+}
+
+// ?limit= で件数が絞られ、未指定なら全件返ること(issue #38-3)。
+func TestListTagsLimit(t *testing.T) {
+	h, database, id := newTestServer(t)
+	database.Exec(`INSERT INTO tags (name, category) VALUES
+		('あ','custom'), ('い','custom'), ('う','custom')`)
+	database.Exec("INSERT INTO work_tags (work_id, tag_id) SELECT ?, id FROM tags", id)
+
+	// 未指定 → 全件(3件)
+	w := doGet(t, h, "/api/tags")
+	var body struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 3 {
+		t.Fatalf("未指定 items 数 = %d, want 3", len(body.Items))
+	}
+
+	// limit=1 → 1件のみ
+	w = doGet(t, h, "/api/tags?limit=1")
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 1 {
+		t.Errorf("limit=1 items 数 = %d, want 1", len(body.Items))
+	}
+
+	// limit=0 は 1 にクランプされる
+	w = doGet(t, h, "/api/tags?limit=0")
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 1 {
+		t.Errorf("limit=0 items 数 = %d, want 1(下限クランプ)", len(body.Items))
+	}
+
+	// limit=9999 は 1000 にクランプされる(が母数が3件なので3件のまま)
+	w = doGet(t, h, "/api/tags?limit=9999")
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 3 {
+		t.Errorf("limit=9999 items 数 = %d, want 3(上限クランプでも母数までしか出ない)", len(body.Items))
 	}
 }
 
@@ -966,5 +1384,232 @@ func TestHistoryPageParam(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &body)
 	if body.Page != 3 {
 		t.Errorf("page=3 = %d, want 3", body.Page)
+	}
+}
+
+// ---- お気に入り機能(issue #72) ------------------------------------------------
+
+// PATCH favorite=true でお気に入り登録(favorited_at が入る)、
+// favorite=false で解除(NULL に戻る)こと。hidden と同じ流儀。
+func TestPatchWorkFavorite(t *testing.T) {
+	h, database, id := newTestServer(t)
+
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"favorite":true}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("favorite=true status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var favoritedAt sql.NullString
+	if err := database.QueryRow("SELECT favorited_at FROM works WHERE id=?", id).Scan(&favoritedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !favoritedAt.Valid || favoritedAt.String == "" {
+		t.Errorf("favorited_at がセットされていない: %+v", favoritedAt)
+	}
+
+	// GET でも favorited: true が返る
+	getResp := doGet(t, h, urlf("/api/works/%d", id))
+	var getBody struct {
+		Favorited bool `json:"favorited"`
+	}
+	json.Unmarshal(getResp.Body.Bytes(), &getBody)
+	if !getBody.Favorited {
+		t.Error("GET /api/works/{id} の favorited が true にならない")
+	}
+
+	// 解除
+	w = doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"favorite":false}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("favorite=false status = %d", w.Code)
+	}
+	favoritedAt = sql.NullString{}
+	if err := database.QueryRow("SELECT favorited_at FROM works WHERE id=?", id).Scan(&favoritedAt); err != nil {
+		t.Fatal(err)
+	}
+	if favoritedAt.Valid {
+		t.Errorf("favorite=false で favorited_at が NULL に戻っていない: %v", favoritedAt.String)
+	}
+}
+
+// favorite キーを含まない PATCH では favorited_at が変化しないこと
+func TestPatchWorkFavoriteUntouchedWhenOmitted(t *testing.T) {
+	h, database, id := newTestServer(t)
+	doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"favorite":true}`)
+
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"title":"新タイトル"}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var favoritedAt sql.NullString
+	if err := database.QueryRow("SELECT favorited_at FROM works WHERE id=?", id).Scan(&favoritedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !favoritedAt.Valid {
+		t.Error("favorite を指定しない PATCH で favorited_at が消えた")
+	}
+}
+
+// GET /api/works?favorite=1 でお気に入りのみが返ること。
+// 一覧・詳細双方のレスポンスに favorited フィールドが付くことも合わせて確認する。
+func TestListWorksFavoriteFilterAndField(t *testing.T) {
+	h, database, id := newTestServer(t)
+	res, err := database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ750001', '非お気に入り')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, _ := res.LastInsertId()
+
+	doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"favorite":true}`)
+
+	// favorite=1 → お気に入りのみ
+	w := doGet(t, h, "/api/works?favorite=1")
+	var body struct {
+		Total int `json:"total"`
+		Items []struct {
+			ID        int64 `json:"id"`
+			Favorited bool  `json:"favorited"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Total != 1 || len(body.Items) != 1 || body.Items[0].ID != id {
+		t.Errorf("favorite=1: total=%d items=%+v, want id=%d のみ", body.Total, body.Items, id)
+	}
+	if !body.Items[0].Favorited {
+		t.Error("一覧の favorited が true にならない")
+	}
+
+	// 未指定 → 両方(2件)返り、favorited フィールドがそれぞれ正しい
+	w = doGet(t, h, "/api/works")
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body.Total != 2 {
+		t.Errorf("未指定 total = %d, want 2", body.Total)
+	}
+	for _, item := range body.Items {
+		want := item.ID == id
+		if item.Favorited != want {
+			t.Errorf("id=%d favorited=%v, want %v", item.ID, item.Favorited, want)
+		}
+	}
+	_ = otherID
+}
+
+// sort=favorited_at: お気に入り登録順(新しい順)で並び、非お気に入りは末尾に来ること
+func TestListWorksSortFavoritedAt(t *testing.T) {
+	h, database, id := newTestServer(t)
+	res, _ := database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ760001', '後で登録')")
+	id2, _ := res.LastInsertId()
+	res, _ = database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ760002', '未登録')")
+	id3, _ := res.LastInsertId()
+
+	// id を先に、id2 を後にお気に入り登録(favorited_at の値を明示的にずらす)
+	database.Exec("UPDATE works SET favorited_at='2026-01-01 00:00:00' WHERE id=?", id)
+	database.Exec("UPDATE works SET favorited_at='2026-01-02 00:00:00' WHERE id=?", id2)
+
+	w := doGet(t, h, "/api/works?sort=favorited_at&order=desc")
+	var body struct {
+		Items []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 3 {
+		t.Fatalf("items 数 = %d, want 3", len(body.Items))
+	}
+	if body.Items[0].ID != id2 || body.Items[1].ID != id {
+		t.Errorf("お気に入り登録順(新しい順) = %v, want [%d, %d, ...]", body.Items, id2, id)
+	}
+	// 非お気に入り(id3)は末尾
+	if body.Items[2].ID != id3 {
+		t.Errorf("非お気に入りが末尾に来ていない: %v, want 末尾 %d", body.Items, id3)
+	}
+}
+
+// sort=last_played: 最近再生した順で並び、未再生は末尾に来ること(order 指定に関わらず)
+func TestListWorksSortLastPlayed(t *testing.T) {
+	h, database, id := newTestServer(t)
+	res, _ := database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ770001', '再生済み')")
+	id2, _ := res.LastInsertId()
+	res, _ = database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ770002', '未再生')")
+	id3, _ := res.LastInsertId()
+
+	database.Exec("INSERT INTO play_history (work_id, file_path, played_at) VALUES (?, 'a.mp3', '2026-01-01 00:00:00')", id)
+	database.Exec("INSERT INTO play_history (work_id, file_path, played_at) VALUES (?, 'b.mp3', '2026-01-05 00:00:00')", id2)
+
+	for _, order := range []string{"desc", "asc"} {
+		w := doGet(t, h, "/api/works?sort=last_played&order="+order)
+		var body struct {
+			Items []struct {
+				ID int64 `json:"id"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Items) != 3 {
+			t.Fatalf("order=%s items 数 = %d, want 3", order, len(body.Items))
+		}
+		// 未再生(id3)は asc/desc どちらでも末尾
+		if body.Items[2].ID != id3 {
+			t.Errorf("order=%s: 未再生が末尾に来ていない: %v, want 末尾 %d", order, body.Items, id3)
+		}
+	}
+
+	// desc では直近再生(id2)が先頭
+	w := doGet(t, h, "/api/works?sort=last_played&order=desc")
+	var body struct {
+		Items []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body.Items[0].ID != id2 {
+		t.Errorf("last_played desc 先頭 = %d, want %d", body.Items[0].ID, id2)
+	}
+}
+
+// sort=play_count: 再生回数順で並び、未再生(0回)は末尾に来ること(order 指定に関わらず)
+func TestListWorksSortPlayCount(t *testing.T) {
+	h, database, id := newTestServer(t)
+	res, _ := database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ780001', 'よく聴く')")
+	id2, _ := res.LastInsertId()
+	res, _ = database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ780002', '未再生')")
+	id3, _ := res.LastInsertId()
+
+	// id: 1回, id2: 3回
+	database.Exec("INSERT INTO play_history (work_id, file_path) VALUES (?, 'a.mp3')", id)
+	database.Exec("INSERT INTO play_history (work_id, file_path) VALUES (?, 'a.mp3'), (?, 'a.mp3'), (?, 'a.mp3')", id2, id2, id2)
+
+	for _, order := range []string{"desc", "asc"} {
+		w := doGet(t, h, "/api/works?sort=play_count&order="+order)
+		var body struct {
+			Items []struct {
+				ID int64 `json:"id"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Items) != 3 {
+			t.Fatalf("order=%s items 数 = %d, want 3", order, len(body.Items))
+		}
+		// 未再生(id3)は asc/desc どちらでも末尾
+		if body.Items[2].ID != id3 {
+			t.Errorf("order=%s: 未再生が末尾に来ていない: %v, want 末尾 %d", order, body.Items, id3)
+		}
+	}
+
+	// desc では再生回数最多(id2)が先頭
+	w := doGet(t, h, "/api/works?sort=play_count&order=desc")
+	var body struct {
+		Items []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body.Items[0].ID != id2 {
+		t.Errorf("play_count desc 先頭 = %d, want %d", body.Items[0].ID, id2)
 	}
 }

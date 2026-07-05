@@ -244,6 +244,27 @@ func TestOpenJournalModeWAL(t *testing.T) {
 	}
 }
 
+// TestOpenSynchronousNormal は synchronous PRAGMA が NORMAL(=1)になっていることをテスト。
+// WAL モードでは NORMAL で十分な耐久性があり、FULL より fsync が減る(issue #70)。
+func TestOpenSynchronousNormal(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open 失敗: %v", err)
+	}
+	defer db.Close()
+
+	var mode int
+	if err := db.QueryRow("PRAGMA synchronous").Scan(&mode); err != nil {
+		t.Fatalf("PRAGMA synchronous 取得失敗: %v", err)
+	}
+	if mode != 1 { // 0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA
+		t.Errorf("synchronous = %d, want 1 (NORMAL)", mode)
+	}
+}
+
 // TestOpenCreatesWorksIndexes は Open 後に migration 003 で定義されたインデックスが作られていることをテスト。
 func TestOpenCreatesWorksIndexes(t *testing.T) {
 	dir := t.TempDir()

@@ -1,0 +1,24 @@
+# 既存 Ingress Controller への組み込み例。ingressClassName・host はプレースホルダ
+# なのでクラスタの構成に合わせて書き換えること(README.md 参照)。
+# TLS は Ingress Controller / 証明書管理側で終端する想定(design.md §9)。
+# stashPad 自体は認証なし・HTTP のままなので、外部公開せず VPN 等の
+# 信頼できるネットワーク経由でのみ到達できるようにすること。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: stashpad
+  labels:
+    app: stashpad
+spec:
+  ingressClassName: nginx # プレースホルダ。クラスタの IngressClass に合わせる
+  rules:
+    - host: stashpad.example.internal # プレースホルダ。README.md 参照
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: stashpad
+                port:
+                  name: http

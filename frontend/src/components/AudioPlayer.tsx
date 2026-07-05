@@ -14,14 +14,23 @@ import {
 } from '@/store/playerStore';
 import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
 import { formatTime } from '@/utils/format';
+import { clearProgress, flushProgress, loadResumePosition, recordProgress } from '@/lib/playbackMemory';
 import FullscreenPlayer from './FullscreenPlayer';
 import Thumbnail from './Thumbnail';
 import styles from './AudioPlayer.module.css';
+
+/** 再開対象とみなす最小位置(秒未満は「続き」に値しない) */
+const RESUME_MIN_SEC = 30;
+/** 末尾からこの秒数以内に食い込む場合は再開しない(聴き終わった扱い) */
+const RESUME_END_MARGIN_SEC = 30;
 
 export default function AudioPlayer() {
   const audioRef = useRef<HTMLAudioElement>(null);
   // ミニバー上方向スワイプ検知用 ref
   const barTouchStart = useRef<{ x: number; y: number } | null>(null);
+  // 新トラックロード時に復元すべき再生位置(秒)。メタデータ未ロードのうちは
+  // currentTime 設定が不安定なため、onLoadedMetadata で適用するまで保持する
+  const pendingResumeRef = useRef<number | null>(null);
 
   // フルスクリーンプレイヤー/キュー画面の開閉(history 駆動)
   const overlay = usePlayerOverlay();
@@ -47,6 +56,10 @@ export default function AudioPlayer() {
     }
     el.playbackRate = playbackRate;
     el.load();
+    // 続きから再生: 30秒以上のエントリのみ再開対象とし、実際の適用は
+    // メタデータロード後(onLoadedMetadata)に行う
+    const resume = track ? loadResumePosition(track.workId, track.path) : null;
+    pendingResumeRef.current = resume !== null && resume >= RESUME_MIN_SEC ? resume : null;
     void el.play().catch(() => {
       // 自動再生がブロックされたら停止状態にする
       usePlayerStore.getState().setPlaying(false);
@@ -100,7 +113,7 @@ export default function AudioPlayer() {
         : [],
     });
     const store = usePlayerStore.getState();
-    const set = (action: MediaSessionAction, handler: (() => void) | null) => {
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
       try {
         ms.setActionHandler(action, handler);
       } catch {
@@ -111,6 +124,9 @@ export default function AudioPlayer() {
     set('pause', () => store.setPlaying(false));
     set('seekbackward', () => store.seekBy(-10));
     set('seekforward', () => store.seekBy(10));
+    set('seekto', (details) => {
+      if (details.seekTime != null) usePlayerStore.getState().seekTo(details.seekTime);
+    });
     set('previoustrack', () => usePlayerStore.getState().prev());
     set('nexttrack', () => usePlayerStore.getState().next());
     return () => {
@@ -120,6 +136,7 @@ export default function AudioPlayer() {
           'pause',
           'seekbackward',
           'seekforward',
+          'seekto',
           'previoustrack',
           'nexttrack',
         ] as MediaSessionAction[]
@@ -132,6 +149,20 @@ export default function AudioPlayer() {
       navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
     }
   }, [isPlaying]);
+
+  // ---- Media Session: 再生位置(ロック画面のシークバー/残り時間表示に反映) ----
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    const ms = navigator.mediaSession;
+    if (!('setPositionState' in ms)) return;
+    // duration が未確定(NaN/0/Infinity)の間は呼ばない。呼ぶと例外になるブラウザがある
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    ms.setPositionState({
+      duration,
+      playbackRate,
+      position: Math.min(currentTime, duration),
+    });
+  }, [duration, playbackRate, currentTime]);
 
   // キューが空になったら、オーバーレイ用に積んだ history エントリを巻き戻す
   // (再生キュー全削除など。畳み忘れると「戻る」が見かけ上の無反応になる)
@@ -165,18 +196,48 @@ export default function AudioPlayer() {
     <>
       <audio
         ref={audioRef}
-        onTimeUpdate={(e) =>
-          usePlayerStore.getState().setCurrentTime(e.currentTarget.currentTime)
-        }
-        onLoadedMetadata={(e) =>
-          usePlayerStore.getState().setDuration(e.currentTarget.duration)
-        }
+        onTimeUpdate={(e) => {
+          const el = e.currentTarget;
+          usePlayerStore.getState().setCurrentTime(el.currentTime);
+          // el.src の一致確認: トラック切替の再レンダー後・load effect 前に旧トラックの
+          // timeupdate が割り込むと、旧位置が新トラックのキーで保存されてしまうのを防ぐ
+          if (track && src && el.src === absoluteUrl(src)) {
+            recordProgress(track.workId, track.path, el.currentTime, el.duration);
+          }
+        }}
+        onLoadedMetadata={(e) => {
+          const el = e.currentTarget;
+          usePlayerStore.getState().setDuration(el.duration);
+          const pending = pendingResumeRef.current;
+          if (pending !== null) {
+            pendingResumeRef.current = null;
+            const nearEnd =
+              Number.isFinite(el.duration) &&
+              el.duration > 0 &&
+              el.duration - pending < RESUME_END_MARGIN_SEC;
+            if (!nearEnd) {
+              el.currentTime = pending;
+              usePlayerStore.getState().setCurrentTime(pending);
+            }
+          }
+        }}
         onDurationChange={(e) =>
           usePlayerStore.getState().setDuration(e.currentTarget.duration)
         }
         onPlay={() => usePlayerStore.getState().setPlaying(true)}
-        onPause={() => usePlayerStore.getState().setPlaying(false)}
-        onEnded={() => usePlayerStore.getState().handleEnded()}
+        onPause={(e) => {
+          usePlayerStore.getState().setPlaying(false);
+          const el = e.currentTarget;
+          // ended 直後の pause で位置を復活させない(終了時は clearProgress 済み)。
+          // el.src 一致確認は onTimeUpdate と同じレース対策
+          if (track && !el.ended && src && el.src === absoluteUrl(src)) {
+            flushProgress(track.workId, track.path, el.currentTime, el.duration);
+          }
+        }}
+        onEnded={() => {
+          if (track) clearProgress(track.workId, track.path);
+          usePlayerStore.getState().handleEnded();
+        }}
       />
 
       {/* フルスクリーンプレイヤー(expanded=true のときオーバーレイで表示) */}

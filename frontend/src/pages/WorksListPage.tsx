@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { SortKey, WorksResponse } from '@/api/types';
+import type { SortKey, SortOrder, WorksResponse } from '@/api/types';
 import { fetchWorks } from '@/api/client';
 import { useTagStore, useTagNameMap } from '@/store/tagStore';
 import WorkCard from '@/components/WorkCard';
 import TagFacetPanel from '@/components/TagFacetPanel';
 import CircleFacetPanel from '@/components/CircleFacetPanel';
+import FetchError from '@/components/FetchError';
 import { saveListSearch } from '@/lib/listSearchMemory';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { parseSearchTerms, splitQuery } from '@/utils/searchTerms';
 import styles from './WorksListPage.module.css';
 
 const LIMIT = 40;
@@ -17,6 +19,9 @@ const SORT_LABELS: Record<SortKey, string> = {
   title: 'タイトル',
   created_at: '登録日',
   circle: 'サークル名',
+  favorited_at: 'お気に入り登録',
+  last_played: '最近聴いた',
+  play_count: 'よく聴く',
 };
 
 function parseTags(value: string | null): number[] {
@@ -28,8 +33,10 @@ function parseTags(value: string | null): number[] {
 }
 
 // フィルタ変更が結果セット全体に影響するとき、ユーザーが先頭に戻れるよう
-// スクロールトップをオプションで指示できる型
-type UpdateOptions = { scrollToTop?: boolean };
+// スクロールトップをオプションで指示できる型。
+// replace: true のときは history を積まずに現在のエントリを置き換える
+// (#58: デバウンス由来の連続更新で history が汚染されるのを防ぐ)
+type UpdateOptions = { scrollToTop?: boolean; replace?: boolean };
 
 export default function WorksListPage() {
   const [params, setParams] = useSearchParams();
@@ -39,26 +46,43 @@ export default function WorksListPage() {
   const excludeTags = useMemo(() => parseTags(params.get('exclude_tags')), [params]);
   const circle = params.get('circle') ?? '';
   const series = params.get('series') ?? '';
+  const favorite = params.get('favorite') === '1';
   const sort = (params.get('sort') as SortKey) || 'purchase_date';
+  // デフォルトは降順。降順のときは URL にパラメータを付けない(#59)
+  const order = (params.get('order') as SortOrder) || 'desc';
   const page = Number(params.get('page') ?? '1') || 1;
+  // 検索キーワードの include/exclude チップ表示用(#29)
+  const searchTerms = useMemo(() => parseSearchTerms(q), [q]);
 
   const [qInput, setQInput] = useState(q);
   // 毎レンダーで最新の q を ref に書き込む。デバウンスエフェクトの deps に
   // q を入れると URL 更新直後に無駄な再実行が生じるため、ref 経由で参照する。
   const qRef = useRef(q);
+  // eslint-disable-next-line react-hooks/refs -- 上のコメントの通り、最新の q を常に反映させるための意図的なレンダー中書き込み
   qRef.current = q;
   const [data, setData] = useState<WorksResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // fetch 失敗時の再試行用。increment するとデータ取得 effect が再実行される(issue #70)
+  const [retryNonce, setRetryNonce] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // ページ番号入力欄(#35)。入力中の生値を保持し、Enter/blur で確定する
+  const [pageInput, setPageInput] = useState(String(page));
   // 全タグ一覧を共有ストアから取得し、id→name の Map として参照する。
   // TagFacetPanel でも同じストアを使うため HTTP リクエストは 1 回だけ発火する。
   const tagNames = useTagNameMap();
 
   // 検索ボックスは URL と同期(戻る等で反映)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 上のコメントの通り、URL 変化を入力欄に反映する意図的な setState
     setQInput(q);
   }, [q]);
+
+  // ページ番号入力欄も URL と同期(前へ/次へ・戻る等で反映)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 上のコメントの通り、URL 変化を入力欄に反映する意図的な setState
+    setPageInput(String(page));
+  }, [page]);
 
   // setParams の関数形式を使い、タイマー発火時に最新の params を参照する。
   // scrollToTop が true のとき先頭に戻す(結果セットが大きく変わる操作で指定)。
@@ -68,7 +92,7 @@ export default function WorksListPage() {
         const next = new URLSearchParams(prev);
         mut(next);
         return next;
-      }, { replace: false });
+      }, { replace: opts?.replace ?? false });
       if (opts?.scrollToTop) window.scrollTo(0, 0);
     },
     [setParams],
@@ -82,7 +106,7 @@ export default function WorksListPage() {
         if (qInput) p.set('q', qInput);
         else p.delete('q');
         p.delete('page');
-      }, { scrollToTop: true });
+      }, { scrollToTop: true, replace: true });
     }, 300);
     return () => clearTimeout(t);
   }, [qInput, update]);
@@ -94,6 +118,8 @@ export default function WorksListPage() {
 
   useEffect(() => {
     const ac = new AbortController();
+    // fetch 開始前にローディング表示へ切り替える意図的な setState(データ取得 effect の定型)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     fetchWorks(
@@ -103,7 +129,9 @@ export default function WorksListPage() {
         excludeTags,
         circle: circle || undefined,
         series: series || undefined,
+        favorite: favorite || undefined,
         sort,
+        order,
         page,
         limit: LIMIT,
       },
@@ -119,7 +147,7 @@ export default function WorksListPage() {
         setLoading(false);
       });
     return () => ac.abort();
-  }, [q, tags, excludeTags, circle, series, sort, page]);
+  }, [q, tags, excludeTags, circle, series, favorite, sort, order, page, retryNonce]);
 
   // URL が変わるたびに検索クエリを sessionStorage に保存(詳細→一覧の戻り先に使う)
   useEffect(() => {
@@ -182,6 +210,14 @@ export default function WorksListPage() {
     }, { scrollToTop: true });
   };
 
+  const toggleFavorite = () => {
+    update((p) => {
+      if (p.get('favorite') === '1') p.delete('favorite');
+      else p.set('favorite', '1');
+      p.delete('page');
+    }, { scrollToTop: true });
+  };
+
   const setSort = (s: SortKey) => {
     update((p) => {
       p.set('sort', s);
@@ -189,9 +225,40 @@ export default function WorksListPage() {
     }, { scrollToTop: true });
   };
 
+  // 昇順/降順トグル(#59)。デフォルトの desc は URL に残さない
+  const toggleOrder = () => {
+    update((p) => {
+      const next: SortOrder = order === 'desc' ? 'asc' : 'desc';
+      if (next === 'desc') p.delete('order');
+      else p.set('order', next);
+      p.delete('page');
+    }, { scrollToTop: true });
+  };
+
+  // 検索語チップの ✕ クリック: 該当語だけを q から除去する(#29)
+  const removeSearchTerm = (term: string, exclude: boolean) => {
+    update((p) => {
+      const target = exclude ? `-${term}` : term;
+      const remaining = splitQuery(p.get('q') ?? '').filter((t) => t !== target);
+      if (remaining.length > 0) p.set('q', remaining.join(' '));
+      else p.delete('q');
+      p.delete('page');
+    }, { scrollToTop: true });
+  };
+
   const goPage = (n: number) => {
     // ページ送りでも先頭に戻す(update 経由に統一し直接呼び出しを排除)
-    update((p) => p.set('page', String(n)), { scrollToTop: true });
+    const clamped = Math.min(Math.max(1, n), totalPages);
+    update((p) => p.set('page', String(clamped)), { scrollToTop: true });
+  };
+
+  // ページ番号入力欄の確定処理(#35)。範囲外はクランプし、変化がなければ
+  // 表示だけを揃えて goPage は呼ばない(無駄な再フェッチを避ける)
+  const commitPageInput = () => {
+    const n = Math.round(Number(pageInput));
+    const clamped = Number.isFinite(n) ? Math.min(Math.max(1, n), totalPages) : page;
+    setPageInput(String(clamped));
+    if (clamped !== page) goPage(clamped);
   };
 
   const clearParam = (key: 'circle' | 'series') => {
@@ -209,6 +276,7 @@ export default function WorksListPage() {
       p.delete('exclude_tags');
       p.delete('circle');
       p.delete('series');
+      p.delete('favorite');
       p.delete('page');
     }, { scrollToTop: true });
     // URL→qInput 同期の useEffect は次レンダー待ちになるため、入力欄は即時クリア
@@ -219,8 +287,14 @@ export default function WorksListPage() {
   // タグ絞り込みボタンのバッジ: 含む + 除外の合計
   const tagFilterCount = tags.length + excludeTags.length;
 
-  // chips セクションの表示条件。q 単独は検索ボックス本体に見えるため chip 対象外とする。
-  const hasChips = tags.length > 0 || excludeTags.length > 0 || !!circle || !!series;
+  // chips セクションの表示条件。検索キーワードも include/exclude チップとして表示する(#29)。
+  const hasChips =
+    tags.length > 0 ||
+    excludeTags.length > 0 ||
+    !!circle ||
+    !!series ||
+    searchTerms.include.length > 0 ||
+    searchTerms.exclude.length > 0;
 
   return (
     <div className={styles.layout}>
@@ -254,6 +328,14 @@ export default function WorksListPage() {
             >
               タグ絞り込み{tagFilterCount > 0 ? ` (${tagFilterCount})` : ''}
             </button>
+            <button
+              type="button"
+              className={`btn ${styles.favoriteToggle} ${favorite ? styles.favoriteToggleActive : ''}`}
+              onClick={toggleFavorite}
+              aria-pressed={favorite}
+            >
+              ★ お気に入りのみ
+            </button>
             <select
               className={styles.sortSelect}
               value={sort}
@@ -266,10 +348,41 @@ export default function WorksListPage() {
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              className="btn"
+              aria-label={order === 'desc' ? '昇順に切り替え' : '降順に切り替え'}
+              onClick={toggleOrder}
+            >
+              {order === 'desc' ? '降順 ↓' : '昇順 ↑'}
+            </button>
           </div>
 
           {hasChips && (
             <div className={styles.chips}>
+              {searchTerms.include.map((term) => (
+                <button
+                  key={`kw-${term}`}
+                  className={styles.chip}
+                  onClick={() => removeSearchTerm(term, false)}
+                  title="クリックで解除"
+                >
+                  <span className={styles.chipKind}>検索語</span>
+                  {term}
+                  <span className={styles.chipX}>✕</span>
+                </button>
+              ))}
+              {searchTerms.exclude.map((term) => (
+                <button
+                  key={`kw-excl-${term}`}
+                  className={`${styles.chip} ${styles.chipExcluded}`}
+                  onClick={() => removeSearchTerm(term, true)}
+                  title="クリックで解除"
+                >
+                  −{term}
+                  <span className={styles.chipX}>✕</span>
+                </button>
+              ))}
               {circle && (
                 <button
                   className={styles.chip}
@@ -327,7 +440,7 @@ export default function WorksListPage() {
             <div className="spinner" />
           </div>
         ) : error ? (
-          <p className="muted">{error}</p>
+          <FetchError message={error} onRetry={() => setRetryNonce((n) => n + 1)} />
         ) : !data || data.items.length === 0 ? (
           <p className={styles.empty}>該当する作品がありません</p>
         ) : (
@@ -343,6 +456,7 @@ export default function WorksListPage() {
                   ageRating={w.age_rating}
                   thumbnailUrl={w.thumbnail_url}
                   hasFolder={w.has_folder}
+                  favorited={w.favorited}
                 />
               ))}
             </div>
@@ -351,26 +465,36 @@ export default function WorksListPage() {
               <div className={styles.pager}>
                 <button
                   className="btn"
+                  onClick={() => goPage(1)}
+                  disabled={page <= 1}
+                >
+                  ≪ 最初へ
+                </button>
+                <button
+                  className="btn"
                   onClick={() => goPage(page - 1)}
                   disabled={page <= 1}
                 >
                   前へ
                 </button>
                 <label className={styles.pageInfo}>
-                  <select
-                    className={styles.pageSelect}
-                    value={page}
-                    onChange={(e) => goPage(Number(e.target.value))}
-                    aria-label="ページを選択"
-                  >
-                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
-                      <option key={n} value={n}>
-                        {n}
-                      </option>
-                    ))}
-                  </select>
-                  {' / '}
-                  {totalPages}
+                  <input
+                    type="number"
+                    className={styles.pageInput}
+                    min={1}
+                    max={totalPages}
+                    value={pageInput}
+                    aria-label="ページ番号"
+                    onChange={(e) => setPageInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commitPageInput();
+                      }
+                    }}
+                    onBlur={commitPageInput}
+                  />
+                  {` / ${totalPages} ページ`}
                 </label>
                 <button
                   className="btn"
@@ -378,6 +502,13 @@ export default function WorksListPage() {
                   disabled={page >= totalPages}
                 >
                   次へ
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => goPage(totalPages)}
+                  disabled={page >= totalPages}
+                >
+                  最後へ ≫
                 </button>
               </div>
             )}

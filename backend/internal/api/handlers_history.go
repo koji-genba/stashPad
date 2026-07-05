@@ -3,9 +3,39 @@ package api
 import (
 	"database/sql"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 )
+
+// historyWorkSummary は GET /api/history の items[].work。
+// thumbnail_url は NULL 許容(*string)で、サムネ無しは明示的に null を返す(issue #57)。
+type historyWorkSummary struct {
+	ID           int64   `json:"id"`
+	Title        string  `json:"title"`
+	ThumbnailURL *string `json:"thumbnail_url"`
+}
+
+// historyEntry は GET /api/history の items 要素。
+type historyEntry struct {
+	Work         historyWorkSummary `json:"work"`
+	LastPlayedAt string             `json:"last_played_at"`
+	LastFilePath string             `json:"last_file_path"`
+	PlayCount    int                `json:"play_count"`
+}
+
+// historyResponse は GET /api/history のレスポンス。
+type historyResponse struct {
+	Items []historyEntry `json:"items"`
+	Total int            `json:"total"`
+	Page  int            `json:"page"`
+	Limit int            `json:"limit"`
+}
+
+// deleteHistoryResult は DELETE /api/history のレスポンス。
+type deleteHistoryResult struct {
+	Deleted int64 `json:"deleted"`
+}
 
 // historySortColumns は sort パラメータと ORDER BY 句の対応(ホワイトリスト)。
 // 値はサブクエリのカラム名のみで、パラメータ値を SQL に直接埋めない。
@@ -52,8 +82,24 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	innerWhere := ""
 	args := []any{}
 	if keyword != "" {
-		innerWhere = " AND w.title LIKE ?"
-		args = append(args, "%"+keyword+"%")
+		innerWhere = " AND w.title LIKE ? ESCAPE '\\'"
+		args = append(args, likeContains(keyword))
+	}
+
+	// total は一覧に出る行の総数(= 履歴を持つ作品数)。メインクエリと同じ JOIN/WHERE
+	// (hidden 除外・q フィルタ)を適用した上で作品単位に DISTINCT した件数を数える。
+	// play_history の生行数(作品ごとに複数行ありうる)と混同しないよう、メインクエリ側の
+	// rn=1 集約と揃えて「作品単位」で数える。
+	countQuery := `
+		SELECT COUNT(*) FROM (
+			SELECT DISTINCT w.id
+			FROM play_history ph
+			JOIN works w ON w.id=ph.work_id AND w.hidden=0` + innerWhere + `
+		)`
+	var total int
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		respondInternalError(w, "件数取得失敗", err)
+		return
 	}
 
 	query := `
@@ -73,16 +119,18 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		WHERE rn=1
 		ORDER BY ` + sortCol + ` ` + order + `, id DESC
 		LIMIT ? OFFSET ?`
-	args = append(args, limit, offset)
+	// countQuery で args を使い切っているため、limit/offset の追加で裏配列を
+	// 破壊しないよう独立スライスへコピーしてから足す。
+	dataArgs := append(slices.Clone(args), limit, offset)
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.db.Query(query, dataArgs...)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "履歴取得失敗: "+err.Error())
+		respondInternalError(w, "履歴取得失敗", err)
 		return
 	}
 	defer rows.Close()
 
-	items := make([]map[string]any, 0)
+	items := make([]historyEntry, 0)
 	for rows.Next() {
 		var (
 			workID       int64
@@ -93,38 +141,72 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			playCount    int
 		)
 		if err := rows.Scan(&workID, &workTitle, &thumbPath, &lastPlayedAt, &lastFilePath, &playCount); err != nil {
-			respondError(w, http.StatusInternalServerError, "行スキャン失敗: "+err.Error())
+			respondInternalError(w, "行スキャン失敗", err)
 			return
 		}
 
-		workObj := map[string]any{
-			"id":    workID,
-			"title": workTitle,
-		}
+		workObj := historyWorkSummary{ID: workID, Title: workTitle}
 		if thumbPath.Valid {
-			workObj["thumbnail_url"] = "/api/works/" + itoa(workID) + "/thumbnail"
+			workObj.ThumbnailURL = strPtr("/api/works/" + itoa(workID) + "/thumbnail")
 		}
 
-		items = append(items, map[string]any{
-			"work":           workObj,
-			"last_played_at": lastPlayedAt,
-			"last_file_path": lastFilePath,
-			"play_count":     playCount,
+		items = append(items, historyEntry{
+			Work:         workObj,
+			LastPlayedAt: lastPlayedAt,
+			LastFilePath: lastFilePath,
+			PlayCount:    playCount,
 		})
 	}
 	if err := rows.Err(); err != nil {
-		respondError(w, http.StatusInternalServerError, "行読み込み失敗: "+err.Error())
+		respondInternalError(w, "行読み込み失敗", err)
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{
-		"items": items,
-		"page":  page,
-		"limit": limit,
+	respondJSON(w, http.StatusOK, historyResponse{
+		Items: items,
+		Total: total,
+		Page:  page,
+		Limit: limit,
 	})
 }
 
 // itoa は int64 を文字列に変換する。
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
+}
+
+// handleDeleteHistory は DELETE /api/history を処理する。
+// work_id を指定すると当該作品の履歴のみ削除し、指定がなければ全件削除する。
+//
+// クエリパラメータ:
+//   - work_id  省略可。数値でない場合は 400
+func (s *Server) handleDeleteHistory(w http.ResponseWriter, r *http.Request) {
+	workIDStr := strings.TrimSpace(r.URL.Query().Get("work_id"))
+
+	var (
+		res sql.Result
+		err error
+	)
+	if workIDStr == "" {
+		res, err = s.db.Exec("DELETE FROM play_history")
+	} else {
+		workID, parseErr := strconv.ParseInt(workIDStr, 10, 64)
+		if parseErr != nil {
+			respondError(w, http.StatusBadRequest, "不正な work_id")
+			return
+		}
+		res, err = s.db.Exec("DELETE FROM play_history WHERE work_id=?", workID)
+	}
+	if err != nil {
+		respondInternalError(w, "履歴削除失敗", err)
+		return
+	}
+
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		respondInternalError(w, "件数取得失敗", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, deleteHistoryResult{Deleted: deleted})
 }

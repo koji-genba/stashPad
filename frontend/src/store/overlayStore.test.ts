@@ -258,3 +258,32 @@ describe('openText / closeText', () => {
     expect(useOverlayStore.getState().text).toEqual(textState);
   });
 });
+
+// ---- closeAll(issue #52: history 同期からの一括クローズ用)----
+describe('closeAll', () => {
+  beforeEach(resetStore);
+
+  it('開いているオーバーレイをすべて閉じる', () => {
+    const s = useOverlayStore.getState();
+    s.openImage({
+      workId: 1,
+      dir: '',
+      entries: [makeEntry('p1.jpg')],
+      startName: 'p1.jpg',
+    });
+    s.openVideo({ workId: 1, workTitle: 'w', path: 'v.mp4', name: 'v.mp4' });
+    s.openText({ workId: 1, path: 't.txt', name: 't.txt' });
+
+    useOverlayStore.getState().closeAll();
+
+    const after = useOverlayStore.getState();
+    expect(after.image).toBeNull();
+    expect(after.video).toBeNull();
+    expect(after.text).toBeNull();
+  });
+
+  it('すべて閉じている状態で呼んでも安全', () => {
+    expect(() => useOverlayStore.getState().closeAll()).not.toThrow();
+    expect(useOverlayStore.getState().image).toBeNull();
+  });
+});

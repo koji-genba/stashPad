@@ -1,0 +1,19 @@
+# stashPad データボリューム(SQLite DB + サムネイルキャッシュ、STASHPAD_DATA_DIR=/data)。
+# 単一レプリカ(Recreate 戦略)なので ReadWriteOnce で十分。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: stashpad-data
+  labels:
+    app: stashpad
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # 未指定ならクラスタのデフォルト StorageClass を使用する。
+  # 明示指定する場合は README.md を参照してコメントを外す。
+  # storageClassName: REPLACE_ME
+  resources:
+    requests:
+      # SQLite ファイル本体は小さいが、サムネイルキャッシュはライブラリ規模に
+      # 比例して増える。目安値なので実際のライブラリサイズに応じて調整すること。
+      storage: 20Gi

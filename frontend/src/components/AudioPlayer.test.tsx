@@ -14,6 +14,9 @@ vi.mock('@/api/client', () => ({
 
 // vi.mock はファイル先頭に巻き上げられるため、この import 時点でモックは適用済み
 import AudioPlayer from './AudioPlayer';
+import { _resetForTest, loadResumePosition } from '@/lib/playbackMemory';
+
+const PLAYBACK_POSITIONS_KEY = 'stashpad-playback-positions';
 
 // ストアの初期状態リセット用
 const initialState = {
@@ -65,6 +68,8 @@ function renderPlayer() {
 // jsdom は HTMLMediaElement.play/pause/load を実装していないため全テストでスタブする
 beforeEach(() => {
   resetStore();
+  localStorage.clear();
+  _resetForTest();
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
   vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined);
@@ -159,6 +164,177 @@ describe('AudioPlayer <audio> 要素へのストア反映', () => {
       usePlayerStore.getState().setRate(1.5);
     });
     expect(audio!.playbackRate).toBe(1.5);
+  });
+});
+
+describe('AudioPlayer 続きから再生(playbackMemory 連携)', () => {
+  beforeEach(setupPlayingState);
+
+  it('保存済み位置(30秒以上)があるとき、loadedmetadata で currentTime が復元される', () => {
+    localStorage.setItem(
+      PLAYBACK_POSITIONS_KEY,
+      JSON.stringify({ '42:track02.mp3': { position: 500, duration: 700, updatedAt: Date.now() } }),
+    );
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+    expect(audio).not.toBeNull();
+
+    Object.defineProperty(audio, 'duration', { value: 700, configurable: true });
+    fireEvent(audio, new Event('loadedmetadata'));
+
+    expect(audio.currentTime).toBe(500);
+    expect(usePlayerStore.getState().currentTime).toBe(500);
+  });
+
+  it('保存済み位置が無いとき、loadedmetadata が発火しても currentTime は復元されない', () => {
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+
+    Object.defineProperty(audio, 'duration', { value: 700, configurable: true });
+    fireEvent(audio, new Event('loadedmetadata'));
+
+    expect(audio.currentTime).toBe(0);
+  });
+
+  it('位置が末尾30秒以内に食い込む場合は再開しない', () => {
+    localStorage.setItem(
+      PLAYBACK_POSITIONS_KEY,
+      JSON.stringify({ '42:track02.mp3': { position: 690, duration: 700, updatedAt: Date.now() } }),
+    );
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+
+    // 実際にロードされた duration は 700 → 700 - 690 = 10 秒 < 30 秒なので再開しない
+    Object.defineProperty(audio, 'duration', { value: 700, configurable: true });
+    fireEvent(audio, new Event('loadedmetadata'));
+
+    expect(audio.currentTime).toBe(0);
+  });
+
+  it('onEnded で clearProgress が呼ばれ、保存済み位置が消える', () => {
+    localStorage.setItem(
+      PLAYBACK_POSITIONS_KEY,
+      JSON.stringify({ '42:track02.mp3': { position: 500, duration: 700, updatedAt: Date.now() } }),
+    );
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+
+    fireEvent(audio, new Event('ended'));
+
+    expect(loadResumePosition(42, 'track02.mp3')).toBeNull();
+  });
+
+  it('onPause(ended でない)で flushProgress により位置が即座に保存される', () => {
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+    Object.defineProperty(audio, 'duration', { value: 700, configurable: true });
+    Object.defineProperty(audio, 'currentTime', { value: 200, configurable: true, writable: true });
+
+    fireEvent(audio, new Event('pause'));
+
+    expect(loadResumePosition(42, 'track02.mp3')).toBe(200);
+  });
+
+  it('onTimeUpdate で recordProgress により位置が保存される(初回は throttle されない)', () => {
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+    Object.defineProperty(audio, 'duration', { value: 700, configurable: true });
+    Object.defineProperty(audio, 'currentTime', { value: 150, configurable: true, writable: true });
+
+    fireEvent.timeUpdate(audio);
+
+    expect(loadResumePosition(42, 'track02.mp3')).toBe(150);
+  });
+});
+
+describe('AudioPlayer Media Session', () => {
+  // jsdom は navigator.mediaSession / MediaMetadata を実装していないため、
+  // このブロックでのみ最小限のモックを差し込む(他ブロックには影響させない)
+  let ms: {
+    metadata: unknown;
+    playbackState: string;
+    setActionHandler: ReturnType<typeof vi.fn>;
+    setPositionState: ReturnType<typeof vi.fn>;
+  };
+  let handlers: Record<string, ((details: { seekTime?: number | null }) => void) | null>;
+
+  beforeEach(() => {
+    setupPlayingState();
+    handlers = {};
+    ms = {
+      metadata: null,
+      playbackState: 'none',
+      setActionHandler: vi.fn(
+        (action: string, handler: ((details: { seekTime?: number | null }) => void) | null) => {
+          handlers[action] = handler;
+        },
+      ),
+      setPositionState: vi.fn(),
+    };
+    Object.defineProperty(window.navigator, 'mediaSession', {
+      value: ms,
+      configurable: true,
+    });
+    (globalThis as unknown as { MediaMetadata: unknown }).MediaMetadata = function MediaMetadata(
+      this: Record<string, unknown>,
+      init: unknown,
+    ) {
+      Object.assign(this, init);
+    };
+  });
+
+  afterEach(() => {
+    delete (window.navigator as { mediaSession?: unknown }).mediaSession;
+    delete (globalThis as { MediaMetadata?: unknown }).MediaMetadata;
+  });
+
+  it('seekto ハンドラが登録され、呼び出すと store.seekRequest が更新される', () => {
+    renderPlayer();
+    expect(ms.setActionHandler).toHaveBeenCalledWith('seekto', expect.any(Function));
+
+    act(() => {
+      handlers['seekto']?.({ seekTime: 42 });
+    });
+
+    expect(usePlayerStore.getState().seekRequest?.time).toBe(42);
+  });
+
+  it('seekTime が null のときは seekRequest を更新しない', () => {
+    renderPlayer();
+    const before = usePlayerStore.getState().seekRequest;
+
+    act(() => {
+      handlers['seekto']?.({ seekTime: null });
+    });
+
+    expect(usePlayerStore.getState().seekRequest).toBe(before);
+  });
+
+  it('duration>0 のとき setPositionState が duration/playbackRate/position で呼ばれる', () => {
+    renderPlayer();
+    expect(ms.setPositionState).toHaveBeenCalledWith({
+      duration: 120,
+      playbackRate: 1,
+      position: 30,
+    });
+  });
+
+  it('duration が 0 のとき setPositionState は呼ばれない', () => {
+    usePlayerStore.setState({ duration: 0 });
+    renderPlayer();
+    expect(ms.setPositionState).not.toHaveBeenCalled();
+  });
+
+  it('duration が NaN のとき setPositionState は呼ばれない', () => {
+    usePlayerStore.setState({ duration: NaN });
+    renderPlayer();
+    expect(ms.setPositionState).not.toHaveBeenCalled();
+  });
+
+  it('duration が Infinity のとき setPositionState は呼ばれない', () => {
+    usePlayerStore.setState({ duration: Infinity });
+    renderPlayer();
+    expect(ms.setPositionState).not.toHaveBeenCalled();
   });
 });
 

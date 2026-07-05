@@ -1,12 +1,13 @@
 // タグファセット。カテゴリ別にグルーピングし、作品数付きで表示。
 // 選択中タグはトグルできる。スマホはドロワー、PC はサイドパネルとして使われる。
 //
-// q が空の場合 → 共有 tagStore から取得(WorksListPage の ensureLoaded と重複なし)
-// q が非空の場合 → サーバ側 LIKE フィルタを利用するため直接 fetchTags({q}) を呼ぶ
+// #27: 全タグは常に共有 tagStore から取得する(WorksListPage の ensureLoaded と重複なし)。
+// 絞り込み入力はクライアントサイド(name.toLowerCase().includes)で行うため、
+// q の有無でサーバへの fetch 経路を切り替える必要はない。
 import { useEffect, useMemo, useState } from 'react';
 import type { TagFacet } from '@/api/types';
-import { fetchTags } from '@/api/client';
 import { useTagStore } from '@/store/tagStore';
+import FetchError from './FetchError';
 import styles from './TagFacetPanel.module.css';
 
 interface Props {
@@ -38,15 +39,11 @@ const CATEGORY_ORDER = [
 
 export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
   const [searchQ, setSearchQ] = useState('');
-  // q が非空のとき用のローカル検索結果
-  const [localTags, setLocalTags] = useState<TagFacet[]>([]);
-  const [localLoading, setLocalLoading] = useState(false);
-  const [localFailed, setLocalFailed] = useState(false);
 
-  // q が空のとき → 共有ストアから参照
+  // 共有ストアから全タグを参照する(q の有無に関わらず常にこれを使う)
   const storeItems = useTagStore((s) => s.items);
-  const storeLoading = useTagStore((s) => s.loading);
-  const storeFailed = useTagStore((s) => s.error !== null);
+  const loading = useTagStore((s) => s.loading);
+  const failed = useTagStore((s) => s.error !== null);
 
   // 折りたたみ中のカテゴリ。デフォルトは全て開。
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -60,40 +57,17 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
     });
   };
 
-  // q が空のとき → ストアに取得を委ねる(WorksListPage が ensureLoaded 済みのケースが多い)
+  // パネル初回マウント時に全件を 1 回だけ取得する(すでにロード済みなら ensureLoaded がガードする)
   useEffect(() => {
-    if (searchQ) return;
     useTagStore.getState().ensureLoaded();
-  }, [searchQ]);
+  }, []);
 
-  // q が非空のとき → サーバ側 LIKE フィルタで絞り込む(250ms デバウンス)
-  useEffect(() => {
-    if (!searchQ) return;
-    const ac = new AbortController();
-    const t = setTimeout(() => {
-      setLocalLoading(true);
-      setLocalFailed(false);
-      fetchTags({ q: searchQ }, ac.signal)
-        .then((d) => {
-          setLocalTags(d.items);
-          setLocalLoading(false);
-        })
-        .catch(() => {
-          if (ac.signal.aborted) return;
-          setLocalFailed(true);
-          setLocalLoading(false);
-        });
-    }, 250);
-    return () => {
-      clearTimeout(t);
-      ac.abort();
-    };
-  }, [searchQ]);
-
-  // 表示に使う実際の tags/loading/failed を q の有無で切り替える
-  const tags = searchQ ? localTags : storeItems;
-  const loading = searchQ ? localLoading : storeLoading;
-  const failed = searchQ ? localFailed : storeFailed;
+  // 絞り込み入力はクライアントサイドで行う(サーバへの再フェッチはしない)
+  const tags = useMemo(() => {
+    if (!searchQ) return storeItems;
+    const needle = searchQ.toLowerCase();
+    return storeItems.filter((t) => t.name.toLowerCase().includes(needle));
+  }, [storeItems, searchQ]);
 
   // #22: selected/excluded を Set に変換してレンダー内の includes(O(n²)) を排除する
   const selectedSet = useMemo(() => new Set(selected), [selected]);
@@ -128,7 +102,11 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
           <div className="spinner" />
         </div>
       ) : failed ? (
-        <p className="error">タグ一覧の読み込みに失敗しました</p>
+        <FetchError
+          message="タグ一覧の読み込みに失敗しました"
+          // 共有 tagStore 経由なので、再試行は store の強制再取得(refresh)を呼ぶ(issue #70)
+          onRetry={() => void useTagStore.getState().refresh()}
+        />
       ) : grouped.length === 0 ? (
         <p className="faint">タグがありません</p>
       ) : (

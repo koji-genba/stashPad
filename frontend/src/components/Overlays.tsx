@@ -1,14 +1,33 @@
 // ルート直下に常駐する全画面オーバーレイ群(画像ビューア / 動画 / テキスト)。
+// useOverlayHistorySync により表示状態を history と同期し、
+// Android の「戻る」で 1 段閉じられるようにする(issue #52)。
 import { useEffect, useState } from 'react';
 import { useStore } from 'zustand';
 import { fetchTextFile, fileUrl, recordPlay } from '@/api/client';
 import { useOverlayStore } from '@/store/overlayStore';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useOverlayHistorySync } from '@/hooks/useOverlayHistorySync';
 import ImageViewer from './ImageViewer';
 import styles from './Overlays.module.css';
+
+// Escape キーでオーバーレイを閉じる(active の間だけ購読する)
+function useEscapeToClose(active: boolean, close: () => void): void {
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [active, close]);
+}
 
 function VideoModal() {
   const video = useStore(useOverlayStore, (s) => s.video);
   const close = useStore(useOverlayStore, (s) => s.closeVideo);
+
+  useBodyScrollLock(video !== null);
+  useEscapeToClose(video !== null, close);
 
   useEffect(() => {
     if (video) {
@@ -43,7 +62,12 @@ function TextModal() {
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  useBodyScrollLock(text !== null);
+  useEscapeToClose(text !== null, close);
+
   useEffect(() => {
+    // 対象ファイル切替時に前回の表示内容をクリアする意図的な setState
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setContent(null);
     setError(null);
     if (!text) return;
@@ -79,6 +103,7 @@ function TextModal() {
 }
 
 export default function Overlays() {
+  useOverlayHistorySync();
   return (
     <>
       <ImageViewer />

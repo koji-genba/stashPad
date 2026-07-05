@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 )
@@ -27,6 +29,18 @@ func decodeHistory(t *testing.T, body []byte) []historyItem {
 		t.Fatalf("decode: %v; body=%s", err, body)
 	}
 	return resp.Items
+}
+
+// decodeHistoryTotal は履歴レスポンスの total をデコードする。
+func decodeHistoryTotal(t *testing.T, body []byte) int {
+	t.Helper()
+	var resp struct {
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, body)
+	}
+	return resp.Total
 }
 
 // TestHistoryAggregation は作品単位の集計(最終ファイル・再生回数・最終再生日時)を検証する。
@@ -110,6 +124,150 @@ func TestHistoryKeywordFilter(t *testing.T) {
 	}
 }
 
+// TestHistoryKeywordLikeSpecialChars は q に含まれる % がワイルドカード展開されず
+// リテラル一致のみヒットすることを検証する(issue #50)。
+func TestHistoryKeywordLikeSpecialChars(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	if _, err := database.Exec(`
+		INSERT INTO works (id, rj_number, title) VALUES
+		  (211, 'RJ500111', '100%OFF セール作品'),
+		  (212, 'RJ500112', '100XOFF 作品');
+		INSERT INTO play_history (work_id, file_path, played_at) VALUES
+		  (211, 'a.mp3', '2026-01-01 10:00:00'),
+		  (212, 'b.mp3', '2026-01-02 10:00:00');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, "/api/history?q="+url.QueryEscape("100%OFF"))
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 1 || items[0].Work.ID != 211 {
+		t.Errorf("items = %+v, want 1 件(work id=211)", items)
+	}
+}
+
+// TestHistoryTotalIsWorkCountNotRowCount は total が「一覧に出る行の総数(作品単位)」であり、
+// play_history の生行数ではないことを検証する(issue #60)。
+// A 作品は 3 回再生されているが、一覧上は 1 行に集約されるため total は 3(作品数)であるべき。
+func TestHistoryTotalIsWorkCountNotRowCount(t *testing.T) {
+	h, database, _ := newTestServer(t)
+
+	if _, err := database.Exec(`
+		INSERT INTO works (id, rj_number, title) VALUES
+		  (601, 'RJ500501', '猫の物語'),
+		  (602, 'RJ500502', '犬の日記'),
+		  (603, 'RJ500503', '鳥の歌');
+		INSERT INTO play_history (work_id, file_path, played_at) VALUES
+		  (601, 'a/01.mp3', '2026-01-01 10:00:00'),
+		  (601, 'a/02.mp3', '2026-01-02 10:00:00'),
+		  (601, 'a/03.mp3', '2026-01-03 10:00:00'),
+		  (602, 'b/01.mp3', '2026-01-05 10:00:00'),
+		  (603, 'c/01.mp3', '2025-12-31 10:00:00'),
+		  (603, 'c/02.mp3', '2026-01-01 09:00:00');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, "/api/history")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 3 {
+		t.Fatalf("items 数 = %d, want 3", len(items))
+	}
+	if total := decodeHistoryTotal(t, w.Body.Bytes()); total != 3 {
+		t.Errorf("total = %d, want 3(play_history の生行数 6 ではなく作品数)", total)
+	}
+}
+
+// TestHistoryTotalWithKeywordFilter は q フィルタ適用時、total が絞り込み後の作品数になることを検証する。
+func TestHistoryTotalWithKeywordFilter(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	if _, err := database.Exec(`
+		INSERT INTO works (id, rj_number, title) VALUES
+		  (611, 'RJ500511', '猫の物語'),
+		  (612, 'RJ500512', '犬の日記'),
+		  (613, 'RJ500513', '猫カフェ巡り');
+		INSERT INTO play_history (work_id, file_path, played_at) VALUES
+		  (611, 'a.mp3', '2026-01-01 10:00:00'),
+		  (612, 'b.mp3', '2026-01-02 10:00:00'),
+		  (613, 'c.mp3', '2026-01-03 10:00:00');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, "/api/history?q="+url.QueryEscape("猫"))
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 2 {
+		t.Fatalf("items 数 = %d, want 2", len(items))
+	}
+	if total := decodeHistoryTotal(t, w.Body.Bytes()); total != 2 {
+		t.Errorf("total = %d, want 2(絞り込み後の作品数と一致すべき)", total)
+	}
+
+	// フィルタなしの場合は 3 件全部が total に反映される。
+	w = doGet(t, h, "/api/history")
+	if total := decodeHistoryTotal(t, w.Body.Bytes()); total != 3 {
+		t.Errorf("フィルタなし total = %d, want 3", total)
+	}
+}
+
+// TestHistoryTotalExceedsPageLimit は limit(40)を超える作品数のとき、
+// total がページ内の items 件数ではなく全件数を返すことを検証する。
+// これは「作品数がちょうど limit の倍数のとき最終ページでも次へが有効になる」バグ(issue #60)の
+// 直接の再現・修正確認テスト。
+func TestHistoryTotalExceedsPageLimit(t *testing.T) {
+	h, database, _ := newTestServer(t)
+
+	const workCount = 45 // limit(40) を超える件数
+	for i := 0; i < workCount; i++ {
+		workID := 1000 + i
+		rj := "RJ9" + itoa(int64(i+10000))
+		if _, err := database.Exec(
+			`INSERT INTO works (id, rj_number, title) VALUES (?, ?, ?)`,
+			workID, rj, "作品"+itoa(int64(i)),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(
+			`INSERT INTO play_history (work_id, file_path, played_at) VALUES (?, ?, ?)`,
+			workID, "a.mp3", "2026-01-01 00:00:00",
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 1 ページ目: items は limit(40)件だが total は全件(45)
+	w := doGet(t, h, "/api/history?page=1")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 40 {
+		t.Fatalf("1 ページ目 items 数 = %d, want 40", len(items))
+	}
+	if total := decodeHistoryTotal(t, w.Body.Bytes()); total != workCount {
+		t.Errorf("1 ページ目 total = %d, want %d", total, workCount)
+	}
+
+	// 2 ページ目: 残り 5 件、total は変わらず 45
+	w = doGet(t, h, "/api/history?page=2")
+	items = decodeHistory(t, w.Body.Bytes())
+	if len(items) != 5 {
+		t.Fatalf("2 ページ目 items 数 = %d, want 5", len(items))
+	}
+	if total := decodeHistoryTotal(t, w.Body.Bytes()); total != workCount {
+		t.Errorf("2 ページ目 total = %d, want %d", total, workCount)
+	}
+}
+
 // TestHistorySortByPlayCount は sort=play_count / order での並び替えを検証する。
 func TestHistorySortByPlayCount(t *testing.T) {
 	h, database, _ := newTestServer(t)
@@ -168,5 +326,105 @@ func TestHistoryInvalidSortFallsBack(t *testing.T) {
 	items := decodeHistory(t, w.Body.Bytes())
 	if len(items) != 1 {
 		t.Errorf("items 数 = %d, want 1", len(items))
+	}
+}
+
+// doDelete は DELETE リクエストを発行するテスト用ヘルパー。
+func doDelete(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodDelete, path, nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+// decodeDeleted は {"deleted": n} レスポンスをデコードする。
+func decodeDeleted(t *testing.T, body []byte) int64 {
+	t.Helper()
+	var resp struct {
+		Deleted int64 `json:"deleted"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, body)
+	}
+	return resp.Deleted
+}
+
+// TestDeleteHistoryByWorkID は work_id 指定での作品単位削除を検証する。
+// 該当作品の履歴行だけが消え、他作品の履歴は残ること。
+func TestDeleteHistoryByWorkID(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	if _, err := database.Exec(`
+		INSERT INTO works (id, rj_number, title) VALUES
+		  (501, 'RJ500401', '猫の物語'),
+		  (502, 'RJ500402', '犬の日記');
+		INSERT INTO play_history (work_id, file_path, played_at) VALUES
+		  (501, 'a/01.mp3', '2026-01-01 10:00:00'),
+		  (501, 'a/02.mp3', '2026-01-02 10:00:00'),
+		  (502, 'b/01.mp3', '2026-01-03 10:00:00');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doDelete(t, h, "/api/history?work_id=501")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if deleted := decodeDeleted(t, w.Body.Bytes()); deleted != 2 {
+		t.Errorf("deleted = %d, want 2", deleted)
+	}
+
+	w = doGet(t, h, "/api/history")
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 1 || items[0].Work.ID != 502 {
+		t.Errorf("削除後の items = %+v, want 作品 502 のみ", items)
+	}
+
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM play_history WHERE work_id=501").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("work_id=501 の play_history 残存数 = %d, want 0", count)
+	}
+}
+
+// TestDeleteHistoryAll は work_id なしでの全件クリアを検証する。
+func TestDeleteHistoryAll(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	if _, err := database.Exec(`
+		INSERT INTO works (id, rj_number, title) VALUES
+		  (511, 'RJ500411', '猫の物語'),
+		  (512, 'RJ500412', '犬の日記');
+		INSERT INTO play_history (work_id, file_path, played_at) VALUES
+		  (511, 'a/01.mp3', '2026-01-01 10:00:00'),
+		  (512, 'b/01.mp3', '2026-01-02 10:00:00'),
+		  (512, 'b/02.mp3', '2026-01-03 10:00:00');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doDelete(t, h, "/api/history")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if deleted := decodeDeleted(t, w.Body.Bytes()); deleted != 3 {
+		t.Errorf("deleted = %d, want 3", deleted)
+	}
+
+	w = doGet(t, h, "/api/history")
+	items := decodeHistory(t, w.Body.Bytes())
+	if len(items) != 0 {
+		t.Errorf("全件削除後の items = %+v, want 0 件", items)
+	}
+}
+
+// TestDeleteHistoryInvalidWorkID は work_id が数値でない場合に 400 を返すことを検証する。
+func TestDeleteHistoryInvalidWorkID(t *testing.T) {
+	h, _, _ := newTestServer(t)
+
+	w := doDelete(t, h, "/api/history?work_id=abc")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400, body = %s", w.Code, w.Body.String())
 	}
 }

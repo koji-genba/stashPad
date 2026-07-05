@@ -5,14 +5,21 @@ package scanner
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 )
+
+// ErrAllRootsUnreadable は全ライブラリルートが読めずスキャンを中断したことを示す。
+// NAS 未マウント等の一時障害が典型で、API 層はこれを識別してユーザーに対処を促す
+// メッセージを返す(内部データを含まないためそのまま表示してよい)。
+var ErrAllRootsUnreadable = errors.New("全ライブラリルートが読めないためスキャンを中断しました")
 
 // rjPattern は "RJ" に続く 6〜8 桁の数字にマッチする。
 var rjPattern = regexp.MustCompile(`^(RJ\d{6,8})`)
@@ -31,6 +38,20 @@ type ThumbnailGenerator interface {
 	Generate(workID int64, rootPath string) (string, error)
 }
 
+// execQuerier は upsert 系ヘルパーが必要とする最小限のインターフェース。
+// *sql.DB と *sql.Tx はどちらもこれを満たすため、Scan からは *sql.Tx を渡して
+// バッチをトランザクションにまとめられる一方、既存テストのように *sql.DB を
+// 直接渡すことも変わらず可能。
+type execQuerier interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// upsertChunkSize は upsert ループを何件ごとにコミットするかの単位。
+// ルート全体を 1 トランザクションにすると巨大ライブラリでロールバック/失敗時の
+// コストが大きくなるため、件数で区切って BEGIN...COMMIT を繰り返す。
+const upsertChunkSize = 500
+
 // Scan はすべてのライブラリルートをスキャンしてワークを upsert し、
 // 消えたパスの root_path を NULL に戻す。
 // thumbGen が nil の場合はサムネイル生成をスキップする。
@@ -38,9 +59,22 @@ type ThumbnailGenerator interface {
 func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, error) {
 	var res Result
 
+	// roots を filepath.Clean で正規化する。config.Load 側でも Clean するが、
+	// Scan は公開 API であり呼び出し元の正規化に依存すべきではない。末尾スラッシュ
+	// 付きルート(例: "/mnt/nas/libB/")が生文字列のまま failedRoots に入ると、
+	// DB の root_path(filepath.Join で Clean 済み)との比較(underFailedRoot の
+	// HasPrefix(path, root+"/"))が二重スラッシュ不一致で false になり、部分障害時に
+	// markMissingPaths が配下を誤って NULL 化してしまう(PR #79 レビュー指摘)。
+	cleanedRoots := make([]string, len(roots))
+	for i, r := range roots {
+		cleanedRoots[i] = filepath.Clean(r)
+	}
+	roots = cleanedRoots
+
 	// ステップ1: 各ルートの直下ディレクトリを列挙し works を直列 upsert する。
 	// サムネイル生成が必要な (workID, absPath) ペアを収集する。
 	foundPaths := make(map[string]bool) // スキャンで見つかった root_path の集合
+	var failedRoots []string            // ReadDir が失敗したルート(NAS 一時障害・未マウント等)
 
 	type thumbJob struct {
 		workID  int64
@@ -48,10 +82,25 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 	}
 	var thumbJobs []thumbJob
 
+	// upsert ループ全体を(500 件チャンク単位の)トランザクションでまとめ、
+	// 作品ごとの db.Exec による fsync を減らす。1 件の upsert 失敗で
+	// トランザクション全体を失いたくないため、SQLite が自動 abort しない
+	// ことを利用し「ログして継続」した上で最後に Commit する。
+	tx, err := db.Begin()
+	if err != nil {
+		return Result{}, fmt.Errorf("スキャン用トランザクション開始失敗: %w", err)
+	}
+	// 正常系では明示的に Commit する。Commit 済みの tx に対する Rollback は
+	// 何もせずエラーを返すだけなので、パニックや早期 return からの保護として
+	// 無条件に defer しておいて問題ない。
+	defer func() { _ = tx.Rollback() }()
+
+	chunkCount := 0
 	for _, root := range roots {
 		entries, err := os.ReadDir(root)
 		if err != nil {
 			log.Printf("スキャン: ルート %q 読み込み失敗: %v", root, err)
+			failedRoots = append(failedRoots, root)
 			continue
 		}
 
@@ -64,27 +113,53 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 			foundPaths[absPath] = true
 			res.WorksFound++
 
-			n, linked, workID, err := upsertWorkNoThumb(db, absPath, dirName)
-			if err != nil {
-				log.Printf("スキャン: upsert 失敗 %q: %v", absPath, err)
-				continue
-			}
-			if n {
-				res.NewlyRegistered++
-			}
-			if linked {
-				res.LinkedToCSV++
+			n, linked, workID, uErr := upsertWorkNoThumb(tx, absPath, dirName)
+			if uErr != nil {
+				log.Printf("スキャン: upsert 失敗 %q: %v", absPath, uErr)
+			} else {
+				if n {
+					res.NewlyRegistered++
+				}
+				if linked {
+					res.LinkedToCSV++
+				}
+
+				// サムネイル生成ジョブを積む
+				if thumbGen != nil && workID > 0 {
+					thumbJobs = append(thumbJobs, thumbJob{workID: workID, absPath: absPath})
+				}
 			}
 
-			// サムネイル生成ジョブを積む
-			if thumbGen != nil && workID > 0 {
-				thumbJobs = append(thumbJobs, thumbJob{workID: workID, absPath: absPath})
+			chunkCount++
+			if chunkCount >= upsertChunkSize {
+				if cErr := tx.Commit(); cErr != nil {
+					return res, fmt.Errorf("upsert トランザクションのコミット失敗: %w", cErr)
+				}
+				newTx, bErr := db.Begin()
+				if bErr != nil {
+					return res, fmt.Errorf("upsert トランザクション再開失敗: %w", bErr)
+				}
+				tx = newTx
+				chunkCount = 0
 			}
 		}
 	}
 
-	// ステップ2: 既存 works の root_path が消えていたら NULL に戻す
-	missing, err := markMissingPaths(db, foundPaths)
+	if cErr := tx.Commit(); cErr != nil {
+		return res, fmt.Errorf("upsert トランザクションのコミット失敗: %w", cErr)
+	}
+
+	// 全ルートが読み込み失敗した場合は NAS 未マウント等の一時障害とみなし、
+	// DB に一切触れずに中断する(markMissingPaths による全件 NULL 化を防ぐ)。
+	if len(failedRoots) == len(roots) {
+		return Result{}, fmt.Errorf(
+			"%w (%d 件): マウント状態を確認してください", ErrAllRootsUnreadable, len(roots),
+		)
+	}
+
+	// ステップ2: 既存 works の root_path が消えていたら NULL に戻す。
+	// ただし読み込み失敗したルート配下は「消えた」と判定できないので対象外とする。
+	missing, err := markMissingPaths(db, foundPaths, failedRoots)
 	if err != nil {
 		return res, fmt.Errorf("消失パスの処理に失敗: %w", err)
 	}
@@ -149,7 +224,7 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 
 // upsertWorkNoThumb は 1 つのフォルダを works テーブルに upsert する(サムネイル生成なし)。
 // 返り値は (新規作成されたか, CSV 既存行に root_path がリンクされたか, 作成/更新された work の ID, エラー)。
-func upsertWorkNoThumb(db *sql.DB, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, workID int64, err error) {
+func upsertWorkNoThumb(db execQuerier, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, workID int64, err error) {
 	m := rjPattern.FindStringSubmatch(dirName)
 
 	if m != nil {
@@ -166,12 +241,13 @@ func upsertWorkNoThumb(db *sql.DB, absPath, dirName string) (newlyRegistered boo
 // upsertByRJ は RJ 番号でワークを upsert する。
 // 既存の CSV 行(rj_number 一致、root_path が NULL)があればリンクする。
 // 既存の root_path が同一であればスキップ(何も変えない)。
-func upsertByRJ(db *sql.DB, rjNumber, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, workID int64, err error) {
-	// タイトル候補: "RJxxxxxx_" 以降の文字列。アンダースコアがなければフォルダ名全体
-	title := dirName
-	if idx := firstUnderscoreAfterRJ(dirName); idx >= 0 {
-		title = dirName[idx+1:]
-	}
+func upsertByRJ(db execQuerier, rjNumber, absPath, dirName string) (newlyRegistered bool, linkedToCSV bool, workID int64, err error) {
+	// タイトル候補: RJ 番号の直後の文字列から先頭の区切り文字(_ - 半角スペース)を
+	// 取り除いたもの。フォルダ名全体で最初の "_" を探すと、RJ 番号直後が "_" 以外の
+	// 区切り(例: "-作品名_ver2")の場合に後方の "_" で誤って区切ってしまうため、
+	// RJ 番号の直後だけを見る(issue #65)。
+	rest := dirName[len(rjNumber):]
+	title := strings.TrimLeft(rest, "_- ")
 	if title == "" {
 		title = dirName
 	}
@@ -214,6 +290,14 @@ func upsertByRJ(db *sql.DB, rjNumber, absPath, dirName string) (newlyRegistered 
 
 	// root_path を更新(NULL → パス の場合は「CSV 行にリンク」と判定)
 	wasNull := !currentRootPath.Valid
+	if !wasNull {
+		// 別の非 NULL パスからの上書き = 同一 RJ 番号のフォルダが複数ルート
+		// (または同一ルート内の複数フォルダ)に存在する可能性が高い。
+		// 後勝ちで上書きする挙動は従来どおりだが、静かに切り替わると
+		// 気付けないためログに残す(issue #70)。
+		log.Printf("スキャン: %s の root_path を上書きします(同一 RJ 番号のフォルダが複数存在する可能性): %q → %q",
+			rjNumber, currentRootPath.String, absPath)
+	}
 	if _, uErr := db.Exec(
 		"UPDATE works SET root_path=?, updated_at=datetime('now') WHERE id=?",
 		absPath, id,
@@ -225,12 +309,29 @@ func upsertByRJ(db *sql.DB, rjNumber, absPath, dirName string) (newlyRegistered 
 
 // upsertByPath は RJ 番号なしフォルダをフォルダ名全体をタイトルとして登録する。
 // 既存判定は root_path の一致で行う。
-func upsertByPath(db *sql.DB, absPath, dirName string) (newlyRegistered bool, workID int64, err error) {
+// root_path 一致で見つからない場合、NAS 一時障害等で NULL 化された孤児行
+// (root_path IS NULL かつ rj_number IS NULL かつ同一タイトル)への再リンクを試みてから
+// INSERT する(issue #48: 重複行によるタグ・履歴の消失を防ぐ)。
+func upsertByPath(db execQuerier, absPath, dirName string) (newlyRegistered bool, workID int64, err error) {
 	var id int64
 	row := db.QueryRow("SELECT id FROM works WHERE root_path=?", absPath)
 	scanErr := row.Scan(&id)
 
 	if scanErr == sql.ErrNoRows {
+		orphanID, found, findErr := findOrphanWorkByTitle(db, dirName)
+		if findErr != nil {
+			return false, 0, findErr
+		}
+		if found {
+			if _, uErr := db.Exec(
+				"UPDATE works SET root_path=?, updated_at=datetime('now') WHERE id=?",
+				absPath, orphanID,
+			); uErr != nil {
+				return false, 0, fmt.Errorf("孤児行の再リンク UPDATE 失敗: %w", uErr)
+			}
+			return false, orphanID, nil
+		}
+
 		res, insErr := db.Exec(
 			`INSERT INTO works (title, root_path, updated_at)
 			 VALUES (?, ?, datetime('now'))`,
@@ -252,9 +353,28 @@ func upsertByPath(db *sql.DB, absPath, dirName string) (newlyRegistered bool, wo
 	return false, id, nil
 }
 
+// findOrphanWorkByTitle は root_path・rj_number がともに NULL で、
+// title が一致する行を 1 件探す。見つからなければ found=false を返す。
+func findOrphanWorkByTitle(db execQuerier, title string) (id int64, found bool, err error) {
+	row := db.QueryRow(
+		"SELECT id FROM works WHERE root_path IS NULL AND rj_number IS NULL AND title=? ORDER BY id LIMIT 1",
+		title,
+	)
+	scanErr := row.Scan(&id)
+	if scanErr == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if scanErr != nil {
+		return 0, false, fmt.Errorf("孤児行 SELECT 失敗: %w", scanErr)
+	}
+	return id, true, nil
+}
+
 // markMissingPaths は DB にある root_path のうち、foundPaths に含まれないものを NULL に戻す。
+// ただし failedRoots 配下(読み込みに失敗したルート)にあるパスは、
+// 「実際に消えた」のか「読めなかっただけ」なのか区別できないため対象から除外する。
 // NULL 化した件数を返す。
-func markMissingPaths(db *sql.DB, foundPaths map[string]bool) (int, error) {
+func markMissingPaths(db *sql.DB, foundPaths map[string]bool, failedRoots []string) (int, error) {
 	rows, err := db.Query("SELECT id, root_path FROM works WHERE root_path IS NOT NULL")
 	if err != nil {
 		return 0, fmt.Errorf("root_path 一覧取得失敗: %w", err)
@@ -271,32 +391,52 @@ func markMissingPaths(db *sql.DB, foundPaths map[string]bool) (int, error) {
 		if err := rows.Scan(&r.id, &r.path); err != nil {
 			return 0, err
 		}
-		if !foundPaths[r.path] {
+		if !foundPaths[r.path] && !underFailedRoot(r.path, failedRoots) {
 			toNull = append(toNull, r)
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
+	// 以降は db.Exec によるトランザクション開始が必要になるため、SELECT のカーソルは
+	// ここで明示的に閉じておく(defer によるクローズも安全のため残す)。
+	rows.Close()
+
+	if len(toNull) == 0 {
+		return 0, nil
+	}
+
+	// NULL 化 UPDATE ループを 1 トランザクションにまとめ、件数分の fsync を避ける。
+	// upsert ループと同様、1 件の失敗でトランザクション全体を失わないよう
+	// ログして継続し、最後に Commit する。
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("root_path NULL 化用トランザクション開始失敗: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 
 	for _, r := range toNull {
-		if _, err := db.Exec(
+		if _, err := tx.Exec(
 			"UPDATE works SET root_path=NULL, updated_at=datetime('now') WHERE id=?",
 			r.id,
 		); err != nil {
 			log.Printf("root_path NULL 化失敗 id=%d: %v", r.id, err)
 		}
 	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("root_path NULL 化用トランザクションのコミット失敗: %w", err)
+	}
 	return len(toNull), nil
 }
 
-// firstUnderscoreAfterRJ は "RJxxxxxx_" の最初の "_" のインデックスを返す。
-// 見つからなければ -1。
-func firstUnderscoreAfterRJ(name string) int {
-	for i, c := range name {
-		if c == '_' {
-			return i
+// underFailedRoot は path がいずれかの failedRoots 配下(またはルート自身)にあるかを判定する。
+// セパレータ境界を考慮し、"/lib" と "/lib2" のような部分一致誤爆を防ぐ。
+func underFailedRoot(path string, failedRoots []string) bool {
+	for _, root := range failedRoots {
+		if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
+			return true
 		}
 	}
-	return -1
+	return false
 }

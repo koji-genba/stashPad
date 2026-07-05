@@ -3,7 +3,7 @@
 [design.md](design.md) を実装に落とすための具体的指針。設計と矛盾が生じた場合は design.md を正とし、本書を更新すること。
 
 - 対象: Phase 1 (MVP)
-- 最終更新: 2026-06-10
+- 最終更新: 2026-07-04
 
 ---
 
@@ -99,6 +99,15 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
       "age_rating": "R-15",
       "has_folder": true,
       "thumbnail_url": "/api/works/12/thumbnail"
+    },
+    {
+      "id": 13,
+      "rj_number": null,
+      "title": "RJ番号なしフォルダ",
+      "circle": null,
+      "age_rating": null,
+      "has_folder": true,
+      "thumbnail_url": null
     }
   ],
   "total": 1532,
@@ -110,8 +119,10 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
 - `q` は空白(半角・全角・タブ)区切りで複数語の AND。各語はタイトル・サークル・RJ 番号への部分一致。`-語` で除外(`-` 単体は無視)
 - `tags` は AND 条件(指定タグを全部持つ作品のみ)。`exclude_tags` は指定タグを 1 つでも持つ作品を除外(`NOT EXISTS`)
 - `sort`: `purchase_date`(デフォルト) / `title` / `created_at` / `circle`
+  - 既知の制限: `title` / `circle` のソートは SQLite 既定の BINARY 照合(Unicode コードポイント順)で行われるため、日本語の五十音順にはならない(ICU 拡張なしの SQLite 単体では実現できないため当面この挙動を仕様とする。issue #70)
 - `has_folder` = `root_path IS NOT NULL`。false の作品は一覧で「未取込」表示
 - `hidden`: 未指定/`0` は可視作品のみ、`1` は非表示作品のみ(設定画面の非表示一覧用)。デフォルトで非表示作品は一覧に出ない
+- **NULL 許容フィールド(`rj_number` / `circle` / `age_rating` / `thumbnail_url`)は値が無い場合でもキー自体を省略せず `null` を返す**(フロントの型定義 `string | null` と実際の契約を一致させるための決定。issue #57/#38-2。レスポンスは typed struct から生成しており、`items` 要素だけでなく `GET /api/works/{id}` の NULL 許容フィールド・`GET /api/history` の `work.thumbnail_url` も同様に明示 null)
 
 ### GET /api/works/12
 
@@ -129,15 +140,18 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
   "file_size_text": "4.91GB",
   "has_folder": true,
   "hidden": false,
+  "favorited": false,
   "tags": [
     {"id": 3, "name": "ボイス・ASMR", "category": "genre"},
     {"id": 17, "name": "耳舐め", "category": "detail_genre"},
     {"id": 41, "name": "耳恋なか", "category": "voice_actor"}
-  ]
+  ],
+  "thumbnail_url": "/api/works/12/thumbnail"
 }
 ```
 
 - `hidden` は常に bool で返る。`PATCH /api/works/12` に `{"hidden": true|false}` を送ると切り替わる(タイトル・サークル編集と同じエンドポイント)
+- `rj_number` / `circle` / `series_name` / `purchase_date` / `work_type` / `age_rating` / `file_format` / `file_size_text` / `thumbnail_url` は NULL 許容。値が無い場合も上記のようにキーは残り値が `null` になる(キー省略ではない)
 
 ### GET /api/works/12/entries?path=mp3
 
@@ -155,7 +169,7 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
 - `path=` 空文字列が作品ルート
 - ディレクトリ→ファイルの順、それぞれ**自然順ソート**(§7)
 
-### GET /api/tags?category=voice_actor&q=耳
+### GET /api/tags?category=voice_actor&q=耳&limit=20
 
 ```json
 {
@@ -165,7 +179,9 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
 }
 ```
 
-### GET /api/circles?q=ランドセル
+- `limit`: 任意。指定時は 1〜1000 にクランプ。未指定なら従来どおり全件返す(issue #38-3)
+
+### GET /api/circles?q=ランドセル&limit=20
 
 ```json
 {
@@ -176,6 +192,7 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
 ```
 
 - `circle` が NULL・空文字の作品は集計から除外。`work_count` 降順 → サークル名昇順
+- `limit`: 任意。指定時は 1〜1000 にクランプ。未指定なら従来どおり全件返す(issue #38-3)
 
 ### POST /api/works/12/tags
 
@@ -195,6 +212,12 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
       "last_played_at": "2026-06-10T22:15:03Z",
       "last_file_path": "mp3/01_オープニング.mp3",
       "play_count": 8
+    },
+    {
+      "work": {"id": 13, "title": "サムネ無し作品", "thumbnail_url": null},
+      "last_played_at": "2026-06-09T10:00:00Z",
+      "last_file_path": "mp3/02.mp3",
+      "play_count": 1
     }
   ],
   "page": 1
@@ -207,7 +230,7 @@ CREATE INDEX idx_play_history_work ON play_history(work_id, played_at);
 - `sort`: `last_played`(既定) / `play_count`。ホワイトリスト照合のみで SQL に渡す
 - `order`: `desc`(既定) / `asc`
 
-既定は最終再生日時の降順。
+既定は最終再生日時の降順。`work.thumbnail_url` もサムネ無しなら `null`(キー省略ではない)。
 
 ### POST /api/import/csv
 
@@ -229,13 +252,39 @@ multipart で CSV を受け取り、結果サマリを返す:
 
 | media_kind | 拡張子 |
 |------------|--------|
-| audio | .flac .wav .mp3 |
-| video | .mp4 |
-| image | .jpg .jpeg .png .webp |
+| audio | .flac .wav .mp3 .m4a .aac .ogg .opus |
+| video | .mp4 .webm .m4v |
+| image | .jpg .jpeg .png .webp .gif .avif |
 | text | .txt |
 | other | 上記以外すべて |
 
-大文字小文字は無視。判定はこの表に閉じる(MIME 推定などはしない)。配信時の Content-Type は拡張子から `mime.TypeByExtension` で決める。
+大文字小文字は無視。判定はこの表に閉じる(MIME 推定などはしない)。判定ロジックは `media.KindByExt`。
+
+ブラウザ互換の注意点:
+- ogg / opus は Safari 等一部ブラウザでネイティブ再生に対応していない場合がある(#54)。
+- avif は media_kind としては image だが、Go 標準ライブラリにデコーダが無くサムネイル生成の対象外(`media.CanDecodeThumb` が false を返す。`thumb` パッケージの候補選定は KindByExt ではなく CanDecodeThumb を使う)。gif は Go 標準ライブラリでデコード可能なのでサムネイル候補に含める。
+
+### 配信時の Content-Type(拡張子 → MIME)
+
+`mime.TypeByExtension` は OS の `/etc/mime.types` に依存し環境依存になる(distroless では `.flac` が `application/octet-stream` になる等の問題があった)。そのため `media.MimeByExt` で明示テーブルを持ち、配信時(`handleWorkFile`)はこれを優先し、対応外の拡張子のみ `mime.TypeByExtension` にフォールバックする。
+
+| 拡張子 | MIME |
+|--------|------|
+| .flac | audio/flac |
+| .wav | audio/wav |
+| .mp3 | audio/mpeg |
+| .m4a | audio/mp4 |
+| .aac | audio/aac |
+| .ogg | audio/ogg |
+| .opus | audio/ogg(Opus in Ogg コンテナ。audio/opus ではない) |
+| .mp4 / .m4v | video/mp4 |
+| .webm | video/webm |
+| .jpg / .jpeg | image/jpeg |
+| .png | image/png |
+| .webp | image/webp |
+| .gif | image/gif |
+| .avif | image/avif |
+| .txt | text/plain(charset は付けない。文字コード判定はフロント側で行うため) |
 
 ## 6. パストラバーサル検証(セキュリティ境界・必ずテストを書く)
 
@@ -258,9 +307,15 @@ multipart で CSV を受け取り、結果サマリを返す:
 f, _ := os.Open(resolvedPath)
 defer f.Close()
 st, _ := f.Stat()
-w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(resolvedPath)))
+ct := media.MimeByExt(resolvedPath)
+if ct == "" {
+	ct = mime.TypeByExtension(filepath.Ext(resolvedPath))
+}
+w.Header().Set("Content-Type", ct)
 http.ServeContent(w, r, st.Name(), st.ModTime(), f)
 ```
+
+Content-Type は `media.MimeByExt` の明示テーブルを優先する(§5 参照。`mime.TypeByExtension` 単独は環境依存)。
 
 `http.ServeContent` が Range / If-Range / 206 / HEAD を全部処理する。自前で Range をパースしないこと。
 
@@ -282,6 +337,9 @@ http.ServeContent(w, r, st.Name(), st.ModTime(), f)
 - タグ再リンク: その作品の **CSV 由来カテゴリのタグ紐付けを一旦全削除して張り直す**。`custom` カテゴリは触らない
 - 1 ファイル分は単一トランザクションで処理
 - docs/samples/works.csv をテストフィクスチャとして使い、RJ404669 が design.md §4.3 のとおり 14 タグに展開されることをテストする(genre×2 + detail_genre×8 + scenario×1 + illustration×1 + voice_actor×2)
+- **CSV 読み込みはストリーミング**(issue #38-5)。`csv.Reader.ReadAll()` で全行を一括メモリ展開せず、ヘッダ読み込み後は `csvReader.FieldsPerRecord = len(header)` を設定した上で `Read()` を 1 行ずつ呼ぶループにする。**行単位のエラー(列数不一致など)はその行だけ `Result.Errors` に `"行N: ..."` として積んで `continue` し、残りの行のインポートは中断しない**(issue #70。以前は `ReadAll()` の性質上、1 行でも列数不一致があると CSV 全体の読み込みがそこで失敗し、後続行が一切取り込まれなかった)
+- **`Result.Linked` は「今回のインポートで新たに CSV とスキャン済みフォルダが結び付いた」件数のみを数える**(issue #70)。`upsertWork` は既存行の CSV 由来カラム(`series_name`/`circle`/`purchase_date`/`work_type`/`age_rating`/`file_format`/`file_size_text`/`event`)が今回の更新前に**全て NULL**かどうかを見て、「この作品と CSV が初めて結び付いた」場合のみ加算する。スキャナが作る行(root_path はあるが CSV データが一切無い)はこれらが必ず全て NULL になる一方、一度でも CSV import を通した行はいずれかのカラムに値が入るため、以降の再インポートでは(データが変わらなくても)二重に加算されない。以前は「root_path が付いている既存行」であれば毎回加算していたため、同じ CSV を定期的に再インポートするたびに `linked` の値が水増しされるバグがあった
+  - 既知の制約: CSV 側の該当列が全て空欄の行(通常の DLsite エクスポートでは起きにくい)を再インポートすると、上記の「全て NULL」判定が再び真になり得るため稀に重複加算される可能性がある。`linked` は目安表示であり厳密なカウンタではないと理解した上での実用的な妥協
 
 ## 11. フロントエンド
 

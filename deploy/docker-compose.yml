@@ -7,6 +7,10 @@ services:
     image: stashpad:latest
     ports:
       - "8080:8080"
+    # イメージは distroless:nonroot(uid/gid 65532)で実行される。
+    # ./data はこの uid が書き込める権限にしておくこと(例: chown 65532:65532 data)。
+    # ホスト側で chown できない場合は user: を明示してもよい(コメントアウトを外して使用):
+    # user: "65532:65532"
     volumes:
       - /mnt/fileserver/voice:/media/voice:ro # ライブラリルートは複数指定可
       - /mnt/fileserver/comic:/media/comic:ro
@@ -16,3 +20,9 @@ services:
       STASHPAD_DATA_DIR: /data
       STASHPAD_SCAN_ON_START: "true"
     restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "/stashpad", "-healthcheck"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s

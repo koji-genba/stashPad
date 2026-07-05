@@ -53,11 +53,11 @@ func Import(db *sql.DB, reader io.Reader) (Result, error) {
 		return res, fmt.Errorf("CSV に rj_number カラムがありません")
 	}
 
-	// 全行読み込み
-	records, err := csvReader.ReadAll()
-	if err != nil {
-		return res, fmt.Errorf("CSV 読み込み失敗: %w", err)
-	}
+	// ヘッダの列数を基準にフィールド数を検証する(列数が合わない行は Read() が
+	// エラーを返す)。以前は ReadAll() で全行を一度にメモリへ読み込んでいたが、
+	// 大規模 CSV でのメモリ使用量を抑えるため 1 行ずつ Read() するストリーミング方式に
+	// 変更する(issue #38-5)。
+	csvReader.FieldsPerRecord = len(header)
 
 	// 単一トランザクション
 	tx, err := db.Begin()
@@ -70,9 +70,23 @@ func Import(db *sql.DB, reader io.Reader) (Result, error) {
 		}
 	}()
 
-	for i, record := range records {
-		if err2 := importRow(tx, &res, colIdx, record, i+2); err2 != nil {
-			res.Errors = append(res.Errors, fmt.Sprintf("行%d: %v", i+2, err2))
+	// lineNum はヘッダを1行目として数えるので、最初のデータ行は2行目から始まる。
+	lineNum := 1
+	for {
+		lineNum++
+		record, readErr := csvReader.Read()
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			// 列数不一致などの行単位のエラーはこの行だけスキップし、残りの行の
+			// インポートは継続する(以前は ReadAll() が最初の不正行で即座に
+			// エラーを返し、CSV 全体のインポートが失敗していた。issue #70)。
+			res.Errors = append(res.Errors, fmt.Sprintf("行%d: %v", lineNum, readErr))
+			continue
+		}
+		if err2 := importRow(tx, &res, colIdx, record, lineNum); err2 != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("行%d: %v", lineNum, err2))
 		}
 	}
 
@@ -164,11 +178,22 @@ type WorkRow struct {
 func upsertWork(tx *sql.Tx, row WorkRow) (workID int64, created bool, linked bool, err error) {
 	var id int64
 	var currentRootPath sql.NullString
+	var manuallyEdited bool
+	// CSV 由来カラム(series_name/circle/purchase_date/work_type/age_rating/
+	// file_format/file_size_text/event)が今回の更新前に全て NULL かどうか。
+	// スキャナが作る works 行(root_path はあるが CSV データは一切無い)はこれが
+	// すべて NULL になるため、「この作品と CSV が初めて結び付いた」ことの
+	// 判定に使う(issue #70。Linked カウントの水増し修正)。
+	var csvUntouched bool
 
 	scanErr := tx.QueryRow(
-		"SELECT id, root_path FROM works WHERE rj_number=?",
+		`SELECT id, root_path, manually_edited,
+			(series_name IS NULL AND circle IS NULL AND purchase_date IS NULL AND
+			 work_type IS NULL AND age_rating IS NULL AND file_format IS NULL AND
+			 file_size_text IS NULL AND event IS NULL)
+		 FROM works WHERE rj_number=?`,
 		row.RJNumber,
-	).Scan(&id, &currentRootPath)
+	).Scan(&id, &currentRootPath, &manuallyEdited, &csvUntouched)
 
 	if scanErr == sql.ErrNoRows {
 		// 新規作成
@@ -194,23 +219,45 @@ func upsertWork(tx *sql.Tx, row WorkRow) (workID int64, created bool, linked boo
 		return 0, false, false, scanErr
 	}
 
-	// 既存行の更新。root_path が NULL で今回も NULL なら linked=false、
-	// スキャン済みで root_path が付いていれば「CSV がリンクされた」= linked=true。
-	linkedFlag := currentRootPath.Valid
+	// 既存行の更新。「リンクされた」とみなすのは、root_path が付いている
+	// (スキャン済み)行に対して CSV データが結び付くのが今回が初めてのケースのみ。
+	// csvUntouched が false(=前回以前の CSV インポートで既にメタデータが入っている)
+	// なら、今回はただの再インポート(更新)であり新たなリンクではないので数えない
+	// (issue #70。以前は root_path Valid であるだけで毎回 linked=true と数えており、
+	// 定期的な CSV 再インポートのたびに Linked 件数が水増しされるバグがあった)。
+	linkedFlag := currentRootPath.Valid && csvUntouched
 
-	_, uErr := tx.Exec(
-		`UPDATE works SET
-			title=?, series_name=?, circle=?, purchase_date=?,
-			work_type=?, file_format=?, file_size_text=?, age_rating=?, event=?,
-			updated_at=datetime('now')
-		 WHERE id=?`,
-		row.Title,
-		nullIfEmpty(row.SeriesName), nullIfEmpty(row.Circle),
-		nullIfEmpty(row.PurchaseDate), nullIfEmpty(row.WorkType),
-		nullIfEmpty(row.FileFormat), nullIfEmpty(row.FileSizeText),
-		nullIfEmpty(row.AgeRating), nullIfEmpty(row.Event),
-		id,
-	)
+	// manually_edited フラグが立っている作品は title/circle を PATCH での手動編集で
+	// 保護しているため、CSV 再インポートで上書きしない(その他メタ・タグは従来どおり更新。issue #64 案 A)。
+	var uErr error
+	if manuallyEdited {
+		_, uErr = tx.Exec(
+			`UPDATE works SET
+				series_name=?, purchase_date=?,
+				work_type=?, file_format=?, file_size_text=?, age_rating=?, event=?,
+				updated_at=datetime('now')
+			 WHERE id=?`,
+			nullIfEmpty(row.SeriesName),
+			nullIfEmpty(row.PurchaseDate), nullIfEmpty(row.WorkType),
+			nullIfEmpty(row.FileFormat), nullIfEmpty(row.FileSizeText),
+			nullIfEmpty(row.AgeRating), nullIfEmpty(row.Event),
+			id,
+		)
+	} else {
+		_, uErr = tx.Exec(
+			`UPDATE works SET
+				title=?, series_name=?, circle=?, purchase_date=?,
+				work_type=?, file_format=?, file_size_text=?, age_rating=?, event=?,
+				updated_at=datetime('now')
+			 WHERE id=?`,
+			row.Title,
+			nullIfEmpty(row.SeriesName), nullIfEmpty(row.Circle),
+			nullIfEmpty(row.PurchaseDate), nullIfEmpty(row.WorkType),
+			nullIfEmpty(row.FileFormat), nullIfEmpty(row.FileSizeText),
+			nullIfEmpty(row.AgeRating), nullIfEmpty(row.Event),
+			id,
+		)
+	}
 	if uErr != nil {
 		return 0, false, false, uErr
 	}

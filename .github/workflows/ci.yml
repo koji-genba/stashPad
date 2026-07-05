@@ -1,3 +1,7 @@
+# CI: バックエンド(go vet / go test)、フロントエンド(lint / typecheck / vitest / ビルド)、
+# embed 込みビルド検証を全ブランチ push と PR で実行し、
+# main push / v*.*.* タグ push では GHCR へイメージを build & push する
+# (デプロイ側= homelab repo の Flux がタグを見て staging/prod へ反映する)。
 name: CI
 
 on:
@@ -14,16 +18,23 @@ env:
 jobs:
   test-backend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go vet ./...
       - run: go test ./...
-        working-directory: backend
 
   test-frontend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,16 +43,39 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-        working-directory: frontend
+      - run: npm run lint
       - run: npm run typecheck
-        working-directory: frontend
       - run: npm run test
-        working-directory: frontend
       - run: npm run build
+
+  # Dockerfile と同じ流れ(frontend dist を backend/internal/web/dist へコピーして
+  # go build)が通ることを検証する。embed 断面の壊れを PR 段階で検出する。
+  build-embed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: フロントエンドをビルド
+        run: npm ci && npm run build
         working-directory: frontend
+      - name: dist を embed 先へコピー
+        run: |
+          rm -rf backend/internal/web/dist
+          cp -r frontend/dist backend/internal/web/dist
+      - name: バックエンドをビルド(embed 込み)
+        run: CGO_ENABLED=0 go build ./cmd/stashpad
+        working-directory: backend
 
   build-and-push:
-    needs: [test-backend, test-frontend]
+    needs: [test-backend, test-frontend, build-embed]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:

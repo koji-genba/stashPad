@@ -20,7 +20,8 @@ export interface WorkListItem {
   circle: string | null;
   age_rating: string | null;
   has_folder: boolean;
-  thumbnail_url: string;
+  thumbnail_url: string | null;
+  favorited: boolean;
 }
 
 /** GET /api/works のレスポンス */
@@ -51,7 +52,9 @@ export interface WorkDetail {
   file_size_text: string | null;
   has_folder: boolean;
   hidden: boolean;
+  favorited: boolean;
   tags: Tag[];
+  thumbnail_url: string | null;
 }
 
 /** GET /api/works/{id}/entries の entries 要素 */
@@ -86,7 +89,7 @@ export interface HistoryItem {
   work: {
     id: number;
     title: string;
-    thumbnail_url: string;
+    thumbnail_url: string | null;
   };
   last_played_at: string;
   last_file_path: string;
@@ -95,6 +98,7 @@ export interface HistoryItem {
 
 export interface HistoryResponse {
   items: HistoryItem[];
+  total: number;
   page: number;
   limit: number;
 }
@@ -108,6 +112,11 @@ export interface HistoryParams {
   q?: string;
   sort?: HistorySort;
   order?: HistoryOrder;
+}
+
+/** DELETE /api/history のレスポンス */
+export interface DeleteHistoryResult {
+  deleted: number;
 }
 
 /** POST /api/import/csv のレスポンス */
@@ -131,10 +140,19 @@ export interface TagCleanupResult {
   deleted: number;
 }
 
-/** POST /api/thumbnails/rebuild のレスポンス */
-export interface ThumbnailRebuildResult {
+/**
+ * POST /api/thumbnails/rebuild(202 Accepted)および
+ * GET /api/thumbnails/rebuild/status のレスポンス。
+ *
+ * サムネイル一括再生成は非同期ジョブとして実行される(issue #55)。POST は
+ * ジョブを開始した時点のスナップショット(running=true, total 確定済み)を
+ * 返すのみで、実際の完了は status をポーリングして確認する。
+ */
+export interface ThumbnailRebuildStatus {
+  running: boolean;
   checked: number;
   regenerated: number;
+  total: number;
 }
 
 /** POST /api/works/{id}/thumbnail/refresh のレスポンス */
@@ -147,7 +165,14 @@ export interface ApiError {
   error: string;
 }
 
-export type SortKey = 'purchase_date' | 'title' | 'created_at' | 'circle';
+export type SortKey =
+  | 'purchase_date'
+  | 'title'
+  | 'created_at'
+  | 'circle'
+  | 'favorited_at'
+  | 'last_played'
+  | 'play_count';
 export type SortOrder = 'asc' | 'desc';
 
 /** GET /api/circles の items 要素 */

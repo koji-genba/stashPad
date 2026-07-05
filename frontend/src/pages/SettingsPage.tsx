@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
+  DeleteHistoryResult,
   ImportResult,
   ScanResult,
   TagCleanupResult,
-  ThumbnailRebuildResult,
+  ThumbnailRebuildStatus,
   WorkListItem,
 } from '@/api/types';
 import {
   cleanupTags,
+  deleteHistory,
+  fetchThumbnailRebuildStatus,
   fetchWorks,
   importCsv,
   rebuildThumbnails,
@@ -17,6 +20,9 @@ import {
 } from '@/api/client';
 import { useTagStore } from '@/store/tagStore';
 import styles from './SettingsPage.module.css';
+
+/** サムネイル一括再生成の進捗ポーリング間隔(ミリ秒) */
+const REBUILD_POLL_INTERVAL_MS = 1000;
 
 export default function SettingsPage() {
   const fileInput = useRef<HTMLInputElement>(null);
@@ -33,11 +39,23 @@ export default function SettingsPage() {
   const [cleanupResult, setCleanupResult] = useState<TagCleanupResult | null>(null);
   const [cleanupError, setCleanupError] = useState<string | null>(null);
 
+  const [clearingHistory, setClearingHistory] = useState(false);
+  const [clearHistoryResult, setClearHistoryResult] = useState<DeleteHistoryResult | null>(
+    null,
+  );
+  const [clearHistoryError, setClearHistoryError] = useState<string | null>(null);
+
   const [rebuilding, setRebuilding] = useState(false);
-  const [rebuildResult, setRebuildResult] = useState<ThumbnailRebuildResult | null>(
+  const [rebuildStatus, setRebuildStatus] = useState<ThumbnailRebuildStatus | null>(
     null,
   );
   const [rebuildError, setRebuildError] = useState<string | null>(null);
+  // ポーリング用の setInterval ハンドル。アンマウント時・完了時に必ずクリアする
+  const rebuildPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // ポーリング中の fetch を追跡する AbortController。unmount/停止時に abort する
+  const rebuildAbortRef = useRef<AbortController | null>(null);
+  // 前回の fetch が完了していない間は次の tick で新たな fetch を発行しないためのガード
+  const rebuildInFlightRef = useRef(false);
 
   // 非表示作品一覧
   const [hiddenWorks, setHiddenWorks] = useState<WorkListItem[]>([]);
@@ -96,21 +114,107 @@ export default function SettingsPage() {
     }
   };
 
+  const onClearHistory = async () => {
+    if (!window.confirm('再生履歴を全て削除しますか?この操作は取り消せません')) return;
+    setClearingHistory(true);
+    setClearHistoryResult(null);
+    setClearHistoryError(null);
+    try {
+      const result = await deleteHistory();
+      setClearHistoryResult(result);
+    } catch (e) {
+      setClearHistoryError(e instanceof Error ? e.message : '履歴削除に失敗しました');
+    } finally {
+      setClearingHistory(false);
+    }
+  };
+
+  // ポーリングを止める(アンマウント時・完了時・エラー時に呼ぶ)。
+  // 進行中の in-flight fetch があれば abort し、次回開始時に備えてガードも解除する
+  // (既存のマウント時復帰パスの cancelled フラグと同じく、離脱後は結果を反映しない意図)
+  const stopRebuildPolling = () => {
+    if (rebuildPollRef.current !== null) {
+      clearInterval(rebuildPollRef.current);
+      rebuildPollRef.current = null;
+    }
+    rebuildAbortRef.current?.abort();
+    rebuildAbortRef.current = null;
+    rebuildInFlightRef.current = false;
+  };
+
+  // running=false になるまで status を 1 秒間隔でポーリングする。
+  // 前回の fetch が完了していない間は tick をスキップする(in-flight ガード)。
+  // 各 tick の fetch は AbortController を保持し、stopRebuildPolling(unmount 含む)で
+  // 中断できるようにする(PR #79 レビュー)。
+  const startRebuildPolling = () => {
+    stopRebuildPolling();
+    rebuildPollRef.current = setInterval(() => {
+      if (rebuildInFlightRef.current) return;
+      const ac = new AbortController();
+      rebuildAbortRef.current = ac;
+      rebuildInFlightRef.current = true;
+      fetchThumbnailRebuildStatus(ac.signal)
+        .then((status) => {
+          if (ac.signal.aborted) return;
+          setRebuildStatus(status);
+          if (!status.running) {
+            stopRebuildPolling();
+            setRebuilding(false);
+          }
+        })
+        .catch((e: unknown) => {
+          if (ac.signal.aborted) return;
+          stopRebuildPolling();
+          setRebuilding(false);
+          setRebuildError(e instanceof Error ? e.message : '進捗の取得に失敗しました');
+        })
+        .finally(() => {
+          if (rebuildAbortRef.current === ac) rebuildInFlightRef.current = false;
+        });
+    }, REBUILD_POLL_INTERVAL_MS);
+  };
+
   const onRebuildThumbnails = async () => {
     setRebuilding(true);
-    setRebuildResult(null);
+    setRebuildStatus(null);
     setRebuildError(null);
     try {
-      const result = await rebuildThumbnails();
-      setRebuildResult(result);
+      const status = await rebuildThumbnails();
+      setRebuildStatus(status);
+      if (status.running) {
+        startRebuildPolling();
+      } else {
+        setRebuilding(false);
+      }
     } catch (e) {
       setRebuildError(
         e instanceof Error ? e.message : 'サムネイル再生成に失敗しました',
       );
-    } finally {
       setRebuilding(false);
     }
   };
+
+  // マウント時に既にジョブが実行中なら(他タブでの起動等)ポーリングを再開する
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await fetchThumbnailRebuildStatus();
+        if (cancelled || !status.running) return;
+        setRebuilding(true);
+        setRebuildStatus(status);
+        startRebuildPolling();
+      } catch {
+        // 初回チェックの失敗は無視する(通常のボタン操作には影響しない)
+      }
+    })();
+    return () => {
+      cancelled = true;
+      stopRebuildPolling();
+    };
+    // マウント時のみ実行する
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 非表示作品一覧を取得する
   // 設定画面では上限 200 件まで表示する。それを超える場合は注記でユーザに知らせる
@@ -131,6 +235,8 @@ export default function SettingsPage() {
 
   // マウント時に非表示作品一覧をロード
   useEffect(() => {
+    // loadHiddenWorks は内部で setHiddenLoading(true) を同期的に呼ぶ意図的な setState
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadHiddenWorks();
   }, []);
 
@@ -295,10 +401,19 @@ export default function SettingsPage() {
             {rebuilding ? 'サムネイル再生成中…' : 'サムネイル再生成'}
           </button>
           {rebuilding && <span className="spinner" />}
-          {rebuildResult && (
+          {rebuildStatus && (
             <span className={styles.maintResult}>
-              確認 <b>{rebuildResult.checked}</b> / 再生成{' '}
-              <b>{rebuildResult.regenerated}</b>
+              {rebuildStatus.running ? (
+                <>
+                  確認 <b>{rebuildStatus.checked}</b>/<b>{rebuildStatus.total}</b> / 再生成{' '}
+                  <b>{rebuildStatus.regenerated}</b>
+                </>
+              ) : (
+                <>
+                  確認 <b>{rebuildStatus.checked}</b> / 再生成{' '}
+                  <b>{rebuildStatus.regenerated}</b>
+                </>
+              )}
             </span>
           )}
         </div>
@@ -308,6 +423,23 @@ export default function SettingsPage() {
           </p>
         )}
         {rebuildError && <p className={styles.error}>{rebuildError}</p>}
+
+        <div className={styles.maintRow}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void onClearHistory()}
+            disabled={clearingHistory}
+          >
+            {clearingHistory ? '削除中…' : '再生履歴を全削除'}
+          </button>
+          {clearHistoryResult && (
+            <span className={styles.maintResult}>
+              削除 <b>{clearHistoryResult.deleted}</b> 件
+            </span>
+          )}
+        </div>
+        {clearHistoryError && <p className={styles.error}>{clearHistoryError}</p>}
       </section>
 
       {/* 非表示の作品 */}

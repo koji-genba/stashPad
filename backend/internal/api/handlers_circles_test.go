@@ -98,6 +98,76 @@ func TestListCircles(t *testing.T) {
 	})
 }
 
+// TestListCirclesLikeSpecialChars は q に含まれる % がワイルドカード展開されず
+// リテラル一致のみヒットすることを検証する(issue #50)。
+func TestListCirclesLikeSpecialChars(t *testing.T) {
+	h, database, _ := newTestServer(t)
+
+	if _, err := database.Exec(`
+		INSERT INTO works (rj_number, title, circle) VALUES
+		  ('RJ410001', '作品1', '100%OFFサークル'),
+		  ('RJ410002', '作品2', '100XOFFサークル')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, "/api/circles?q="+url.QueryEscape("100%OFF"))
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 1 || body.Items[0].Name != "100%OFFサークル" {
+		t.Errorf("q=100%%OFF items = %+v, want [100%%OFFサークル]", body.Items)
+	}
+}
+
+// TestListCirclesLimit は ?limit= で件数が絞られ、未指定なら全件返ることを検証する(issue #38-3)。
+func TestListCirclesLimit(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	if _, err := database.Exec(`
+		INSERT INTO works (rj_number, title, circle) VALUES
+		  ('RJ420001', '作品1', 'サークルA'),
+		  ('RJ420002', '作品2', 'サークルB'),
+		  ('RJ420003', '作品3', 'サークルC')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, "/api/circles")
+	var body struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 3 {
+		t.Fatalf("未指定 items 数 = %d, want 3", len(body.Items))
+	}
+
+	w = doGet(t, h, "/api/circles?limit=1")
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 1 {
+		t.Errorf("limit=1 items 数 = %d, want 1", len(body.Items))
+	}
+
+	w = doGet(t, h, "/api/circles?limit=0")
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 1 {
+		t.Errorf("limit=0 items 数 = %d, want 1(下限クランプ)", len(body.Items))
+	}
+
+	w = doGet(t, h, "/api/circles?limit=9999")
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Items) != 3 {
+		t.Errorf("limit=9999 items 数 = %d, want 3", len(body.Items))
+	}
+}
+
 // TestListCirclesEmpty は作品が全て circle=NULL の場合に items が空配列であることを検証する。
 func TestListCirclesEmpty(t *testing.T) {
 	h, _, _ := newTestServer(t)

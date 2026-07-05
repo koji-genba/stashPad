@@ -9,6 +9,7 @@ import { fetchEntries, fileUrl } from '@/api/client';
 import { currentTrack, usePlayerStore } from '@/store/playerStore';
 import { useOverlayStore } from '@/store/overlayStore';
 import { formatBytes, joinPath, pathCrumbs } from '@/utils/format';
+import FetchError from './FetchError';
 import QueueActionSheet from './QueueActionSheet';
 import styles from './FileBrowser.module.css';
 
@@ -31,6 +32,8 @@ export default function FileBrowser({ workId, workTitle }: Props) {
   const [data, setData] = useState<EntriesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // fetch 失敗時の再試行用。increment するとデータ取得 effect が再実行される(issue #70)
+  const [retryNonce, setRetryNonce] = useState(0);
   // ⋮ タップで開くシートの対象エントリ(null = 閉じている)
   const [sheetEntry, setSheetEntry] = useState<Entry | null>(null);
 
@@ -58,6 +61,8 @@ export default function FileBrowser({ workId, workTitle }: Props) {
 
   useEffect(() => {
     const ac = new AbortController();
+    // fetch 開始前にローディング表示へ切り替える意図的な setState(データ取得 effect の定型)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     fetchEntries(workId, path, ac.signal)
@@ -71,7 +76,7 @@ export default function FileBrowser({ workId, workTitle }: Props) {
         setLoading(false);
       });
     return () => ac.abort();
-  }, [workId, path]);
+  }, [workId, path, retryNonce]);
 
   // ディレクトリ移動 / パンくず操作の共通入口。
   // useEffect 内の setLoading(true) より前にスピナーへ切替えておくことで、
@@ -164,7 +169,7 @@ export default function FileBrowser({ workId, workTitle }: Props) {
           <div className="spinner" />
         </div>
       ) : error ? (
-        <p className="muted">{error}</p>
+        <FetchError message={error} onRetry={() => setRetryNonce((n) => n + 1)} />
       ) : !data || data.entries.length === 0 ? (
         <p className="faint">(空のフォルダ)</p>
       ) : (

@@ -549,3 +549,4 @@ services:
 | D20 | 一覧への戻りで検索状態維持(2026-06-12) | 一覧ページの URL クエリを sessionStorage に保存し、詳細ページの「← ライブラリ」はそのクエリ付きで戻る。詳細ページ内のタグ/サークル/シリーズリンクは「新しい検索の開始」なので対象外(issue #9) |
 | D21 | 作品の非表示(2026-06-17) | `works.hidden` カラム(INTEGER 0/1)を追加し、非表示作品を「存在しない扱い」に。検索・タグ集計・サークル集計・履歴のすべてに `hidden=0` フィルタを通す。専用エンドポイントは設けず、切り替えは `PATCH /works/{id} {hidden}`、非表示一覧は `GET /works?hidden=1` で表現。スキャナ/CSV インポータの upsert は hidden カラムに触れないため、再スキャン・再取り込みでも非表示状態は保持される(issue #10) |
 | D22 | RJ 番号の DLsite リンク(2026-06-17) | 作品詳細の RJ 番号を `https://www.dlsite.com/maniax/work/=/product_id/{RJ}.html` への外部リンク(`target=_blank`)にする(issue #13) |
+| D23 | title/circle の手動編集保護(2026-07-04) | `works.manually_edited` カラム(INTEGER 0/1)を追加。`PATCH /works/{id}` で title または circle を変更するとフラグを立てる(hidden/favorite のみの PATCH では立てない)。CSV 再インポートはフラグが立っている作品の title/circle を UPDATE 対象から外し、その他メタ・タグは従来どおり更新する。手動編集(title/circle)は CSV 再インポートより優先(issue #64 案 A) |

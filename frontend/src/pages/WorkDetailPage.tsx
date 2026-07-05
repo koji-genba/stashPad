@@ -6,6 +6,7 @@ import {
   fetchWork,
   refreshThumbnail,
   removeTag,
+  setWorkFavorite,
   setWorkHidden,
   thumbnailUrl,
 } from '@/api/client';
@@ -39,11 +40,20 @@ export default function WorkDetailPage() {
   // 非表示操作用
   const [hideBusy, setHideBusy] = useState(false);
   const [hideError, setHideError] = useState<string | null>(null);
+  // お気に入り操作用
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+  const [favoriteError, setFavoriteError] = useState<string | null>(null);
   // サムネ再生成が走ったら src にクエリを足して再読込させる
   const [thumbBust, setThumbBust] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!Number.isFinite(workId)) return;
+    if (!Number.isFinite(workId)) {
+      // /works/abc 等。work=null のまま loading を落とし「作品が見つかりません」表示にする
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setWork(null);
+      setLoading(false);
+      return;
+    }
     const ac = new AbortController();
     setLoading(true);
     setError(null);
@@ -64,6 +74,8 @@ export default function WorkDetailPage() {
   useEffect(() => {
     if (!Number.isFinite(workId)) return;
     let active = true;
+    // 作品切替時に前回のキャッシュバスト値をクリアする意図的な setState
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setThumbBust(null);
     refreshThumbnail(workId)
       .then((r) => {
@@ -144,6 +156,24 @@ export default function WorkDetailPage() {
     }
   };
 
+  // お気に入り登録/解除をトグルする
+  const onToggleFavorite = async () => {
+    if (!work) return;
+    const next = !work.favorited;
+    setFavoriteBusy(true);
+    setFavoriteError(null);
+    try {
+      await setWorkFavorite(work.id, next);
+      setWork((w) => (w ? { ...w, favorited: next } : w));
+    } catch (err) {
+      setFavoriteError(
+        err instanceof Error ? err.message : 'お気に入りの更新に失敗しました',
+      );
+    } finally {
+      setFavoriteBusy(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className={styles.center}>
@@ -206,7 +236,20 @@ export default function WorkDetailPage() {
           src={thumbBust ? `${thumbnailUrl(work.id)}?t=${thumbBust}` : thumbnailUrl(work.id)}
         />
         <div className={styles.headInfo}>
-          <h1 className={styles.title}>{work.title}</h1>
+          <div className={styles.titleRow}>
+            <h1 className={styles.title}>{work.title}</h1>
+            <button
+              type="button"
+              className={`${styles.favoriteBtn} ${work.favorited ? styles.favoriteBtnActive : ''}`}
+              onClick={onToggleFavorite}
+              disabled={favoriteBusy}
+              aria-label={work.favorited ? 'お気に入りから削除' : 'お気に入りに追加'}
+              aria-pressed={work.favorited}
+            >
+              {work.favorited ? '★' : '☆'}
+            </button>
+          </div>
+          {favoriteError && <p className="error">{favoriteError}</p>}
           {!work.has_folder && <span className={styles.notImported}>未取込</span>}
           <dl className={styles.meta}>
             {meta
@@ -311,7 +354,8 @@ export default function WorkDetailPage() {
       </section>
 
       {work.has_folder ? (
-        <FileBrowser workId={work.id} workTitle={work.title} />
+        // key で作品を跨いだ path state の持ち越し(stale fetch)を防ぐ
+        <FileBrowser key={work.id} workId={work.id} workTitle={work.title} />
       ) : (
         <p className={styles.noFolder}>
           この作品はフォルダが未取込のため、ファイルを表示できません。

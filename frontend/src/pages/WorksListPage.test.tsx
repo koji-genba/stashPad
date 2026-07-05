@@ -1,8 +1,8 @@
 // WorksListPage のテスト。
 // フィルタドロワー開閉時の body スクロールロック動作を検証する。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { MemoryRouter, useSearchParams } from 'react-router-dom';
+import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { MemoryRouter, useNavigationType, useSearchParams } from 'react-router-dom';
 
 // API クライアントをモック化
 vi.mock('@/api/client', () => ({
@@ -32,13 +32,35 @@ vi.mock('@/components/WorkCard', () => ({ default: () => null }));
 import WorksListPage from './WorksListPage';
 import { fetchWorks } from '@/api/client';
 
-// useSearchParams の現在値をテストから直接覗くためのプローブコンポーネント。
-// 単独レンダー時は `getParams` を呼ばないテストには無影響。
+// ページャー検証用のダミー応答(3 ページ分)。#35 のテストでも使い回す。
+const PAGINATED_RESPONSE = {
+  items: [
+    {
+      id: 1,
+      rj_number: 'RJ000001',
+      title: 'テスト作品',
+      circle: 'テストサークル',
+      age_rating: 'general',
+      has_folder: true,
+      thumbnail_url: '/api/works/1/thumbnail',
+      favorited: false,
+    },
+  ],
+  total: 100,
+  limit: 40,
+  page: 1,
+};
+
+// useSearchParams の現在値・現在の history 遷移種別をテストから直接覗くための
+// プローブコンポーネント。単独レンダー時は getParams/getNavType を呼ばないテストには無影響。
 function renderPage(initialUrl = '/') {
   let currentParams = new URLSearchParams();
+  let currentNavType = '';
   function Probe() {
     const [p] = useSearchParams();
+    const navType = useNavigationType();
     currentParams = p;
+    currentNavType = navType;
     return null;
   }
   const utils = render(
@@ -47,7 +69,7 @@ function renderPage(initialUrl = '/') {
       <Probe />
     </MemoryRouter>,
   );
-  return { ...utils, getParams: () => currentParams };
+  return { ...utils, getParams: () => currentParams, getNavType: () => currentNavType };
 }
 
 describe('WorksListPage body スクロールロック', () => {
@@ -85,24 +107,7 @@ describe('WorksListPage body スクロールロック', () => {
 
 describe('フィルタ操作時のスクロールトップ (#36)', () => {
   // items が空だと「該当する作品がありません」分岐になりページャーが出ない。
-  // ページネーションを確認するためダミーアイテムを含む応答を使う。
-  const PAGINATED_RESPONSE = {
-    items: [
-      {
-        id: 1,
-        rj_number: 'RJ000001',
-        title: 'テスト作品',
-        circle: 'テストサークル',
-        age_rating: 'general',
-        has_folder: true,
-        thumbnail_url: '/api/works/1/thumbnail',
-      },
-    ],
-    total: 100,
-    limit: 40,
-    page: 1,
-  };
-
+  // ページネーションを確認するためダミーアイテムを含む応答(PAGINATED_RESPONSE)を使う。
   beforeEach(() => {
     vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
     // ページャーが出るように件数を多くしアイテムを 1 件含める
@@ -150,6 +155,67 @@ describe('フィルタ操作時のスクロールトップ (#36)', () => {
     fireEvent.click(screen.getByTitle('クリックで解除'));
 
     expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+});
+
+describe('お気に入りフィルタ (issue #72)', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('「★ お気に入りのみ」トグルを押すと URL に favorite=1 が付き、fetchWorks が favorite: true で呼ばれる', async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenCalled();
+    });
+
+    const toggle = screen.getByRole('button', { name: /お気に入りのみ/ });
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenLastCalledWith(
+        expect.objectContaining({ favorite: true }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('URL ?favorite=1 で開くとトグルが有効状態で表示され、fetchWorks が favorite: true で呼ばれる', async () => {
+    renderPage('/?favorite=1');
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenLastCalledWith(
+        expect.objectContaining({ favorite: true }),
+        expect.anything(),
+      );
+    });
+
+    const toggle = screen.getByRole('button', { name: /お気に入りのみ/ });
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('有効状態でもう一度押すと favorite パラメータが消える', async () => {
+    const { getParams } = renderPage('/?favorite=1');
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /お気に入りのみ/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /お気に入りのみ/ }));
+
+    await waitFor(() => {
+      expect(getParams().has('favorite')).toBe(false);
+    });
   });
 });
 
@@ -226,5 +292,337 @@ describe('全てクリアボタン (#30)', () => {
     fireEvent.click(screen.getByRole('button', { name: '全てクリア' }));
 
     expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+});
+
+describe('ソート昇順/降順トグル (#59)', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('初期状態(デフォルト desc)ではトグルに「降順 ↓」が表示され、order パラメータは URL に付かない', async () => {
+    const { getParams } = renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '昇順に切り替え' })).toHaveTextContent('降順 ↓');
+    });
+    expect(getParams().has('order')).toBe(false);
+  });
+
+  it('トグルを押すと order=asc が URL に付き、fetchWorks が order: "asc" で呼ばれる', async () => {
+    const { getParams } = renderPage();
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole('button', { name: '昇順に切り替え' }));
+
+    await waitFor(() => {
+      expect(getParams().get('order')).toBe('asc');
+    });
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenLastCalledWith(
+        expect.objectContaining({ order: 'asc' }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('昇順状態でもう一度押すと order パラメータが URL から消える(デフォルト desc は付与しない)', async () => {
+    const { getParams } = renderPage('/?order=asc');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '降順に切り替え' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '降順に切り替え' }));
+
+    await waitFor(() => {
+      expect(getParams().has('order')).toBe(false);
+    });
+  });
+
+  it('順序トグルは page パラメータをリセットする', async () => {
+    const { getParams } = renderPage('/?page=3');
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole('button', { name: '昇順に切り替え' }));
+
+    await waitFor(() => {
+      expect(getParams().has('page')).toBe(false);
+    });
+  });
+
+  it('順序トグルをクリックすると window.scrollTo(0, 0) が呼ばれる', async () => {
+    renderPage();
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole('button', { name: '昇順に切り替え' }));
+
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+});
+
+describe('検索キーワードの include/exclude チップ (#29)', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('q=foo -bar で開くと include チップ "foo" と exclude チップ "−bar" が表示される', async () => {
+    renderPage('/?q=foo%20-bar');
+
+    await waitFor(() => {
+      const chips = screen.getAllByTitle('クリックで解除');
+      expect(chips.some((c) => c.textContent?.includes('foo'))).toBe(true);
+      expect(chips.some((c) => c.textContent?.includes('−bar'))).toBe(true);
+    });
+  });
+
+  it('include チップの ✕ をクリックすると該当語だけ q から除去され、他の語は残る', async () => {
+    const { getParams } = renderPage('/?q=foo%20-bar');
+
+    await waitFor(() => {
+      expect(screen.getAllByTitle('クリックで解除').some((c) => c.textContent?.includes('foo'))).toBe(
+        true,
+      );
+    });
+
+    const fooChip = screen
+      .getAllByTitle('クリックで解除')
+      .find((c) => c.textContent?.includes('foo') && !c.textContent?.includes('−bar'))!;
+    fireEvent.click(fooChip);
+
+    await waitFor(() => {
+      expect(getParams().get('q')).toBe('-bar');
+    });
+  });
+
+  it('exclude チップの ✕ をクリックすると該当語だけ q から除去され、他の語は残る', async () => {
+    const { getParams } = renderPage('/?q=foo%20-bar');
+
+    await waitFor(() => {
+      expect(screen.getAllByTitle('クリックで解除').some((c) => c.textContent?.includes('−bar'))).toBe(
+        true,
+      );
+    });
+
+    const barChip = screen
+      .getAllByTitle('クリックで解除')
+      .find((c) => c.textContent?.includes('−bar'))!;
+    fireEvent.click(barChip);
+
+    await waitFor(() => {
+      expect(getParams().get('q')).toBe('foo');
+    });
+  });
+
+  it('q が単一の include 語のみの場合、チップ操作で q が空になると q パラメータごと消える', async () => {
+    const { getParams } = renderPage('/?q=foo');
+
+    await waitFor(() => {
+      expect(screen.getAllByTitle('クリックで解除').some((c) => c.textContent?.includes('foo'))).toBe(
+        true,
+      );
+    });
+
+    const fooChip = screen
+      .getAllByTitle('クリックで解除')
+      .find((c) => c.textContent?.includes('foo'))!;
+    fireEvent.click(fooChip);
+
+    await waitFor(() => {
+      expect(getParams().has('q')).toBe(false);
+    });
+  });
+});
+
+describe('デバウンス由来の history 汚染防止 (#58)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('検索ボックスへの入力によるデバウンス反映は replace ナビゲーションになる(history を積まない)', async () => {
+    const { getNavType } = renderPage();
+    // 初回データ取得(Promise の resolve)を待つ
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const input = screen.getByRole('searchbox');
+    fireEvent.change(input, { target: { value: 'foo' } });
+
+    // 300ms のデバウンスタイマーを進める
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    expect(getNavType()).toBe('REPLACE');
+  });
+
+  it('Enter による明示的な検索確定は push のままである(デバウンス反映とは異なる)', async () => {
+    const { getNavType } = renderPage();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const input = screen.getByRole('searchbox');
+    fireEvent.change(input, { target: { value: 'foo' } });
+    // デバウンスが先に発火しないよう、確定前にタイマーは進めない
+
+    const form = input.closest('form')!;
+    fireEvent.submit(form);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(getNavType()).toBe('PUSH');
+  });
+});
+
+describe('fetch 失敗時の再試行導線 (issue #70)', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    // 呼び出し回数のアサーションのため、前のテストの履歴をクリアする
+    vi.mocked(fetchWorks).mockClear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
+    vi.restoreAllMocks();
+  });
+
+  it('fetch 失敗でエラーメッセージと再試行ボタンが表示される', async () => {
+    vi.mocked(fetchWorks).mockRejectedValueOnce(new Error('サーバエラー'));
+
+    renderPage();
+
+    await screen.findByText('サーバエラー');
+    expect(screen.getByRole('button', { name: '再試行' })).toBeInTheDocument();
+  });
+
+  it('再試行クリックで再 fetch され、成功すると一覧表示に戻る', async () => {
+    vi.mocked(fetchWorks)
+      .mockRejectedValueOnce(new Error('サーバエラー'))
+      .mockResolvedValueOnce(PAGINATED_RESPONSE);
+
+    renderPage();
+
+    await screen.findByText('サーバエラー');
+    fireEvent.click(screen.getByRole('button', { name: '再試行' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('100 件')).toBeInTheDocument();
+    });
+    expect(vi.mocked(fetchWorks)).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('サーバエラー')).toBeNull();
+  });
+});
+
+describe('ページャーの数値入力化 (#35)', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    vi.mocked(fetchWorks).mockResolvedValue(PAGINATED_RESPONSE);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
+    vi.restoreAllMocks();
+  });
+
+  it('select ではなく数値入力欄が表示され、現在ページと総ページ数が「n / N ページ」の形で見える', async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole('spinbutton', { name: 'ページ番号' })).toHaveValue(1);
+    });
+    expect(screen.queryByRole('combobox', { name: 'ページを選択' })).not.toBeInTheDocument();
+    expect(screen.getByText(/\/ 3 ページ/)).toBeInTheDocument();
+  });
+
+  it('1 ページ目では「≪ 最初へ」「前へ」が disabled になる', async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '≪ 最初へ' })).toBeDisabled();
+    });
+    expect(screen.getByRole('button', { name: '前へ' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '次へ' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: '最後へ ≫' })).not.toBeDisabled();
+  });
+
+  it('数値入力欄に総ページ数を超える値を入れて Enter すると総ページ数にクランプされる', async () => {
+    const { getParams } = renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole('spinbutton', { name: 'ページ番号' })).toBeInTheDocument();
+    });
+
+    const input = screen.getByRole('spinbutton', { name: 'ページ番号' });
+    fireEvent.change(input, { target: { value: '99' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(getParams().get('page')).toBe('3');
+    });
+    expect(input).toHaveValue(3);
+  });
+
+  it('数値入力欄で 0 以下を入れて blur すると 1 にクランプされる', async () => {
+    renderPage('/?page=2');
+
+    await waitFor(() => {
+      expect(screen.getByRole('spinbutton', { name: 'ページ番号' })).toHaveValue(2);
+    });
+
+    const input = screen.getByRole('spinbutton', { name: 'ページ番号' });
+    fireEvent.change(input, { target: { value: '0' } });
+    fireEvent.blur(input);
+
+    await waitFor(() => {
+      expect(input).toHaveValue(1);
+    });
+  });
+
+  it('「最後へ ≫」をクリックすると最終ページに移動する', async () => {
+    const { getParams } = renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '最後へ ≫' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '最後へ ≫' }));
+
+    await waitFor(() => {
+      expect(getParams().get('page')).toBe('3');
+    });
+  });
+
+  it('最終ページでは「次へ」「最後へ ≫」が disabled になる', async () => {
+    renderPage('/?page=3');
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '次へ' })).toBeDisabled();
+    });
+    expect(screen.getByRole('button', { name: '最後へ ≫' })).toBeDisabled();
   });
 });
