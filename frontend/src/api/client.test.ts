@@ -392,7 +392,7 @@ describe('fetchHistory', () => {
 
 describe('importCsv', () => {
   it('POST /api/import/csv を multipart/form-data で呼ぶ', async () => {
-    const result = { created: 1, updated: 0, linked: 1, errors: [] };
+    const result = { created: 0, updated: 1, linked: 1, skipped: 2, errors: [] };
     fetchMock = mockFetchOk(result);
     vi.stubGlobal('fetch', fetchMock);
 

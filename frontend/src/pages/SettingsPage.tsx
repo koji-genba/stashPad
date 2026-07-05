@@ -316,6 +316,9 @@ export default function SettingsPage() {
               <span>
                 リンク <b>{importResult.linked}</b>
               </span>
+              <span>
+                スキップ <b>{importResult.skipped}</b>
+              </span>
             </div>
             {(importResult.errors ?? []).length > 0 && (
               <details className={styles.errors}>

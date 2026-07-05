@@ -28,7 +28,12 @@ vi.mock('@/store/tagStore', () => ({
 }));
 
 import SettingsPage from './SettingsPage';
-import { deleteHistory, fetchThumbnailRebuildStatus, rebuildThumbnails } from '@/api/client';
+import {
+  deleteHistory,
+  fetchThumbnailRebuildStatus,
+  importCsv,
+  rebuildThumbnails,
+} from '@/api/client';
 
 function renderPage() {
   return render(
@@ -71,6 +76,38 @@ describe('SettingsPage 再生履歴の全削除', () => {
     fireEvent.click(btn);
 
     expect(deleteHistory).not.toHaveBeenCalled();
+  });
+});
+
+describe('SettingsPage CSV インポート', () => {
+  beforeEach(() => {
+    vi.mocked(importCsv).mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('インポート結果にスキップ件数を表示する', async () => {
+    vi.mocked(importCsv).mockResolvedValue({
+      created: 0,
+      updated: 2,
+      linked: 1,
+      skipped: 3,
+      errors: [],
+    });
+    const { container } = renderPage();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['rj_number,title\nRJ1,Title\n'], 'works.csv', {
+      type: 'text/csv',
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'インポート実行' }));
+
+    await waitFor(() => expect(importCsv).toHaveBeenCalledWith(file));
+    await screen.findByText((_, node) => node?.textContent === 'スキップ 3');
   });
 });
 
