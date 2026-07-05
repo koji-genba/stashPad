@@ -643,10 +643,11 @@ func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) 
 	var (
 		rootPath       sql.NullString
 		thumbCheckedAt sql.NullString
+		thumbnailPath  sql.NullString
 	)
 	if err := s.db.QueryRow(
-		"SELECT root_path, thumb_checked_at FROM works WHERE id=?", workID,
-	).Scan(&rootPath, &thumbCheckedAt); err == sql.ErrNoRows {
+		"SELECT root_path, thumb_checked_at, thumbnail_path FROM works WHERE id=?", workID,
+	).Scan(&rootPath, &thumbCheckedAt, &thumbnailPath); err == sql.ErrNoRows {
 		respondError(w, http.StatusNotFound, "作品が見つかりません")
 		return
 	} else if err != nil {
@@ -678,13 +679,21 @@ func (s *Server) handleRefreshThumbnail(w http.ResponseWriter, r *http.Request) 
 	thumbsDir := filepath.Join(s.cfg.DataDir, "thumbs")
 	gen := thumb.New(thumbsDir)
 
-	regenerated, outPath, err := gen.Refresh(workID, rootPath.String)
+	regenerated, outPath, candidateFound, err := gen.Refresh(workID, rootPath.String)
 	if err != nil {
 		respondInternalError(w, "サムネイル再生成失敗", err)
 		return
 	}
 
-	if regenerated && outPath != "" {
+	if !candidateFound && thumbnailPath.Valid {
+		if _, uErr := s.db.Exec(
+			"UPDATE works SET thumbnail_path=NULL, updated_at=datetime('now') WHERE id=?",
+			workID,
+		); uErr != nil {
+			respondInternalError(w, "thumbnail_path クリア失敗", uErr)
+			return
+		}
+	} else if regenerated && outPath != "" {
 		if _, uErr := s.db.Exec(
 			"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
 			outPath, workID,
@@ -782,6 +791,7 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 		id          int64
 		outPath     string
 		regenerated bool
+		found       bool
 		err         error
 	}
 
@@ -797,8 +807,8 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 	for i := 0; i < numWorkers; i++ {
 		go func() {
 			for we := range jobs {
-				regen, outPath, err := gen.Refresh(we.id, we.rootPath)
-				results <- result{id: we.id, outPath: outPath, regenerated: regen, err: err}
+				regen, outPath, found, err := gen.Refresh(we.id, we.rootPath)
+				results <- result{id: we.id, outPath: outPath, regenerated: regen, found: found, err: err}
 			}
 		}()
 	}
@@ -820,6 +830,7 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 		outPath string
 	}
 	var toUpdate []update
+	var toClear []int64
 
 	for range works {
 		res := <-results
@@ -829,13 +840,15 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 			s.rebuildProgress.addChecked(1)
 			continue
 		}
-		if res.regenerated && res.outPath != "" {
+		if !res.found {
+			toClear = append(toClear, res.id)
+		} else if res.regenerated && res.outPath != "" {
 			toUpdate = append(toUpdate, update{id: res.id, outPath: res.outPath})
 		}
 		s.rebuildProgress.addChecked(1)
 	}
 
-	if len(toUpdate) == 0 {
+	if len(toUpdate) == 0 && len(toClear) == 0 {
 		return
 	}
 
@@ -856,6 +869,15 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 		// Commit 済みの tx に対する Rollback は何もせずエラーを返すだけなので、
 		// 正常系の Commit 後に無条件で defer しても問題ない(早期 return・panic からの保護)。
 		defer func() { _ = tx.Rollback() }()
+	}
+
+	for _, id := range toClear {
+		if _, uErr := execTarget.Exec(
+			"UPDATE works SET thumbnail_path=NULL, updated_at=datetime('now') WHERE id=? AND thumbnail_path IS NOT NULL",
+			id,
+		); uErr != nil {
+			log.Printf("thumbnail_path クリア失敗 work_id=%d: %v", id, uErr)
+		}
 	}
 
 	for _, u := range toUpdate {

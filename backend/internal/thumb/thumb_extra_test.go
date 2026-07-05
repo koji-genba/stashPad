@@ -34,7 +34,7 @@ func TestRefreshNoCandidates(t *testing.T) {
 	}
 
 	g := New(thumbsDir)
-	regen, outPath, err := g.Refresh(100, dir)
+	regen, outPath, _, err := g.Refresh(100, dir)
 	if err != nil {
 		t.Fatalf("Refresh エラー: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestRefreshRootPathInvalid(t *testing.T) {
 	thumbsDir := t.TempDir()
 
 	g := New(thumbsDir)
-	_, _, err := g.Refresh(101, "/nonexistent/path/that/does/not/exist")
+	_, _, _, err := g.Refresh(101, "/nonexistent/path/that/does/not/exist")
 	if err == nil {
 		t.Error("存在しないパスなのにエラーにならなかった")
 	}
@@ -360,7 +360,7 @@ func TestRefreshSourceChangedToNonPriority(t *testing.T) {
 	g := New(thumbsDir)
 
 	// 初回: thumbnail.png から生成
-	regen, path, err := g.Refresh(300, dir)
+	regen, path, _, err := g.Refresh(300, dir)
 	if err != nil || !regen || path == "" {
 		t.Fatalf("初回 Refresh = (%v, %q, %v)", regen, path, err)
 	}
@@ -372,12 +372,49 @@ func TestRefreshSourceChangedToNonPriority(t *testing.T) {
 	}
 
 	// 2 回目: 生成元が cover.png に変わるので再生成される
-	regen, _, err = g.Refresh(300, dir)
+	regen, _, _, err = g.Refresh(300, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !regen {
 		t.Error("生成元が変わったのに再生成されなかった")
+	}
+}
+
+// TestRefreshNoImageRemovesStaleThumbnailAndSourceRecord は作品フォルダに画像候補が
+// なくなった場合、古いサムネイル本体と生成元記録が削除されることをテスト。
+func TestRefreshNoImageRemovesStaleThumbnailAndSourceRecord(t *testing.T) {
+	dir := t.TempDir()
+	thumbsDir := t.TempDir()
+
+	outPath := filepath.Join(thumbsDir, "302.jpg")
+	srcRecord := filepath.Join(thumbsDir, "302.src")
+	if err := os.WriteFile(outPath, []byte("old thumbnail"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(srcRecord, []byte(filepath.Join(dir, "cover.png")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	g := New(thumbsDir)
+	regen, path, found, err := g.Refresh(302, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regen {
+		t.Error("画像候補がないのに regenerated=true")
+	}
+	if path != "" {
+		t.Errorf("画像候補がないのに outPath = %q, want 空文字", path)
+	}
+	if found {
+		t.Error("画像候補がないのに candidateFound=true")
+	}
+	if _, statErr := os.Stat(outPath); !os.IsNotExist(statErr) {
+		t.Errorf("古いサムネイルが削除されていない: %v", statErr)
+	}
+	if _, statErr := os.Stat(srcRecord); !os.IsNotExist(statErr) {
+		t.Errorf("古い .src が削除されていない: %v", statErr)
 	}
 }
 
@@ -414,7 +451,7 @@ func TestSrcRecordWrittenOnSkip(t *testing.T) {
 	g := New(thumbsDir)
 
 	// 初回生成
-	if _, _, err := g.Refresh(301, dir); err != nil {
+	if _, _, _, err := g.Refresh(301, dir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -431,7 +468,7 @@ func TestSrcRecordWrittenOnSkip(t *testing.T) {
 	}
 
 	// 2 回目: .src がない状態で cover.png(thumbnail.* でない)は mtime ベースでスキップ
-	regen, outPath, err := g.Refresh(301, dir)
+	regen, outPath, _, err := g.Refresh(301, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +534,7 @@ func TestGenerateThumbnailWithinMaxPixels(t *testing.T) {
 
 // TestRefreshExceedsMaxPixels は Refresh 経由でも上限超過がエラーとして伝播し、
 // サムネイルが作られないことをテスト(#69)。scanner 側はこのエラーを
-// 「スキップ+ログ」で処理する(scanner.go の thumbGen.Generate 呼び出し部を参照)。
+// 「スキップ+ログ」で処理する(scanner.go の thumbGen.Refresh 呼び出し部を参照)。
 func TestRefreshExceedsMaxPixels(t *testing.T) {
 	dir := t.TempDir()
 	thumbsDir := t.TempDir()
@@ -507,7 +544,7 @@ func TestRefreshExceedsMaxPixels(t *testing.T) {
 	g := New(thumbsDir)
 	g.maxPixels = 100
 
-	regen, outPath, err := g.Refresh(400, dir)
+	regen, outPath, _, err := g.Refresh(400, dir)
 	if err == nil {
 		t.Fatal("上限超過の画像なのに Refresh がエラーを返さなかった")
 	}

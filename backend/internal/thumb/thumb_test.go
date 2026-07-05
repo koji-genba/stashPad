@@ -379,7 +379,7 @@ func TestRefreshSourceChanged(t *testing.T) {
 	g := New(thumbsDir)
 
 	// 初回: cover.png から生成
-	regen, path, err := g.Refresh(21, dir)
+	regen, path, _, err := g.Refresh(21, dir)
 	if err != nil || !regen || path == "" {
 		t.Fatalf("初回 Refresh = (%v, %q, %v)", regen, path, err)
 	}
@@ -393,7 +393,7 @@ func TestRefreshSourceChanged(t *testing.T) {
 	}
 
 	// 2回目: mtime が古くても生成元が thumbnail.png に変わったので再生成される
-	regen, _, err = g.Refresh(21, dir)
+	regen, _, _, err = g.Refresh(21, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +402,7 @@ func TestRefreshSourceChanged(t *testing.T) {
 	}
 
 	// 3回目: 生成元・mtime とも変化なし → スキップ
-	regen, _, err = g.Refresh(21, dir)
+	regen, _, _, err = g.Refresh(21, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func TestRefreshSourceChanged(t *testing.T) {
 	if err := os.Remove(thumbSrc); err != nil {
 		t.Fatal(err)
 	}
-	regen, _, err = g.Refresh(21, dir)
+	regen, _, _, err = g.Refresh(21, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +435,7 @@ func TestRefreshLegacyCacheWithRootThumbnail(t *testing.T) {
 
 	// 初回生成後、旧バージョン相当にするため .src 記録を削除し、
 	// ソースをキャッシュより古くする
-	if _, _, err := g.Refresh(22, dir); err != nil {
+	if _, _, _, err := g.Refresh(22, dir); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(thumbsDir, "22.src")); err != nil {
@@ -446,7 +446,7 @@ func TestRefreshLegacyCacheWithRootThumbnail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	regen, _, err := g.Refresh(22, dir)
+	regen, _, _, err := g.Refresh(22, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
