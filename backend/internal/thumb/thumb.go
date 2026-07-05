@@ -52,35 +52,38 @@ func New(thumbsDir string) *Generator {
 // ソース画像の mtime がキャッシュより新しい(またはキャッシュが無い)場合のみ(再)生成する。
 // 保存したパス(または既存パス)を返す。画像が見つからない場合は空文字列を返す。
 func (g *Generator) Generate(workID int64, rootPath string) (string, error) {
-	_, outPath, err := g.Refresh(workID, rootPath)
+	_, outPath, _, err := g.Refresh(workID, rootPath)
 	return outPath, err
 }
 
 // Refresh は必要な場合のみサムネイルを(再)生成する。再生成した場合は true を返す。
-// 画像が見つからない場合は (false, "", nil)。
+// 画像が見つからない場合は古いキャッシュを削除し、candidateFound=false を返す。
 //
 // 再生成の判定: キャッシュが無い / 選ばれたソース画像が前回生成時(サイドカー
 // {workID}.src に記録)と異なる / ソース画像の mtime がキャッシュより新しい。
 // ソース記録のおかげで、ユーザーが mtime の古い thumbnail.* をコピーで置いた
 // 場合でも確実に差し替わる。
-func (g *Generator) Refresh(workID int64, rootPath string) (regenerated bool, outPath string, err error) {
+func (g *Generator) Refresh(workID int64, rootPath string) (regenerated bool, outPath string, candidateFound bool, err error) {
 	outPath = filepath.Join(g.ThumbsDir, fmt.Sprintf("%d.jpg", workID))
 	srcRecord := filepath.Join(g.ThumbsDir, fmt.Sprintf("%d.src", workID))
 
 	// 候補収集
 	candidates, err := collectImageCandidates(rootPath, 2)
 	if err != nil {
-		return false, "", fmt.Errorf("画像候補収集失敗: %w", err)
+		return false, "", false, fmt.Errorf("画像候補収集失敗: %w", err)
 	}
 	if len(candidates) == 0 {
-		return false, "", nil
+		if err := removeThumbnailCache(outPath, srcRecord); err != nil {
+			return false, "", false, err
+		}
+		return false, "", false, nil
 	}
 
 	chosen := chooseBestImage(rootPath, candidates)
 
 	srcStat, err := os.Stat(chosen)
 	if err != nil {
-		return false, "", fmt.Errorf("ソース画像 Stat 失敗: %w", err)
+		return false, "", true, fmt.Errorf("ソース画像 Stat 失敗: %w", err)
 	}
 
 	if !needsRegenerate(rootPath, chosen, outPath, srcRecord, srcStat) {
@@ -88,14 +91,23 @@ func (g *Generator) Refresh(workID int64, rootPath string) (regenerated bool, ou
 		if _, recErr := os.Stat(srcRecord); recErr != nil {
 			_ = os.WriteFile(srcRecord, []byte(chosen), 0o644)
 		}
-		return false, outPath, nil
+		return false, outPath, true, nil
 	}
 
 	if err := g.generateThumbnail(chosen, outPath); err != nil {
-		return false, "", fmt.Errorf("サムネイル生成失敗 %q: %w", chosen, err)
+		return false, "", true, fmt.Errorf("サムネイル生成失敗 %q: %w", chosen, err)
 	}
 	_ = os.WriteFile(srcRecord, []byte(chosen), 0o644)
-	return true, outPath, nil
+	return true, outPath, true, nil
+}
+
+func removeThumbnailCache(outPath, srcRecord string) error {
+	for _, path := range []string{outPath, srcRecord} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("古いサムネイル削除失敗 %q: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // needsRegenerate はサムネイルを作り直すべきかを判定する。

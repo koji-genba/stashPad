@@ -35,7 +35,7 @@ type Result struct {
 // ThumbnailGenerator はサムネイル生成の依存を抽象化するインターフェース。
 // thumb.Generator が実装する。
 type ThumbnailGenerator interface {
-	Generate(workID int64, rootPath string) (string, error)
+	Refresh(workID int64, rootPath string) (regenerated bool, outPath string, candidateFound bool, err error)
 }
 
 // execQuerier は upsert 系ヘルパーが必要とする最小限のインターフェース。
@@ -168,8 +168,9 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 	// ステップ3: サムネイル生成を worker pool で並列実行
 	if thumbGen != nil && len(thumbJobs) > 0 {
 		type thumbResult struct {
-			workID    int64
-			thumbPath string
+			workID         int64
+			thumbPath      string
+			candidateFound bool
 		}
 
 		numWorkers := runtime.NumCPU()
@@ -185,13 +186,17 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 			go func() {
 				defer wg.Done()
 				for j := range jobs {
-					thumbPath, tErr := thumbGen.Generate(j.workID, j.absPath)
+					_, thumbPath, candidateFound, tErr := thumbGen.Refresh(j.workID, j.absPath)
 					if tErr != nil {
 						log.Printf("サムネイル生成失敗 work_id=%d: %v", j.workID, tErr)
 						continue
 					}
-					if thumbPath != "" {
-						results <- thumbResult{workID: j.workID, thumbPath: thumbPath}
+					if !candidateFound || thumbPath != "" {
+						results <- thumbResult{
+							workID:         j.workID,
+							thumbPath:      thumbPath,
+							candidateFound: candidateFound,
+						}
 					}
 				}
 			}()
@@ -210,11 +215,22 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 
 		// DB 更新は直列化(SQLite は同時書き込み非対応)
 		for r := range results {
-			if _, uErr := db.Exec(
-				"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
-				r.thumbPath, r.workID,
-			); uErr != nil {
-				log.Printf("thumbnail_path 更新失敗 work_id=%d: %v", r.workID, uErr)
+			if !r.candidateFound {
+				if _, uErr := db.Exec(
+					"UPDATE works SET thumbnail_path=NULL, updated_at=datetime('now') WHERE id=? AND thumbnail_path IS NOT NULL",
+					r.workID,
+				); uErr != nil {
+					log.Printf("thumbnail_path クリア失敗 work_id=%d: %v", r.workID, uErr)
+				}
+				continue
+			}
+			if r.thumbPath != "" {
+				if _, uErr := db.Exec(
+					"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
+					r.thumbPath, r.workID,
+				); uErr != nil {
+					log.Printf("thumbnail_path 更新失敗 work_id=%d: %v", r.workID, uErr)
+				}
 			}
 		}
 	}
