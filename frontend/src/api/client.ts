@@ -7,6 +7,7 @@ import type {
   EntriesResponse,
   HistoryParams,
   HistoryResponse,
+  ImportMetadataResult,
   ImportResult,
   ScanResult,
   SortKey,
@@ -228,6 +229,22 @@ export async function importCsv(file: File): Promise<ImportResult> {
 
 export function runScan(): Promise<ScanResult> {
   return sendJson<ScanResult>('POST', `${API_BASE}/scan`);
+}
+
+/**
+ * エクスポート済みメタデータ JSON ファイルをインポートする(POST /api/import/metadata)。
+ * CSV インポートと異なり multipart ではなく、ファイルの中身を application/json として
+ * そのまま POST する(サーバ側は GET /api/export と同じ JSON 形をボディ直送で受け取る)。
+ */
+export async function importMetadata(file: File): Promise<ImportMetadataResult> {
+  const text = await file.text();
+  const res = await fetch(`${API_BASE}/import/metadata`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: text,
+  });
+  if (!res.ok) return parseError(res);
+  return (await res.json()) as ImportMetadataResult;
 }
 
 /** どの作品にも紐づかないタグを削除する */

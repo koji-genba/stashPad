@@ -66,6 +66,24 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+func seedScannedWork(t *testing.T, db *sql.DB, rjNumber string) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO works (rj_number, title, root_path)
+		 VALUES (?, ?, ?)`,
+		rjNumber, rjNumber, "/media/"+rjNumber,
+	); err != nil {
+		t.Fatalf("スキャン済み作品の投入失敗 %s: %v", rjNumber, err)
+	}
+}
+
+func seedScannedWorks(t *testing.T, db *sql.DB, rjNumbers ...string) {
+	t.Helper()
+	for _, rjNumber := range rjNumbers {
+		seedScannedWork(t, db, rjNumber)
+	}
+}
+
 // samplesCSVPath は docs/samples/works.csv への絶対パスを返す。
 func samplesCSVPath(t *testing.T) string {
 	t.Helper()
@@ -88,6 +106,15 @@ func samplesCSVPath(t *testing.T) string {
 // TestImportSamplesCSV は docs/samples/works.csv のインポートをテスト。
 func TestImportSamplesCSV(t *testing.T) {
 	db := openTestDB(t)
+	seedScannedWorks(t, db,
+		"RJ01547274",
+		"RJ01547253",
+		"RJ01430276",
+		"RJ01427890",
+		"RJ404669",
+		"RJ304928",
+		"RJ237618",
+	)
 	csvPath := samplesCSVPath(t)
 
 	f, err := os.Open(csvPath)
@@ -104,12 +131,14 @@ func TestImportSamplesCSV(t *testing.T) {
 		t.Errorf("エラーあり: %v", res.Errors)
 	}
 
-	// CSV は 7 行なので 7 件作成
-	if res.Created != 7 {
-		t.Errorf("Created = %d, want 7", res.Created)
+	if res.Created != 0 {
+		t.Errorf("Created = %d, want 0", res.Created)
 	}
-	if res.Updated != 0 {
-		t.Errorf("Updated = %d, want 0", res.Updated)
+	if res.Updated != 7 {
+		t.Errorf("Updated = %d, want 7", res.Updated)
+	}
+	if res.Skipped != 0 {
+		t.Errorf("Skipped = %d, want 0", res.Skipped)
 	}
 
 	// works テーブルに 7 件あることを確認
@@ -125,6 +154,7 @@ func TestImportSamplesCSV(t *testing.T) {
 // TestImportRJ404669Tags は RJ404669 が design.md §4.3 の 13 タグに展開されることをテスト。
 func TestImportRJ404669Tags(t *testing.T) {
 	db := openTestDB(t)
+	seedScannedWork(t, db, "RJ404669")
 	csvPath := samplesCSVPath(t)
 
 	f, err := os.Open(csvPath)
@@ -213,6 +243,7 @@ func TestImportRJ404669Tags(t *testing.T) {
 // TestImportRJ404669WorkRow は RJ404669 の works テーブルデータが正しいことをテスト。
 func TestImportRJ404669WorkRow(t *testing.T) {
 	db := openTestDB(t)
+	seedScannedWorks(t, db, "RJ404669", "RJ01547274")
 	csvPath := samplesCSVPath(t)
 
 	f, err := os.Open(csvPath)
@@ -282,6 +313,7 @@ func TestImportRJ404669WorkRow(t *testing.T) {
 // TestImportUpsert は再インポートで重複しないことをテスト。
 func TestImportUpsert(t *testing.T) {
 	db := openTestDB(t)
+	seedScannedWork(t, db, "RJ999999")
 
 	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
 RJ999999,テスト作品,シリーズ,サークル,2026/01/01,ボイス・ASMR,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
@@ -292,8 +324,9 @@ RJ999999,テスト作品,シリーズ,サークル,2026/01/01,ボイス・ASMR,A
 	if err != nil {
 		t.Fatalf("1回目 Import 失敗: %v", err)
 	}
-	if res1.Created != 1 {
-		t.Errorf("1回目 Created = %d, want 1", res1.Created)
+	if res1.Created != 0 || res1.Updated != 1 || res1.Linked != 1 || res1.Skipped != 0 {
+		t.Errorf("1回目 Created=%d Updated=%d Linked=%d Skipped=%d, want 0/1/1/0",
+			res1.Created, res1.Updated, res1.Linked, res1.Skipped)
 	}
 
 	// 2回目
@@ -316,6 +349,7 @@ RJ999999,テスト作品,シリーズ,サークル,2026/01/01,ボイス・ASMR,A
 // TestImportCustomTagPreserved は CSV 再インポートで custom タグが保持されることをテスト。
 func TestImportCustomTagPreserved(t *testing.T) {
 	db := openTestDB(t)
+	seedScannedWork(t, db, "RJ888888")
 
 	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
 RJ888888,カスタムタグテスト,,,,,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
@@ -381,6 +415,7 @@ RJ777777,CSVのタイトル,,,,,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
 // TestImportBOM は BOM 付き UTF-8 CSV が正しく処理されることをテスト。
 func TestImportBOM(t *testing.T) {
 	db := openTestDB(t)
+	seedScannedWork(t, db, "RJ111111")
 
 	// BOM 付き CSV
 	bom := "\xef\xbb\xbf"
@@ -392,8 +427,8 @@ RJ111111,BOMテスト,,,,,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
 	if err != nil {
 		t.Fatalf("Import 失敗: %v", err)
 	}
-	if res.Created != 1 {
-		t.Errorf("Created = %d, want 1", res.Created)
+	if res.Updated != 1 {
+		t.Errorf("Updated = %d, want 1", res.Updated)
 	}
 
 	// rj_number が正しく登録されているか

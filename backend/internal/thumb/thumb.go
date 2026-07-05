@@ -52,35 +52,47 @@ func New(thumbsDir string) *Generator {
 // ソース画像の mtime がキャッシュより新しい(またはキャッシュが無い)場合のみ(再)生成する。
 // 保存したパス(または既存パス)を返す。画像が見つからない場合は空文字列を返す。
 func (g *Generator) Generate(workID int64, rootPath string) (string, error) {
-	_, outPath, err := g.Refresh(workID, rootPath)
+	_, outPath, _, err := g.Refresh(workID, rootPath)
 	return outPath, err
 }
 
 // Refresh は必要な場合のみサムネイルを(再)生成する。再生成した場合は true を返す。
-// 画像が見つからない場合は (false, "", nil)。
+// 画像が見つからない場合は古いキャッシュを削除し、candidateFound=false を返す。
 //
 // 再生成の判定: キャッシュが無い / 選ばれたソース画像が前回生成時(サイドカー
 // {workID}.src に記録)と異なる / ソース画像の mtime がキャッシュより新しい。
 // ソース記録のおかげで、ユーザーが mtime の古い thumbnail.* をコピーで置いた
 // 場合でも確実に差し替わる。
-func (g *Generator) Refresh(workID int64, rootPath string) (regenerated bool, outPath string, err error) {
+func (g *Generator) Refresh(workID int64, rootPath string) (regenerated bool, outPath string, candidateFound bool, err error) {
 	outPath = filepath.Join(g.ThumbsDir, fmt.Sprintf("%d.jpg", workID))
 	srcRecord := filepath.Join(g.ThumbsDir, fmt.Sprintf("%d.src", workID))
 
 	// 候補収集
-	candidates, err := collectImageCandidates(rootPath, 2)
+	candidates, hadWalkError, err := collectImageCandidates(rootPath, 2)
 	if err != nil {
-		return false, "", fmt.Errorf("画像候補収集失敗: %w", err)
+		return false, "", false, fmt.Errorf("画像候補収集失敗: %w", err)
 	}
 	if len(candidates) == 0 {
-		return false, "", nil
+		if hadWalkError {
+			// サブディレクトリの探索中にエラーがあった状態で候補ゼロは「画像が無い」とは
+			// 判定できない(一時的に読めないサブディレクトリにだけ画像がある可能性がある)。
+			// 誤ってキャッシュを削除しないよう、削除せずエラーを返す
+			// (呼び出し元はログして継続する既存経路に乗る。PR #89 レビュー指摘)。
+			return false, "", false, fmt.Errorf(
+				"画像候補の探索中にエラーが発生したため判定を保留します(rootPath=%q)", rootPath,
+			)
+		}
+		if err := removeThumbnailCache(outPath, srcRecord); err != nil {
+			return false, "", false, err
+		}
+		return false, "", false, nil
 	}
 
 	chosen := chooseBestImage(rootPath, candidates)
 
 	srcStat, err := os.Stat(chosen)
 	if err != nil {
-		return false, "", fmt.Errorf("ソース画像 Stat 失敗: %w", err)
+		return false, "", true, fmt.Errorf("ソース画像 Stat 失敗: %w", err)
 	}
 
 	if !needsRegenerate(rootPath, chosen, outPath, srcRecord, srcStat) {
@@ -88,14 +100,34 @@ func (g *Generator) Refresh(workID int64, rootPath string) (regenerated bool, ou
 		if _, recErr := os.Stat(srcRecord); recErr != nil {
 			_ = os.WriteFile(srcRecord, []byte(chosen), 0o644)
 		}
-		return false, outPath, nil
+		return false, outPath, true, nil
 	}
 
 	if err := g.generateThumbnail(chosen, outPath); err != nil {
-		return false, "", fmt.Errorf("サムネイル生成失敗 %q: %w", chosen, err)
+		return false, "", true, fmt.Errorf("サムネイル生成失敗 %q: %w", chosen, err)
 	}
 	_ = os.WriteFile(srcRecord, []byte(chosen), 0o644)
-	return true, outPath, nil
+	return true, outPath, true, nil
+}
+
+// RemoveCache は workID のサムネイルキャッシュファイル({workID}.jpg / {workID}.src)
+// を削除する。scanner.ThumbnailGenerator インターフェースが要求する公開版で、
+// フォルダ消失により work の root_path が NULL 化された際に呼ばれる
+// (removeThumbnailCache の公開版。fix/80 で導入した内部関数を再利用)。
+// ファイルが元から存在しない場合はエラーにしない。
+func (g *Generator) RemoveCache(workID int64) error {
+	outPath := filepath.Join(g.ThumbsDir, fmt.Sprintf("%d.jpg", workID))
+	srcRecord := filepath.Join(g.ThumbsDir, fmt.Sprintf("%d.src", workID))
+	return removeThumbnailCache(outPath, srcRecord)
+}
+
+func removeThumbnailCache(outPath, srcRecord string) error {
+	for _, path := range []string{outPath, srcRecord} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("古いサムネイル削除失敗 %q: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // needsRegenerate はサムネイルを作り直すべきかを判定する。
@@ -121,43 +153,54 @@ func isRootThumbnail(rootPath, path string) bool {
 	return filepath.Dir(path) == rootPath && thumbnailPattern.MatchString(filepath.Base(path))
 }
 
+// readDirFunc は os.ReadDir の差し替え可能な参照。テストからサブディレクトリの
+// ReadDir 失敗を注入するために使う(chmod は root 権限下では効かないため)。
+var readDirFunc = os.ReadDir
+
 // collectImageCandidates は rootPath から maxDepth の深さまで画像ファイルを収集する。
 // 自然順ソートは呼び出し元(chooseBestImage)で行う。
-func collectImageCandidates(root string, maxDepth int) ([]string, error) {
-	var candidates []string
-	err := walkDepth(root, 0, maxDepth, func(path string) {
+// hadError は探索中に(ルート自身を含め)ReadDir 失敗が 1 件以上あったかを示す。
+// err はルート自身の ReadDir 失敗のみを伝える(従来どおり Refresh 側で
+// 「画像候補収集失敗」として扱う)。
+func collectImageCandidates(root string, maxDepth int) (candidates []string, hadError bool, err error) {
+	hadError, err = walkDepth(root, 0, maxDepth, func(path string) {
 		if isImageFile(path) {
 			candidates = append(candidates, path)
 		}
 	})
-	return candidates, err
+	return candidates, hadError, err
 }
 
 // walkDepth は最大 maxDepth の深さまでディレクトリを再帰探索し、
 // ファイルに callback を呼び出す。
-func walkDepth(dir string, depth, maxDepth int, callback func(string)) error {
+// サブディレクトリの ReadDir 失敗(権限なし・壊れた symlink・NAS の一時的な読み取り
+// 不能等)は意図的に握りつぶして残りのエントリの探索を続行するが、hadError=true として
+// 呼び出し元に伝える。候補ゼロと組み合わさったときに「画像が本当に無い」のか
+// 「探索できなかっただけ」なのかを呼び出し元(Refresh)が区別できるようにするため
+// (PR #89 レビュー指摘)。
+// err は dir 自身の ReadDir 失敗のみを返す(再帰呼び出しのエラーは hadError に畳み込む)。
+func walkDepth(dir string, depth, maxDepth int, callback func(string)) (hadError bool, err error) {
 	if depth > maxDepth {
-		return nil
+		return false, nil
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := readDirFunc(dir)
 	if err != nil {
-		return err
+		return true, err
 	}
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
 		if e.IsDir() {
 			if depth < maxDepth {
-				// サブディレクトリの読み込み失敗(権限なし・壊れた symlink 等)は
-				// 意図的に無視し、残りのエントリの探索を続行する。
-				// walkDepth がエラーを返すのはこの ReadDir 失敗時のみで、
-				// その場合も他の候補からサムネイルを選べれば十分なため。
-				_ = walkDepth(path, depth+1, maxDepth, callback)
+				subHadError, _ := walkDepth(path, depth+1, maxDepth, callback)
+				if subHadError {
+					hadError = true
+				}
 			}
 		} else {
 			callback(path)
 		}
 	}
-	return nil
+	return hadError, nil
 }
 
 // isImageFile はサムネイル生成のデコード候補になる画像拡張子かどうかを判定する。

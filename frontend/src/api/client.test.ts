@@ -17,6 +17,7 @@ import {
   fetchWorks,
   fileUrl,
   importCsv,
+  importMetadata,
   rebuildThumbnails,
   recordPlay,
   refreshThumbnail,
@@ -392,7 +393,7 @@ describe('fetchHistory', () => {
 
 describe('importCsv', () => {
   it('POST /api/import/csv を multipart/form-data で呼ぶ', async () => {
-    const result = { created: 1, updated: 0, linked: 1, errors: [] };
+    const result = { created: 0, updated: 1, linked: 1, skipped: 2, errors: [] };
     fetchMock = mockFetchOk(result);
     vi.stubGlobal('fetch', fetchMock);
 
@@ -412,6 +413,39 @@ describe('importCsv', () => {
 
     const file = new File([''], 'bad.csv');
     await expect(importCsv(file)).rejects.toThrow(ApiRequestError);
+  });
+});
+
+// ---- importMetadata ----
+// CSV インポートと異なり multipart ではなく、ファイルの中身(JSON テキスト)を
+// application/json としてそのまま POST する(issue #78)。
+
+describe('importMetadata', () => {
+  it('POST /api/import/metadata を application/json ボディ直送で呼ぶ', async () => {
+    const result = { matched: 2, skipped: 1, tags_added: 3, errors: [] };
+    fetchMock = mockFetchOk(result);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const jsonText = '{"version":1,"works":[]}';
+    const file = new File([jsonText], 'stashpad-metadata-20260705.json', {
+      type: 'application/json',
+    });
+    const returned = await importMetadata(file);
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/import/metadata');
+    expect(options.method).toBe('POST');
+    expect(options.headers).toEqual({ 'Content-Type': 'application/json' });
+    expect(options.body).toBe(jsonText);
+    expect(returned).toEqual(result);
+  });
+
+  it('HTTP エラー時に ApiRequestError をスローする', async () => {
+    fetchMock = mockFetchError(400, { error: 'version が不正です' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = new File(['{"version":2,"works":[]}'], 'bad.json');
+    await expect(importMetadata(file)).rejects.toThrow(ApiRequestError);
   });
 });
 

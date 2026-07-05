@@ -4,21 +4,26 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
+	"github.com/koji-genba/stashpad/backend/internal/thumb"
 	_ "modernc.org/sqlite"
 )
 
 // fakeThumbGen は ThumbnailGenerator インターフェースのフェイク実装。
-// 呼び出しを記録し、設定に応じてパスまたはエラーを返す。
+// 呼び出しを記録し、設定に応じて Refresh の結果を返す。
 type fakeThumbGen struct {
-	mu      sync.Mutex
-	calls   []thumbCall
-	errors  map[string]error // absPath → 返すエラー
-	empties map[string]bool  // absPath → 空文字を返すか
+	mu              sync.Mutex
+	calls           []thumbCall
+	errors          map[string]error // absPath → 返すエラー
+	empties         map[string]bool  // absPath → 空文字を返すか
+	removedCacheIDs []int64          // RemoveCache が呼ばれた workID の記録
+	removeCacheErr  error            // RemoveCache が返すエラー(テスト用)
 }
 
 type thumbCall struct {
@@ -33,17 +38,26 @@ func newFakeThumbGen() *fakeThumbGen {
 	}
 }
 
-func (f *fakeThumbGen) Generate(workID int64, rootPath string) (string, error) {
+func (f *fakeThumbGen) Refresh(workID int64, rootPath string) (bool, string, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, thumbCall{workID: workID, absPath: rootPath})
 	if err, ok := f.errors[rootPath]; ok {
-		return "", err
+		return false, "", true, err
 	}
 	if f.empties[rootPath] {
-		return "", nil
+		return false, "", true, nil
 	}
-	return filepath.Join("/thumbs", fmt.Sprintf("%d.jpg", workID)), nil
+	return true, filepath.Join("/thumbs", fmt.Sprintf("%d.jpg", workID)), true, nil
+}
+
+// RemoveCache は ThumbnailGenerator インターフェースの RemoveCache を満たすフェイク実装。
+// 呼び出された workID を記録するだけで、実ファイル操作は行わない。
+func (f *fakeThumbGen) RemoveCache(workID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removedCacheIDs = append(f.removedCacheIDs, workID)
+	return f.removeCacheErr
 }
 
 // TestScanWithThumbnailGenerator はサムネイル生成経路のテスト。
@@ -90,16 +104,16 @@ func TestScanWithThumbnailGenerator(t *testing.T) {
 		t.Errorf("works 件数 = %d, want 3", count)
 	}
 
-	// Generate が 3 回呼ばれたことを確認
+	// Refresh が 3 回呼ばれたことを確認
 	gen.mu.Lock()
 	callCount := len(gen.calls)
 	gen.mu.Unlock()
 	if callCount != 3 {
-		t.Errorf("Generate 呼び出し回数 = %d, want 3", callCount)
+		t.Errorf("Refresh 呼び出し回数 = %d, want 3", callCount)
 	}
 }
 
-// TestScanThumbnailGeneratorError は Generate がエラーを返す work が混ざっても
+// TestScanThumbnailGeneratorError は Refresh がエラーを返す work が混ざっても
 // 他の work の thumbnail_path は更新されることをテスト。
 func TestScanThumbnailGeneratorError(t *testing.T) {
 	db := openTestDB(t)
@@ -148,7 +162,7 @@ func TestScanThumbnailGeneratorError(t *testing.T) {
 	}
 }
 
-// TestScanThumbnailGeneratorEmpty は Generate が空文字を返した場合、
+// TestScanThumbnailGeneratorEmpty は候補ありで Refresh が空文字を返した場合、
 // thumbnail_path が更新されないことをテスト。
 func TestScanThumbnailGeneratorEmpty(t *testing.T) {
 	db := openTestDB(t)
@@ -173,6 +187,78 @@ func TestScanThumbnailGeneratorEmpty(t *testing.T) {
 	}
 	if thumbPath.Valid && thumbPath.String != "" {
 		t.Errorf("空文字返却 work の thumbnail_path = %q, want 空/NULL", thumbPath.String)
+	}
+}
+
+// TestScanClearsStaleThumbnailWhenImagesDisappear は再スキャン時に画像候補がなくなった
+// work の thumbnail_path と古いサムネイル実体が削除されることをテスト。
+func TestScanClearsStaleThumbnailWhenImagesDisappear(t *testing.T) {
+	db := openTestDB(t)
+	base := t.TempDir()
+	lib := filepath.Join(base, "library")
+	workDir := filepath.Join(lib, "RJ900001_画像が消える作品")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	coverPath := filepath.Join(workDir, "cover.png")
+	writeScannerTestPNG(t, coverPath)
+
+	thumbsDir := filepath.Join(base, "thumbs")
+	gen := thumb.New(thumbsDir)
+	if _, err := Scan(db, []string{lib}, gen); err != nil {
+		t.Fatalf("1回目 Scan 失敗: %v", err)
+	}
+
+	var (
+		id        int64
+		thumbPath sql.NullString
+	)
+	if err := db.QueryRow(
+		"SELECT id, thumbnail_path FROM works WHERE rj_number='RJ900001'",
+	).Scan(&id, &thumbPath); err != nil {
+		t.Fatalf("SELECT 失敗: %v", err)
+	}
+	if !thumbPath.Valid || thumbPath.String == "" {
+		t.Fatal("1回目 Scan で thumbnail_path が設定されていない")
+	}
+	srcRecord := filepath.Join(thumbsDir, fmt.Sprintf("%d.src", id))
+	if _, err := os.Stat(srcRecord); err != nil {
+		t.Fatalf(".src が作られていない: %v", err)
+	}
+
+	if err := os.Remove(coverPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Scan(db, []string{lib}, gen); err != nil {
+		t.Fatalf("2回目 Scan 失敗: %v", err)
+	}
+
+	if err := db.QueryRow(
+		"SELECT thumbnail_path FROM works WHERE id=?", id,
+	).Scan(&thumbPath); err != nil {
+		t.Fatalf("SELECT 失敗: %v", err)
+	}
+	if thumbPath.Valid {
+		t.Errorf("thumbnail_path = %q, want NULL", thumbPath.String)
+	}
+	if _, err := os.Stat(filepath.Join(thumbsDir, fmt.Sprintf("%d.jpg", id))); !os.IsNotExist(err) {
+		t.Errorf("古いサムネイルが削除されていない: %v", err)
+	}
+	if _, err := os.Stat(srcRecord); !os.IsNotExist(err) {
+		t.Errorf("古い .src が削除されていない: %v", err)
+	}
+}
+
+func writeScannerTestPNG(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 40, 40))
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
 	}
 }
 

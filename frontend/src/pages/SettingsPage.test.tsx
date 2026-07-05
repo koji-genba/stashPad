@@ -15,20 +15,29 @@ vi.mock('@/api/client', () => ({
   }),
   fetchWorks: vi.fn().mockResolvedValue({ items: [], total: 0, limit: 200, page: 1 }),
   importCsv: vi.fn(),
+  importMetadata: vi.fn(),
   rebuildThumbnails: vi.fn(),
   runScan: vi.fn(),
   setWorkHidden: vi.fn(),
   deleteHistory: vi.fn().mockResolvedValue({ deleted: 5 }),
 }));
 
+const { tagStoreRefreshMock } = vi.hoisted(() => ({ tagStoreRefreshMock: vi.fn() }));
 vi.mock('@/store/tagStore', () => ({
   useTagStore: {
-    getState: () => ({ refresh: vi.fn() }),
+    getState: () => ({ refresh: tagStoreRefreshMock }),
   },
 }));
 
 import SettingsPage from './SettingsPage';
-import { deleteHistory, fetchThumbnailRebuildStatus, rebuildThumbnails } from '@/api/client';
+import {
+  deleteHistory,
+  fetchThumbnailRebuildStatus,
+  fetchWorks,
+  importCsv,
+  importMetadata,
+  rebuildThumbnails,
+} from '@/api/client';
 
 function renderPage() {
   return render(
@@ -71,6 +80,148 @@ describe('SettingsPage 再生履歴の全削除', () => {
     fireEvent.click(btn);
 
     expect(deleteHistory).not.toHaveBeenCalled();
+  });
+});
+
+describe('SettingsPage CSV インポート', () => {
+  beforeEach(() => {
+    vi.mocked(importCsv).mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('インポート結果にスキップ件数を表示する', async () => {
+    vi.mocked(importCsv).mockResolvedValue({
+      created: 0,
+      updated: 2,
+      linked: 1,
+      skipped: 3,
+      errors: [],
+    });
+    const { container } = renderPage();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['rj_number,title\nRJ1,Title\n'], 'works.csv', {
+      type: 'text/csv',
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'インポート実行' }));
+
+    await waitFor(() => expect(importCsv).toHaveBeenCalledWith(file));
+    await screen.findByText((_, node) => node?.textContent === 'スキップ 3');
+  });
+});
+
+// メタデータのエクスポート/インポート(issue #78)。
+// エクスポートは fetch 不要のダウンロードリンク、インポートは JSON ファイルを
+// 選択して POST する既存 CSV インポート UI の流儀を踏襲する。
+describe('SettingsPage メタデータのエクスポート/インポート', () => {
+  beforeEach(() => {
+    vi.mocked(importMetadata).mockReset();
+    tagStoreRefreshMock.mockClear();
+    vi.mocked(fetchWorks).mockClear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('エクスポートは /api/export への download リンクである', () => {
+    const { container } = renderPage();
+    const link = container.querySelector('a[download]') as HTMLAnchorElement | null;
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute('href')).toBe('/api/export');
+  });
+
+  it('インポート成功時に一致・見つからず・タグ付与件数を表示する', async () => {
+    vi.mocked(importMetadata).mockResolvedValue({
+      matched: 4,
+      skipped: 1,
+      tags_added: 6,
+      errors: [],
+    });
+    const { container } = renderPage();
+
+    const inputs = container.querySelectorAll('input[type="file"]');
+    // 1つ目が CSV インポート用、2つ目がメタデータインポート用
+    const input = inputs[1] as HTMLInputElement;
+    const file = new File(['{"version":1,"works":[]}'], 'stashpad-metadata-20260705.json', {
+      type: 'application/json',
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'メタデータをインポート' }));
+
+    await waitFor(() => expect(importMetadata).toHaveBeenCalledWith(file));
+    await screen.findByText((_, node) => node?.textContent === '一致 4');
+    await screen.findByText((_, node) => node?.textContent === '見つからず 1');
+    await screen.findByText((_, node) => node?.textContent === 'タグ付与 6');
+  });
+
+  it('インポート成功後に tagStore.refresh と非表示作品一覧の再取得が呼ばれる', async () => {
+    vi.mocked(importMetadata).mockResolvedValue({
+      matched: 4,
+      skipped: 1,
+      tags_added: 6,
+      errors: [],
+    });
+    const { container } = renderPage();
+
+    // マウント時の非表示作品一覧の初回取得分をクリアしてからカウントする
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+    vi.mocked(fetchWorks).mockClear();
+
+    const inputs = container.querySelectorAll('input[type="file"]');
+    const input = inputs[1] as HTMLInputElement;
+    const file = new File(['{"version":1,"works":[]}'], 'stashpad-metadata-20260705.json', {
+      type: 'application/json',
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'メタデータをインポート' }));
+
+    await waitFor(() => expect(importMetadata).toHaveBeenCalledWith(file));
+    await waitFor(() => expect(tagStoreRefreshMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(fetchWorks).toHaveBeenCalledWith({ hidden: true, limit: 200 }),
+    );
+  });
+
+  it('インポート失敗時にエラーメッセージを表示する', async () => {
+    vi.mocked(importMetadata).mockRejectedValue(new Error('version が不正です'));
+    const { container } = renderPage();
+
+    const inputs = container.querySelectorAll('input[type="file"]');
+    const input = inputs[1] as HTMLInputElement;
+    const file = new File(['{"version":2,"works":[]}'], 'bad.json', {
+      type: 'application/json',
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'メタデータをインポート' }));
+
+    await screen.findByText('version が不正です');
+  });
+
+  it('インポート結果に行単位のエラー一覧を表示する', async () => {
+    vi.mocked(importMetadata).mockResolvedValue({
+      matched: 1,
+      skipped: 0,
+      tags_added: 0,
+      errors: ['RJ999999: タグ作成失敗'],
+    });
+    const { container } = renderPage();
+
+    const inputs = container.querySelectorAll('input[type="file"]');
+    const input = inputs[1] as HTMLInputElement;
+    const file = new File(['{"version":1,"works":[]}'], 'meta.json', {
+      type: 'application/json',
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'メタデータをインポート' }));
+
+    await screen.findByText('RJ999999: タグ作成失敗');
   });
 });
 

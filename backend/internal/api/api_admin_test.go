@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"mime/multipart"
@@ -245,6 +246,52 @@ func TestRefreshThumbnailNoImage(t *testing.T) {
 	}
 }
 
+// 画像が消えた作品の単発 refresh は古い thumbnail_path と実ファイルを消す。
+func TestRefreshThumbnailNoImageClearsStaleThumbnail(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	root := makeWorkDir(t, database, "RJ825001", map[string]string{"readme.txt": "x"})
+	var id int64
+	database.QueryRow("SELECT id FROM works WHERE rj_number='RJ825001'").Scan(&id)
+
+	thumbsDir := filepath.Join(filepath.Dir(root), "thumbs")
+	oldThumb := filepath.Join(thumbsDir, fmt.Sprintf("%d.jpg", id))
+	oldSrc := filepath.Join(thumbsDir, fmt.Sprintf("%d.src", id))
+	if err := os.MkdirAll(thumbsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, oldThumb, 40, 40)
+	if err := os.WriteFile(oldSrc, []byte(filepath.Join(root, "deleted-cover.png")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE works SET thumbnail_path=? WHERE id=?", oldThumb, id); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, urlf("/api/works/%d/thumbnail/refresh", id), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var thumbPath sql.NullString
+	database.QueryRow("SELECT thumbnail_path FROM works WHERE id=?", id).Scan(&thumbPath)
+	if thumbPath.Valid {
+		t.Errorf("thumbnail_path = %q, want NULL", thumbPath.String)
+	}
+	if _, err := os.Stat(oldThumb); !os.IsNotExist(err) {
+		t.Errorf("古いサムネイルが削除されていない: %v", err)
+	}
+	if _, err := os.Stat(oldSrc); !os.IsNotExist(err) {
+		t.Errorf("古い .src が削除されていない: %v", err)
+	}
+
+	w := doGet(t, h, urlf("/api/works/%d/thumbnail", id))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("thumbnail GET status = %d, want 404", w.Code)
+	}
+}
+
 // 存在しない作品 → 404
 func TestRefreshThumbnailWorkNotFound(t *testing.T) {
 	h, _, _ := newTestServer(t)
@@ -311,6 +358,48 @@ func TestRebuildThumbnails(t *testing.T) {
 	database.QueryRow("SELECT thumbnail_path FROM works WHERE rj_number='RJ830001'").Scan(&thumbPath)
 	if !thumbPath.Valid {
 		t.Error("RJ830001 の thumbnail_path が更新されていない")
+	}
+}
+
+// 一括 rebuild は画像が消えた作品の古い thumbnail_path と実ファイルを消す。
+func TestRebuildThumbnailsClearsStaleThumbnailWhenNoImage(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	root := makeWorkDir(t, database, "RJ830003", map[string]string{"readme.txt": "x"})
+	var id int64
+	database.QueryRow("SELECT id FROM works WHERE rj_number='RJ830003'").Scan(&id)
+
+	thumbsDir := filepath.Join(filepath.Dir(root), "thumbs")
+	oldThumb := filepath.Join(thumbsDir, fmt.Sprintf("%d.jpg", id))
+	oldSrc := filepath.Join(thumbsDir, fmt.Sprintf("%d.src", id))
+	if err := os.MkdirAll(thumbsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, oldThumb, 40, 40)
+	if err := os.WriteFile(oldSrc, []byte(filepath.Join(root, "deleted-cover.png")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE works SET thumbnail_path=? WHERE id=?", oldThumb, id); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/thumbnails/rebuild", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202, body = %s", rec.Code, rec.Body.String())
+	}
+	waitForRebuildDone(t, h)
+
+	var thumbPath sql.NullString
+	database.QueryRow("SELECT thumbnail_path FROM works WHERE id=?", id).Scan(&thumbPath)
+	if thumbPath.Valid {
+		t.Errorf("thumbnail_path = %q, want NULL", thumbPath.String)
+	}
+	if _, err := os.Stat(oldThumb); !os.IsNotExist(err) {
+		t.Errorf("古いサムネイルが削除されていない: %v", err)
+	}
+	if _, err := os.Stat(oldSrc); !os.IsNotExist(err) {
+		t.Errorf("古い .src が削除されていない: %v", err)
 	}
 }
 
@@ -453,10 +542,16 @@ func multipartCSV(t *testing.T, csvContent string) (*http.Request, string) {
 
 func TestImportCSV(t *testing.T) {
 	h, database, _ := newTestServer(t)
+	if _, err := database.Exec(
+		`INSERT INTO works (rj_number, title, root_path)
+		 VALUES ('RJ900001', 'スキャン済み', '/media/RJ900001_作品')`,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	csvContent := "rj_number,title,circle,genres,voice_actor\n" +
 		"RJ900001,新作タイトル,新作サークル,\"R-18, ボイス・ASMR\",声優A/声優B\n" +
-		"RJ900002,別作品,別サークル,癒し,声優C\n"
+		"RJ900002,未スキャン作品,別サークル,癒し,声優C\n"
 
 	req, _ := multipartCSV(t, csvContent)
 	rec := httptest.NewRecorder()
@@ -468,10 +563,12 @@ func TestImportCSV(t *testing.T) {
 		Created int `json:"created"`
 		Updated int `json:"updated"`
 		Linked  int `json:"linked"`
+		Skipped int `json:"skipped"`
 	}
 	json.Unmarshal(rec.Body.Bytes(), &res)
-	if res.Created != 2 {
-		t.Errorf("created = %d, want 2", res.Created)
+	if res.Created != 0 || res.Updated != 1 || res.Linked != 1 || res.Skipped != 1 {
+		t.Errorf("created=%d updated=%d linked=%d skipped=%d, want 0/1/1/1",
+			res.Created, res.Updated, res.Linked, res.Skipped)
 	}
 
 	// DB 反映確認
@@ -491,6 +588,15 @@ func TestImportCSV(t *testing.T) {
 		JOIN works w ON w.id=wt.work_id WHERE w.rj_number='RJ900001'`).Scan(&tagCount)
 	if tagCount == 0 {
 		t.Error("CSV タグが展開されていない")
+	}
+	var skippedExists bool
+	if err := database.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM works WHERE rj_number='RJ900002')",
+	).Scan(&skippedExists); err != nil {
+		t.Fatal(err)
+	}
+	if skippedExists {
+		t.Error("未スキャン作品 RJ900002 が CSV インポートで作成された")
 	}
 }
 

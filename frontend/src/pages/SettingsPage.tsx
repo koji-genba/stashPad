@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   DeleteHistoryResult,
+  ImportMetadataResult,
   ImportResult,
   ScanResult,
   TagCleanupResult,
@@ -14,6 +15,7 @@ import {
   fetchThumbnailRebuildStatus,
   fetchWorks,
   importCsv,
+  importMetadata,
   rebuildThumbnails,
   runScan,
   setWorkHidden,
@@ -38,6 +40,14 @@ export default function SettingsPage() {
   const [cleaning, setCleaning] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<TagCleanupResult | null>(null);
   const [cleanupError, setCleanupError] = useState<string | null>(null);
+
+  const metadataFileInput = useRef<HTMLInputElement>(null);
+  const [metadataFile, setMetadataFile] = useState<File | null>(null);
+  const [metadataImporting, setMetadataImporting] = useState(false);
+  const [metadataImportResult, setMetadataImportResult] = useState<ImportMetadataResult | null>(
+    null,
+  );
+  const [metadataImportError, setMetadataImportError] = useState<string | null>(null);
 
   const [clearingHistory, setClearingHistory] = useState(false);
   const [clearHistoryResult, setClearHistoryResult] = useState<DeleteHistoryResult | null>(
@@ -79,6 +89,24 @@ export default function SettingsPage() {
       setImportError(e instanceof Error ? e.message : 'インポートに失敗しました');
     } finally {
       setImporting(false);
+    }
+  };
+
+  const onImportMetadata = async () => {
+    if (!metadataFile) return;
+    setMetadataImporting(true);
+    setMetadataImportResult(null);
+    setMetadataImportError(null);
+    try {
+      const result = await importMetadata(metadataFile);
+      setMetadataImportResult(result);
+      // custom タグ・hidden がサーバ側で更新されるのでキャッシュ・一覧を再取得
+      useTagStore.getState().refresh();
+      await loadHiddenWorks();
+    } catch (e) {
+      setMetadataImportError(e instanceof Error ? e.message : 'インポートに失敗しました');
+    } finally {
+      setMetadataImporting(false);
     }
   };
 
@@ -235,8 +263,6 @@ export default function SettingsPage() {
 
   // マウント時に非表示作品一覧をロード
   useEffect(() => {
-    // loadHiddenWorks は内部で setHiddenLoading(true) を同期的に呼ぶ意図的な setState
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadHiddenWorks();
   }, []);
 
@@ -315,6 +341,9 @@ export default function SettingsPage() {
               </span>
               <span>
                 リンク <b>{importResult.linked}</b>
+              </span>
+              <span>
+                スキップ <b>{importResult.skipped}</b>
               </span>
             </div>
             {(importResult.errors ?? []).length > 0 && (
@@ -440,6 +469,74 @@ export default function SettingsPage() {
           )}
         </div>
         {clearHistoryError && <p className={styles.error}>{clearHistoryError}</p>}
+
+        {/* メタデータのバックアップ・復元(issue #78) */}
+        <div className={styles.maintRow}>
+          <a href="/api/export" download className="btn">
+            メタデータをエクスポート
+          </a>
+        </div>
+        <p className="muted">
+          エクスポート済み JSON からタグ・お気に入り・非表示・手動編集を復元します(既存データは消しません)。
+        </p>
+        <div className={styles.fileRow}>
+          <input
+            ref={metadataFileInput}
+            type="file"
+            accept=".json,application/json"
+            className={styles.fileInput}
+            onChange={(e) => {
+              setMetadataFile(e.target.files?.[0] ?? null);
+              setMetadataImportResult(null);
+              setMetadataImportError(null);
+            }}
+          />
+          <button
+            type="button"
+            className="btn"
+            onClick={() => metadataFileInput.current?.click()}
+            disabled={metadataImporting}
+          >
+            JSON を選択
+          </button>
+          <span className={styles.fileName}>
+            {metadataFile ? metadataFile.name : '(未選択)'}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => void onImportMetadata()}
+          disabled={!metadataFile || metadataImporting}
+        >
+          {metadataImporting ? 'インポート中…' : 'メタデータをインポート'}
+        </button>
+        {metadataImportError && <p className={styles.error}>{metadataImportError}</p>}
+        {metadataImportResult && (
+          <div className={styles.result}>
+            <div className={styles.summary}>
+              <span>
+                一致 <b>{metadataImportResult.matched}</b>
+              </span>
+              <span>
+                見つからず <b>{metadataImportResult.skipped}</b>
+              </span>
+              <span>
+                タグ付与 <b>{metadataImportResult.tags_added}</b>
+              </span>
+            </div>
+            {metadataImportResult.errors.length > 0 && (
+              <details className={styles.errors}>
+                <summary>エラー {metadataImportResult.errors.length} 件</summary>
+                <ul>
+                  {metadataImportResult.errors.map((err, i) => (
+                    <li key={i}>{err}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
       </section>
 
       {/* 非表示の作品 */}

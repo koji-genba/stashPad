@@ -1,7 +1,7 @@
 // HistoryPage のテスト。
 // 履歴行の削除ボタン(confirm → API 呼び出し → 一覧からの除去)を検証する。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 vi.mock('@/api/client', () => {
@@ -93,11 +93,37 @@ describe('HistoryPage 履歴削除', () => {
 // ページャ自体が非空分岐の内側にあるため消えてしまい、total>0 なのに
 // 「まだ再生履歴がありません」から復帰できなくなっていた。
 // 修正: 削除後に残 items が 0 かつ page>1 なら前ページへ戻し、再フェッチさせる。
+//
+// このテストは以前、削除直後の再フェッチを検索デバウンス由来の再フェッチと区別するため
+// waitFor の timeout を 150ms に絞っていた。しかし検索欄の 300ms デバウンス effect
+// (useEffect(() => { setTimeout(() => { setQ(qInput); setPage(1); }, 300) }, [qInput]))
+// は「qInput が現在の q と同じなら発火しない」ガードを持たず、マウント時に一度スケジュールされた
+// タイマーは(qInput を一切変更しない本テストでも)実時間で 300ms 経過すると必ず発火し、
+// page を 1 に戻してしまう。CI の遅いランナーでは「次へ」クリックから削除完了までの実時間が
+// 300ms を超えることがあり、意図した削除経由の page=1 遷移より先にこの無関係なデバウンス
+// タイマーが発火して 1 ページ目に戻ってしまい、999 ではなく作品 1 の削除ボタンを叩く
+// 結果になって deleteHistory(999) の呼び出しが観測できず落ちていた(実時間の競合)。
+// 修正方針: vi.useFakeTimers() でこの 300ms タイマーを明示的に止め、テスト内では一切
+// advance しないことで「検索デバウンスによる偶然の page=1 遷移」を構造的に起こり得なくする。
+// これにより、観測される page=1 への遷移は削除ロジック由来であることが決定的に保証される。
 describe('HistoryPage 非先頭ページの全件削除', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
+
+  // pending な Promise の解決とそれに伴う setState を act() でラップして反映させる。
+  // 検索デバウンスの 300ms タイマーには一切到達しない範囲でのみ使う。
+  async function advance(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
 
   it('2 ページ目の最後の 1 件を削除すると 1 ページ目へ戻って再フェッチする', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -123,28 +149,27 @@ describe('HistoryPage 非先頭ページの全件削除', () => {
       .mockImplementationOnce(async () => ({ items: page1Items, total: 41, page: 1, limit: 40 }));
 
     renderPage();
-    await screen.findByText('作品1');
+    await advance(0);
+    expect(screen.getByText('作品1')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '次へ' }));
-    await screen.findByText('最後の作品');
+    await advance(0);
+    expect(screen.getByText('最後の作品')).toBeTruthy();
 
     const deleteButtons = screen.getAllByRole('button', { name: 'この作品の履歴を削除' });
     fireEvent.click(deleteButtons[0]);
+    await advance(0);
 
-    await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith(999));
+    expect(deleteHistory).toHaveBeenCalledWith(999);
 
     // 前ページ(page=1)へ戻って再フェッチされ、「まだ再生履歴がありません」には陥らない。
-    // タイムアウトは検索欄の 300ms デバウンス effect(無関係に page を 1 に戻す)より
-    // 十分短く取り、その effect 経由の偶然の green化ではなく削除直後の再フェッチであることを保証する。
-    await waitFor(
-      () =>
-        expect(fetchHistory).toHaveBeenLastCalledWith(
-          expect.objectContaining({ page: 1 }),
-          expect.anything(),
-        ),
-      { timeout: 150 },
+    // 検索デバウンスの 300ms タイマーには到達していないため、この page=1 遷移は
+    // 削除ロジック由来であることが構造的に保証されている。
+    expect(fetchHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1 }),
+      expect.anything(),
     );
-    await screen.findByText('作品1');
+    expect(screen.getByText('作品1')).toBeTruthy();
     expect(screen.queryByText('まだ再生履歴がありません')).toBeNull();
   });
 });

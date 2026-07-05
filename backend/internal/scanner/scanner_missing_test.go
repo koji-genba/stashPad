@@ -1,10 +1,14 @@
 package scanner
 
 import (
-	"errors"
+	"bytes"
 	"database/sql"
+	"errors"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -255,6 +259,44 @@ func TestUpsertByPathRelinksOrphanedNonRJWork(t *testing.T) {
 	//  非RJフォルダは再リンクなので新規は RJ 2件のみ)
 	if scanRes.NewlyRegistered != 2 {
 		t.Errorf("NewlyRegistered = %d, want 2 (非RJフォルダは再リンクなので新規カウントされない)", scanRes.NewlyRegistered)
+	}
+}
+
+// TestUpsertByPathRelinkEmitsAuditLog は、孤児行の再リンクが暗黙に起きないよう、
+// どの行(id・title)がどのパスに再リンクされたかを監査ログに出力することをテスト(issue #81)。
+// 再リンクは「以前 NULL 化された同一作品」と「後から現れた別の同名フォルダ」を
+// 区別できないため、誤帰属を後から追跡できるログが必要。
+func TestUpsertByPathRelinkEmitsAuditLog(t *testing.T) {
+	db := openTestDB(t)
+	lib := setupLibrary(t)
+
+	res, err := db.Exec(
+		`INSERT INTO works (title, root_path, updated_at) VALUES (?, NULL, datetime('now'))`,
+		"非RJフォルダ",
+	)
+	if err != nil {
+		t.Fatalf("事前 INSERT 失敗: %v", err)
+	}
+	orphanID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	if _, err := Scan(db, []string{lib}, nil); err != nil {
+		t.Fatalf("Scan 失敗: %v", err)
+	}
+
+	logged := buf.String()
+	wantID := fmt.Sprintf("id=%d", orphanID)
+	wantPath := filepath.Join(lib, "非RJフォルダ")
+	for _, want := range []string{wantID, "非RJフォルダ", wantPath} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("再リンクの監査ログに %q が含まれていない。ログ全体: %q", want, logged)
+		}
 	}
 }
 
