@@ -329,6 +329,9 @@ func upsertByPath(db execQuerier, absPath, dirName string) (newlyRegistered bool
 			); uErr != nil {
 				return false, 0, fmt.Errorf("孤児行の再リンク UPDATE 失敗: %w", uErr)
 			}
+			// タイトル一致だけでは「以前 NULL 化された同一作品」と「別の同名フォルダ」を
+			// 区別できないため、誤帰属を後から追跡できるよう監査ログを残す(issue #81)
+			log.Printf("孤児行 id=%d (title=%q) を root_path=%q に再リンクした", orphanID, dirName, absPath)
 			return false, orphanID, nil
 		}
 
