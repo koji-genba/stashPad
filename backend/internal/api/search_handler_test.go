@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/url"
 	"testing"
 )
@@ -182,6 +183,48 @@ func TestListWorksNotKeywordLikeSpecialChars(t *testing.T) {
 		if it.Title == "100%OFF セール作品" {
 			t.Errorf("除外されるべき作品が残っている: %+v", body.Items)
 		}
+	}
+}
+
+// TestListWorksNotKeywordRJNumberNull は、rj_number が NULL の作品が NOT 検索
+// (除外語検索)で誤って結果から消えないことを検証する(PR #79 レビュー指摘)。
+// 除外句の w.rj_number LIKE ? は rj_number が NULL のとき NULL になり、
+// NOT(... OR ... OR NULL) は NULL になって行自体が WHERE から除外されてしまう
+// (circle は COALESCE 済みだが rj_number だけ漏れていた)。
+func TestListWorksNotKeywordRJNumberNull(t *testing.T) {
+	h, database, _ := newTestServer(t)
+	// newTestServer は rj_number 非NULL の「テスト作品」(RJ000001)を既に持つ。
+
+	// rj_number が NULL の作品(手動登録・CSV 未突合等を想定)
+	if _, err := database.Exec(`
+		INSERT INTO works (title) VALUES ('rj番号なし作品')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	// 除外語はどちらの作品とも無関係な語 → 両方残るはず
+	w := doGet(t, h, "/api/works?q="+url.QueryEscape("-無関係な語"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Total int `json:"total"`
+		Items []struct {
+			Title string `json:"title"`
+		} `json:"items"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body.Total != 2 {
+		t.Errorf("total = %d, want 2 (rj_number NULL の作品も残るべき); items = %+v", body.Total, body.Items)
+	}
+	found := false
+	for _, it := range body.Items {
+		if it.Title == "rj番号なし作品" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("rj_number NULL の作品が NOT 検索で誤って消えている: items = %+v", body.Items)
 	}
 }
 

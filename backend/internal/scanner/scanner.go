@@ -59,6 +59,18 @@ const upsertChunkSize = 500
 func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, error) {
 	var res Result
 
+	// roots を filepath.Clean で正規化する。config.Load 側でも Clean するが、
+	// Scan は公開 API であり呼び出し元の正規化に依存すべきではない。末尾スラッシュ
+	// 付きルート(例: "/mnt/nas/libB/")が生文字列のまま failedRoots に入ると、
+	// DB の root_path(filepath.Join で Clean 済み)との比較(underFailedRoot の
+	// HasPrefix(path, root+"/"))が二重スラッシュ不一致で false になり、部分障害時に
+	// markMissingPaths が配下を誤って NULL 化してしまう(PR #79 レビュー指摘)。
+	cleanedRoots := make([]string, len(roots))
+	for i, r := range roots {
+		cleanedRoots[i] = filepath.Clean(r)
+	}
+	roots = cleanedRoots
+
 	// ステップ1: 各ルートの直下ディレクトリを列挙し works を直列 upsert する。
 	// サムネイル生成が必要な (workID, absPath) ペアを収集する。
 	foundPaths := make(map[string]bool) // スキャンで見つかった root_path の集合

@@ -178,6 +178,31 @@ func TestCheckLibraryRootsNotDirectory(t *testing.T) {
 	}
 }
 
+// TestLoadLibraryRootsCleansTrailingSlash は末尾スラッシュ・二重スラッシュ付きルートが
+// filepath.Clean されることをテスト(PR #79 レビュー指摘: scanner 側の failedRoots
+// 判定は DB の root_path(filepath.Join で Clean 済み)と生文字列を比較するため、
+// config でも表現を統一しておく必要がある)。
+func TestLoadLibraryRootsCleansTrailingSlash(t *testing.T) {
+	t.Setenv("STASHPAD_LIBRARY_ROOTS", "/media/audio/, /media/manga//")
+	t.Setenv("STASHPAD_DATA_DIR", "/tmp/data")
+	t.Setenv("STASHPAD_ADDR", "")
+	t.Setenv("STASHPAD_SCAN_ON_START", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 失敗: %v", err)
+	}
+	want := []string{"/media/audio", "/media/manga"}
+	if len(cfg.LibraryRoots) != len(want) {
+		t.Fatalf("LibraryRoots 件数 = %d, want %d(%v)", len(cfg.LibraryRoots), len(want), cfg.LibraryRoots)
+	}
+	for i, w := range want {
+		if cfg.LibraryRoots[i] != w {
+			t.Errorf("LibraryRoots[%d] = %q, want %q", i, cfg.LibraryRoots[i], w)
+		}
+	}
+}
+
 // TestLoadSingleRoot は単一パスが正しく読み込まれることをテスト。
 func TestLoadSingleRoot(t *testing.T) {
 	t.Setenv("STASHPAD_LIBRARY_ROOTS", "/single/path")

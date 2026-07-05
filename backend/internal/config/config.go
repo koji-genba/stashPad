@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -32,7 +33,10 @@ func Load() (*Config, error) {
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		if p != "" {
-			libraryRoots = append(libraryRoots, p)
+			// 末尾スラッシュ・二重スラッシュ等を正規化する。scanner 側は DB の
+			// root_path(filepath.Join で Clean 済み)と生文字列の failedRoots を
+			// 比較するため、config 側でも表現を統一しておく(PR #79 レビュー指摘)。
+			libraryRoots = append(libraryRoots, filepath.Clean(p))
 		}
 	}
 	if len(libraryRoots) == 0 {

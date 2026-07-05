@@ -257,3 +257,55 @@ func TestUpsertByPathRelinksOrphanedNonRJWork(t *testing.T) {
 		t.Errorf("NewlyRegistered = %d, want 2 (非RJフォルダは再リンクなので新規カウントされない)", scanRes.NewlyRegistered)
 	}
 }
+
+// TestScanFailedRootTrailingSlashPreservesMissingRootWorks は、
+// 末尾スラッシュ付きのルート(例: "/mnt/nas/libB/")が読み込み失敗した場合でも、
+// その配下にある既存 work の root_path が誤って NULL 化されないことをテスト
+// (PR #79 レビュー指摘: config は TrimSpace のみで Clean しないため、末尾スラッシュ
+// 付きルートが Scan に渡り得る。DB の root_path は filepath.Join で Clean 済みのため、
+// failedRoots が生文字列のままだと underFailedRoot の HasPrefix(path, root+"/") が
+// "/mnt/nas/libB//" のような二重スラッシュと比較して false になり、部分障害時に
+// markMissingPaths が配下を NULL 化してしまう)。
+func TestScanFailedRootTrailingSlashPreservesMissingRootWorks(t *testing.T) {
+	db := openTestDB(t)
+	libA := setupLibrary(t)
+
+	base := t.TempDir()
+	libB := filepath.Join(base, "libB_missing_mount")
+	// libB 自体は末尾スラッシュ付きで Scan に渡す(config が Clean しない場合の再現)。
+	libBWithTrailingSlash := libB + string(filepath.Separator)
+
+	// libB は存在しないが、事前に libB 配下の work が DB に登録されている状態を再現する
+	// (root_path は filepath.Join 済みなので末尾スラッシュは付かない)。
+	preexistingPath := filepath.Join(libB, "RJ999999_マウント前作品")
+	res, err := db.Exec(
+		`INSERT INTO works (rj_number, title, root_path, updated_at) VALUES (?, ?, ?, datetime('now'))`,
+		"RJ999999", "マウント前作品", preexistingPath,
+	)
+	if err != nil {
+		t.Fatalf("事前 INSERT 失敗: %v", err)
+	}
+	preexistingID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scanRes, err := Scan(db, []string{libA, libBWithTrailingSlash}, nil)
+	if err != nil {
+		t.Fatalf("Scan は libA が読めるのでエラーを返してはならない: %v", err)
+	}
+
+	// libB は読めなかったので MissingMarked には数えられない(末尾スラッシュの有無に
+	// 関わらず、読み込み失敗ルート配下は「消えた」と判定できないため対象外とすべき)。
+	if scanRes.MissingMarked != 0 {
+		t.Errorf("MissingMarked = %d, want 0 (末尾スラッシュ付き失敗ルート配下は対象外)", scanRes.MissingMarked)
+	}
+
+	var rootPath sql.NullString
+	if err := db.QueryRow("SELECT root_path FROM works WHERE id=?", preexistingID).Scan(&rootPath); err != nil {
+		t.Fatalf("SELECT 失敗: %v", err)
+	}
+	if !rootPath.Valid || rootPath.String != preexistingPath {
+		t.Errorf("root_path = %v, want %q (末尾スラッシュ付き失敗ルート配下が誤って NULL 化された)", rootPath, preexistingPath)
+	}
+}

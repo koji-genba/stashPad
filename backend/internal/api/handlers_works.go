@@ -128,9 +128,11 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, term := range excludeTerms {
 		like := likeContains(term)
-		// circle は NULL の可能性があるため COALESCE で空文字に変換して NOT 判定する
-		// (NULL LIKE ? は NULL になり NOT NULL = NULL → 行が除外されてしまうため)
-		whereClause += " AND NOT (w.title LIKE ? ESCAPE '\\' OR COALESCE(w.circle, '') LIKE ? ESCAPE '\\' OR w.rj_number LIKE ? ESCAPE '\\')"
+		// circle・rj_number は NULL の可能性があるため COALESCE で空文字に変換して
+		// NOT 判定する(NULL LIKE ? は NULL になり NOT(... OR NULL) も NULL になって
+		// 行自体が WHERE から除外されてしまうため。PR #79 レビュー指摘: rj_number だけ
+		// COALESCE が漏れていた)。
+		whereClause += " AND NOT (w.title LIKE ? ESCAPE '\\' OR COALESCE(w.circle, '') LIKE ? ESCAPE '\\' OR COALESCE(w.rj_number, '') LIKE ? ESCAPE '\\')"
 		args = append(args, like, like, like)
 	}
 
@@ -330,6 +332,10 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tags = append(tags, workTagItem{ID: tid, Name: name, Category: cat})
+	}
+	if err := tagRows.Err(); err != nil {
+		respondInternalError(w, "タグ取得失敗", err)
+		return
 	}
 
 	result := workDetailResponse{
@@ -803,10 +809,39 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 	}
 	close(jobs)
 
-	// 結果収集・DB 更新(SQLite は書き込みを直列化するためここで順次実行)。
+	// 結果のドレイン中は DB に一切触れない。画像デコードは 1 件あたり数十 ms〜
+	// かかることがあり、全件で数分規模になり得る。ここで tx を張ったまま drain すると
+	// SQLite の書き込みロックがジョブ全体の間保持され、scanMu 外の他の書き込み API
+	// (plays/PATCH/タグ/履歴削除/CSV インポート等)が busy_timeout 後に 500 になって
+	// しまう(PR #79 レビュー指摘)。そのため drain 中は進捗更新(addChecked)と
+	// (id, outPath) の収集のみ行い、DB 更新は全件ドレイン後にまとめて行う。
+	type update struct {
+		id      int64
+		outPath string
+	}
+	var toUpdate []update
+
+	for range works {
+		res := <-results
+		if res.err != nil {
+			// ログには出力するが全体は継続
+			log.Printf("サムネイル再生成失敗 work_id=%d: %v", res.id, res.err)
+			s.rebuildProgress.addChecked(1)
+			continue
+		}
+		if res.regenerated && res.outPath != "" {
+			toUpdate = append(toUpdate, update{id: res.id, outPath: res.outPath})
+		}
+		s.rebuildProgress.addChecked(1)
+	}
+
+	if len(toUpdate) == 0 {
+		return
+	}
+
+	// 全件ドレイン後、短い tx でまとめて UPDATE → Commit する。
 	// UPDATE をまとめて 1 トランザクションにすることで、作品数分の fsync を避ける。
-	// tx が取得できない場合でも結果チャネルは最後まで drain する必要があるため、
-	// Begin 失敗時は s.db.Exec への個別コミットにフォールバックする。
+	// tx が取得できない場合は s.db.Exec への個別コミットにフォールバックする。
 	//
 	// execer はここでのみ使う最小限のインターフェース(*sql.DB と *sql.Tx の両方を満たす)。
 	type execer interface {
@@ -823,25 +858,15 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 		defer func() { _ = tx.Rollback() }()
 	}
 
-	for range works {
-		res := <-results
-		if res.err != nil {
-			// ログには出力するが全体は継続
-			log.Printf("サムネイル再生成失敗 work_id=%d: %v", res.id, res.err)
-			s.rebuildProgress.addChecked(1)
-			continue
+	for _, u := range toUpdate {
+		if _, uErr := execTarget.Exec(
+			"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
+			u.outPath, u.id,
+		); uErr != nil {
+			log.Printf("thumbnail_path 更新失敗 work_id=%d: %v", u.id, uErr)
+		} else {
+			s.rebuildProgress.addRegenerated(1)
 		}
-		if res.regenerated && res.outPath != "" {
-			if _, uErr := execTarget.Exec(
-				"UPDATE works SET thumbnail_path=?, updated_at=datetime('now') WHERE id=?",
-				res.outPath, res.id,
-			); uErr != nil {
-				log.Printf("thumbnail_path 更新失敗 work_id=%d: %v", res.id, uErr)
-			} else {
-				s.rebuildProgress.addRegenerated(1)
-			}
-		}
-		s.rebuildProgress.addChecked(1)
 	}
 
 	if tx != nil {
