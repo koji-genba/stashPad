@@ -453,10 +453,16 @@ func multipartCSV(t *testing.T, csvContent string) (*http.Request, string) {
 
 func TestImportCSV(t *testing.T) {
 	h, database, _ := newTestServer(t)
+	if _, err := database.Exec(
+		`INSERT INTO works (rj_number, title, root_path)
+		 VALUES ('RJ900001', 'スキャン済み', '/media/RJ900001_作品')`,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	csvContent := "rj_number,title,circle,genres,voice_actor\n" +
 		"RJ900001,新作タイトル,新作サークル,\"R-18, ボイス・ASMR\",声優A/声優B\n" +
-		"RJ900002,別作品,別サークル,癒し,声優C\n"
+		"RJ900002,未スキャン作品,別サークル,癒し,声優C\n"
 
 	req, _ := multipartCSV(t, csvContent)
 	rec := httptest.NewRecorder()
@@ -468,10 +474,12 @@ func TestImportCSV(t *testing.T) {
 		Created int `json:"created"`
 		Updated int `json:"updated"`
 		Linked  int `json:"linked"`
+		Skipped int `json:"skipped"`
 	}
 	json.Unmarshal(rec.Body.Bytes(), &res)
-	if res.Created != 2 {
-		t.Errorf("created = %d, want 2", res.Created)
+	if res.Created != 0 || res.Updated != 1 || res.Linked != 1 || res.Skipped != 1 {
+		t.Errorf("created=%d updated=%d linked=%d skipped=%d, want 0/1/1/1",
+			res.Created, res.Updated, res.Linked, res.Skipped)
 	}
 
 	// DB 反映確認
@@ -491,6 +499,15 @@ func TestImportCSV(t *testing.T) {
 		JOIN works w ON w.id=wt.work_id WHERE w.rj_number='RJ900001'`).Scan(&tagCount)
 	if tagCount == 0 {
 		t.Error("CSV タグが展開されていない")
+	}
+	var skippedExists bool
+	if err := database.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM works WHERE rj_number='RJ900002')",
+	).Scan(&skippedExists); err != nil {
+		t.Fatal(err)
+	}
+	if skippedExists {
+		t.Error("未スキャン作品 RJ900002 が CSV インポートで作成された")
 	}
 }
 

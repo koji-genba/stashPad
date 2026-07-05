@@ -23,6 +23,7 @@ func TestImportNoRJNumberColumn(t *testing.T) {
 // TestImportEmptyRJNumber は rj_number が空の行がエラーとして収集されることをテスト。
 func TestImportEmptyRJNumber(t *testing.T) {
 	db := openTestDB(t)
+	seedScannedWork(t, db, "RJ111222")
 
 	// rj_number が空の行を含む CSV(1行は正常)
 	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
@@ -40,9 +41,105 @@ RJ111222,正常行,,,,,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
 		t.Error("空 rj_number 行がエラーとして収集されていない")
 	}
 
-	// 正常行は作成される
-	if res.Created != 1 {
-		t.Errorf("Created = %d, want 1", res.Created)
+	// 正常行は既存のスキャン済み作品に反映される
+	if res.Updated != 1 {
+		t.Errorf("Updated = %d, want 1", res.Updated)
+	}
+}
+
+func TestImportSkipsMissingWork(t *testing.T) {
+	db := openTestDB(t)
+
+	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
+RJ222333,未スキャン作品,シリーズ,サークル,2026/01/01,ボイス・ASMR,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
+`
+
+	res, err := Import(db, strings.NewReader(csvData))
+	if err != nil {
+		t.Fatalf("Import 失敗: %v", err)
+	}
+	if res.Created != 0 || res.Updated != 0 || res.Linked != 0 || res.Skipped != 1 {
+		t.Fatalf("Created=%d Updated=%d Linked=%d Skipped=%d, want 0/0/0/1",
+			res.Created, res.Updated, res.Linked, res.Skipped)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("Errors = %v, want empty", res.Errors)
+	}
+
+	var exists bool
+	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE rj_number='RJ222333')").Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Error("未スキャン RJ の works 行が CSV インポートで作成された")
+	}
+}
+
+func TestImportUpdatesExistingRootPathNullWork(t *testing.T) {
+	db := openTestDB(t)
+	if _, err := db.Exec(
+		`INSERT INTO works (rj_number, title)
+		 VALUES ('RJ222334', '過去の幽霊行')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
+RJ222334,CSVタイトル,CSVシリーズ,CSVサークル,2026/01/01,ボイス・ASMR,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
+`
+
+	res, err := Import(db, strings.NewReader(csvData))
+	if err != nil {
+		t.Fatalf("Import 失敗: %v", err)
+	}
+	if res.Updated != 1 || res.Skipped != 0 || res.Linked != 0 {
+		t.Fatalf("Updated=%d Skipped=%d Linked=%d, want 1/0/0", res.Updated, res.Skipped, res.Linked)
+	}
+
+	var title, circle string
+	if err := db.QueryRow(
+		"SELECT title, circle FROM works WHERE rj_number='RJ222334'",
+	).Scan(&title, &circle); err != nil {
+		t.Fatal(err)
+	}
+	if title != "CSVタイトル" || circle != "CSVサークル" {
+		t.Errorf("title=%q circle=%q, want CSVタイトル/CSVサークル", title, circle)
+	}
+}
+
+func TestImportAfterScanForPreviouslySkippedWork(t *testing.T) {
+	db := openTestDB(t)
+	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
+RJ222335,CSVタイトル,CSVシリーズ,CSVサークル,2026/01/01,ボイス・ASMR,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
+`
+
+	first, err := Import(db, strings.NewReader(csvData))
+	if err != nil {
+		t.Fatalf("1回目 Import 失敗: %v", err)
+	}
+	if first.Skipped != 1 {
+		t.Fatalf("1回目 Skipped = %d, want 1", first.Skipped)
+	}
+
+	seedScannedWork(t, db, "RJ222335")
+
+	second, err := Import(db, strings.NewReader(csvData))
+	if err != nil {
+		t.Fatalf("2回目 Import 失敗: %v", err)
+	}
+	if second.Updated != 1 || second.Linked != 1 || second.Skipped != 0 {
+		t.Fatalf("2回目 Updated=%d Linked=%d Skipped=%d, want 1/1/0",
+			second.Updated, second.Linked, second.Skipped)
+	}
+
+	var title, circle string
+	if err := db.QueryRow(
+		"SELECT title, circle FROM works WHERE rj_number='RJ222335'",
+	).Scan(&title, &circle); err != nil {
+		t.Fatal(err)
+	}
+	if title != "CSVタイトル" || circle != "CSVサークル" {
+		t.Errorf("title=%q circle=%q, want CSVタイトル/CSVサークル", title, circle)
 	}
 }
 
@@ -190,6 +287,7 @@ func TestBOMReaderReadError(t *testing.T) {
 // TestImportTitleFallback は title カラムが空の場合に rj_number がタイトルに使われることをテスト。
 func TestImportTitleFallback(t *testing.T) {
 	db := openTestDB(t)
+	seedScannedWork(t, db, "RJ999001")
 
 	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
 RJ999001,,,,,,ボイス,ボイス,MP3,1GB,,全年齢,,,,,
@@ -199,8 +297,8 @@ RJ999001,,,,,,ボイス,ボイス,MP3,1GB,,全年齢,,,,,
 	if err != nil {
 		t.Fatalf("Import 失敗: %v", err)
 	}
-	if res.Created != 1 {
-		t.Errorf("Created = %d, want 1", res.Created)
+	if res.Updated != 1 {
+		t.Errorf("Updated = %d, want 1", res.Updated)
 	}
 
 	// title が rj_number と同じ値になっているか
@@ -244,12 +342,13 @@ func TestBuildColumnIndex(t *testing.T) {
 // 通常どおり更新されることをテスト(issue #64 案 A)。
 func TestImportPreservesManuallyEditedTitleCircle(t *testing.T) {
 	db := openTestDB(t)
+	seedScannedWork(t, db, "RJ600001")
 
 	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
 RJ600001,CSVタイトル,CSVシリーズ,CSVサークル,2026/01/01,ボイス・ASMR,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
 `
 
-	// 1回目インポートで作品を作成
+	// 1回目インポートでスキャン済み作品にメタデータを付与
 	if _, err := Import(db, strings.NewReader(csvData)); err != nil {
 		t.Fatalf("1回目 Import 失敗: %v", err)
 	}
@@ -312,6 +411,7 @@ RJ600001,CSVタイトル2,CSVシリーズ2,CSVサークル2,2026/02/02,ボイス
 // 合わない行があると CSV 全体の読み込みがそこで失敗し、後続行が一切取り込まれなかった)。
 func TestImportContinuesAfterFieldCountMismatch(t *testing.T) {
 	db := openTestDB(t)
+	seedScannedWorks(t, db, "RJ000001", "RJ000003")
 
 	// 2行目(RJ000002)だけ列が1つ多い(列数不一致)。1・3行目は正常。
 	csvData := "rj_number,title\n" +
@@ -324,9 +424,9 @@ func TestImportContinuesAfterFieldCountMismatch(t *testing.T) {
 		t.Fatalf("Import 自体はエラーを返すべきではない: %v", err)
 	}
 
-	// 正常な2行(1・3行目)は取り込まれる
-	if res.Created != 2 {
-		t.Errorf("Created = %d, want 2", res.Created)
+	// 正常な2行(1・3行目)は既存のスキャン済み作品に取り込まれる
+	if res.Updated != 2 {
+		t.Errorf("Updated = %d, want 2", res.Updated)
 	}
 	// 不正行1件がエラーとして収集される
 	if len(res.Errors) != 1 {
@@ -401,6 +501,7 @@ RJ777778,CSVのタイトル,,,,,ASMR,ボイス・ASMR,MP3,1GB,,全年齢,,,,,
 // タグ件数が正しいことをテスト(二重リンクが起きないことの確認)。
 func TestImportMultipleTagsReimport(t *testing.T) {
 	db := openTestDB(t)
+	seedScannedWork(t, db, "RJ998001")
 
 	csvData := `rj_number,title,series_name,circle,purchase_date,genres,detail_genres,work_type,file_format,file_size,supported_os,age_rating,event,scenario,illustration,voice_actor,music
 RJ998001,多タグ作品,,,,"R-15, ボイス・ASMR","ASMR 癒し 耳かき",ボイス・ASMR,MP3,1GB,,全年齢,,,葉月かなめ,耳恋なか/箱河ノア,
@@ -410,8 +511,8 @@ RJ998001,多タグ作品,,,,"R-15, ボイス・ASMR","ASMR 癒し 耳かき",ボ
 	if err != nil {
 		t.Fatalf("1回目 Import 失敗: %v", err)
 	}
-	if res1.Created != 1 {
-		t.Fatalf("1回目 Created = %d, want 1", res1.Created)
+	if res1.Updated != 1 {
+		t.Fatalf("1回目 Updated = %d, want 1", res1.Updated)
 	}
 
 	var workID int64
