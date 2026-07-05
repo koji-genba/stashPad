@@ -248,6 +248,50 @@ multipart で CSV を受け取り、結果サマリを返す:
 
 スキャンは数千フォルダの readdir 程度なので同期実行でよい(数秒で終わる)。タイムアウトが問題になったら非同期化を検討。
 
+### GET /api/export
+
+ユーザー付与メタデータ(バックアップ用)を JSON でダウンロードさせる(issue #78)。`Content-Disposition: attachment; filename="stashpad-metadata-YYYYMMDD.json"` を付け、ブラウザ直リンク(`<a href="/api/export" download>`)でダウンロード可能にする。
+
+```json
+{
+  "version": 1,
+  "exported_at": "2026-07-05T12:00:00Z",
+  "works": [
+    {
+      "rj_number": "RJ123456",
+      "root_path": "/media/voice/RJ123456_作品名",
+      "title": "作品名",
+      "circle": "サークル名",
+      "manually_edited": true,
+      "hidden": false,
+      "favorited_at": "2026-07-01 12:00:00",
+      "custom_tags": ["睡眠用", "よく聴く"]
+    }
+  ]
+}
+```
+
+- 対象は**ユーザー付与メタデータを 1 つ以上持つ作品のみ**(`custom` タグあり / `favorited_at` 非 NULL / `hidden=1` / `manually_edited=1`)。何も無い作品は含めない
+- `custom_tags` は `work_tags JOIN tags` で `category='custom'` のみ(genre 等 CSV 由来のタグは対象外)
+- `rj_number` / `root_path` / `circle` / `favorited_at` は NULL 許容(明示 null。issue #57 の流儀)。`title` は可読性・手動確認用に常に出力する
+
+### POST /api/import/metadata
+
+`GET /api/export` の JSON をそのまま application/json ボディで受け取り、ユーザー付与メタデータを復元する(`http.MaxBytesReader` で 32MB 上限)。
+
+```json
+{"matched": 4, "skipped": 1, "tags_added": 6, "errors": []}
+```
+
+- 照合: `rj_number` があれば `rj_number` で works を検索、無ければ `root_path` で検索。どちらにも一致しなければ `skipped` に加算
+- **復元は加算のみで既存データを一切消さない**(issue #78):
+  - `custom_tags` は `tags(category='custom')` を upsert し `work_tags` に `INSERT OR IGNORE`(新規リンクのみ `tags_added` に加算)
+  - `favorited_at` はエクスポート値が非 null のときだけ `SET`(既存が非 NULL でも上書きする。エクスポート時刻の方が「登録順」として正しいという判断)
+  - `hidden` は `true` のときだけ `1` に `SET`(`false` で解除はしない)
+  - `manually_edited` は `true` のときだけ `title`・`circle` を復元し `manually_edited=1` を `SET`(`false`/null 側への「クリア」は一切しない)
+- `version` が `1` 以外、または JSON 不正の場合は 400
+- 全体を単一トランザクションで実行する。ただし行単位の処理失敗は中断せず `errors` に `"rj_number/RJxxx: ..."` 形式で積んで継続する(`matched` のカウント自体には影響しない)
+
 ## 5. media_kind の拡張子マッピング
 
 | media_kind | 拡張子 |

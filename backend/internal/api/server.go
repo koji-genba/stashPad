@@ -125,6 +125,10 @@ func (s *Server) Router(middlewares ...func(http.Handler) http.Handler) http.Han
 		// CSV インポート
 		r.Post("/import/csv", s.handleImportCSV)
 
+		// ユーザー付与メタデータのエクスポート/インポート(バックアップ・復元用。issue #78)
+		r.Get("/export", s.handleExportMetadata)
+		r.Post("/import/metadata", s.handleImportMetadata)
+
 		// 作品
 		r.Get("/works", s.handleListWorks)
 

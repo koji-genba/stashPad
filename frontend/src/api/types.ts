@@ -142,6 +142,18 @@ export interface TagCleanupResult {
 }
 
 /**
+ * POST /api/import/metadata のレスポンス。
+ * GET /api/export は `<a href download>` で直接ダウンロードさせるだけなので、
+ * フロント側でエクスポート JSON の型を持つ必要はない。
+ */
+export interface ImportMetadataResult {
+  matched: number;
+  skipped: number;
+  tags_added: number;
+  errors: string[];
+}
+
+/**
  * POST /api/thumbnails/rebuild(202 Accepted)および
  * GET /api/thumbnails/rebuild/status のレスポンス。
  *

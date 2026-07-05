@@ -340,6 +340,8 @@ RJ404669_耳舐め&耳ふ～サンドイッチ ダウナー妹と低音姉【R-1
 |--------|------|------|
 | POST | `/import/csv` | CSV アップロード → upsert。結果サマリ(新規/更新/リンク数)を返す |
 | POST | `/scan` | ライブラリスキャン実行 |
+| GET | `/export` | ユーザー付与メタデータ(カスタムタグ・お気に入り・非表示・手動編集)のバックアップ JSON をダウンロード |
+| POST | `/import/metadata` | `/export` の JSON を読み込み、ユーザー付与メタデータを復元(加算のみ) |
 
 ### 認証(LATER)の後付け方針
 
@@ -551,3 +553,4 @@ services:
 | D22 | RJ 番号の DLsite リンク(2026-06-17) | 作品詳細の RJ 番号を `https://www.dlsite.com/maniax/work/=/product_id/{RJ}.html` への外部リンク(`target=_blank`)にする(issue #13) |
 | D23 | title/circle の手動編集保護(2026-07-04) | `works.manually_edited` カラム(INTEGER 0/1)を追加。`PATCH /works/{id}` で title または circle を変更するとフラグを立てる(hidden/favorite のみの PATCH では立てない)。CSV 再インポートはフラグが立っている作品の title/circle を UPDATE 対象から外し、その他メタ・タグは従来どおり更新する。手動編集(title/circle)は CSV 再インポートより優先(issue #64 案 A) |
 | D24 | RJ 無し作品の孤児行再リンク(2026-07-05) | 再スキャン時、`root_path=NULL` かつ `rj_number=NULL` で title が一致する孤児行があれば新規 INSERT せず root_path を再リンクする(issue #48)。タイトル一致だけでは「以前 NULL 化された同一作品」と「後から現れた別の同名フォルダ」を区別できず、汎用的なフォルダ名(例: `まとめ`)では旧作品のカスタムタグ・履歴を別作品が誤継承し得るが、このトレードオフは受容する。複数の孤児行が一致する場合は最古の行(`ORDER BY id LIMIT 1`)を選ぶ。暗黙で起きないよう、再リンク時は監査ログ(id・title・再リンク先パス)を出力する(issue #81) |
+| D25 | ユーザー付与メタデータのバックアップ・復元(2026-07-05) | `GET /api/export` / `POST /api/import/metadata` を新設(issue #78)。復元は**加算のみ**(既存データを消さない)とし、照合キーは `rj_number`(RJ 無し作品は `root_path`)。DB を作り直しても、スキャン+CSV 再インポートで作品を復元した後にこの JSON を食わせれば、カスタムタグ・お気に入り・非表示・手動編集した title/circle を安全に復元できる |
