@@ -8,6 +8,7 @@ import {
   removeTag,
   setWorkFavorite,
   setWorkHidden,
+  setWorkRating,
   thumbnailUrl,
 } from '@/api/client';
 import FileBrowser from '@/components/FileBrowser';
@@ -43,6 +44,8 @@ export default function WorkDetailPage() {
   // お気に入り操作用
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [favoriteError, setFavoriteError] = useState<string | null>(null);
+  const [ratingBusy, setRatingBusy] = useState(false);
+  const [ratingError, setRatingError] = useState<string | null>(null);
   // サムネ再生成が走ったら src にクエリを足して再読込させる
   const [thumbBust, setThumbBust] = useState<number | null>(null);
 
@@ -174,6 +177,21 @@ export default function WorkDetailPage() {
     }
   };
 
+  const onSetRating = async (rating: number) => {
+    if (!work) return;
+    const next = work.rating === rating ? null : rating;
+    setRatingBusy(true);
+    setRatingError(null);
+    try {
+      await setWorkRating(work.id, next);
+      setWork((w) => (w ? { ...w, rating: next } : w));
+    } catch (err) {
+      setRatingError(err instanceof Error ? err.message : '評価の更新に失敗しました');
+    } finally {
+      setRatingBusy(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className={styles.center}>
@@ -250,6 +268,26 @@ export default function WorkDetailPage() {
             </button>
           </div>
           {favoriteError && <p className="error">{favoriteError}</p>}
+          <div className={styles.ratingControl} aria-label="評価">
+            {[1, 2, 3, 4, 5].map((rating) => {
+              const active = (work.rating ?? 0) >= rating;
+              const current = work.rating === rating;
+              return (
+                <button
+                  key={rating}
+                  type="button"
+                  className={`${styles.ratingStar} ${active ? styles.ratingStarActive : ''}`}
+                  onClick={() => onSetRating(rating)}
+                  disabled={ratingBusy}
+                  aria-label={current ? '評価を解除' : `評価を${rating}にする`}
+                  aria-pressed={active}
+                >
+                  {active ? '★' : '☆'}
+                </button>
+              );
+            })}
+          </div>
+          {ratingError && <p className="error">{ratingError}</p>}
           {!work.has_folder && <span className={styles.notImported}>未取込</span>}
           <dl className={styles.meta}>
             {meta

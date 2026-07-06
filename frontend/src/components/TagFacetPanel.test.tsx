@@ -4,6 +4,7 @@
 // これにより q 入力時にサーバへ再フェッチ(fetchTags)しないことを確認する。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 
 // api/client をモック化(tagStore.test.ts と同様の手法)。
 vi.mock('@/api/client', () => ({
@@ -31,9 +32,11 @@ function resetStore() {
   useTagStore.setState({ items: [], loaded: false, loading: false, error: null }, false);
 }
 
-function renderPanel() {
+function renderPanel(props: Partial<ComponentProps<typeof TagFacetPanel>> = {}) {
   const onToggle = vi.fn();
-  const utils = render(<TagFacetPanel selected={[]} excluded={[]} onToggle={onToggle} />);
+  const utils = render(
+    <TagFacetPanel selected={[]} excluded={[]} onToggle={onToggle} {...props} />,
+  );
   return { onToggle, ...utils };
 }
 
@@ -155,5 +158,46 @@ describe('TagFacetPanel 選択・除外の挙動(既存動作の維持)', () => 
     // makeTag(1, 'ファンタジー') の work_count は 1
     const btn = screen.getByText('ファンタジー').closest('button')!;
     expect(btn).toHaveTextContent('1');
+  });
+});
+
+describe('TagFacetPanel カテゴリ表示制御(issue #97)', () => {
+  beforeEach(() => {
+    resetStore();
+    fetchTagsMock.mockReset();
+    fetchTagsMock.mockResolvedValue({
+      items: [
+        makeTag(10, '睡眠用', 'custom'),
+        makeTag(11, '癒し', 'genre'),
+        makeTag(12, '耳かき', 'detail_genre'),
+        makeTag(13, '声優A', 'voice_actor'),
+      ],
+    });
+  });
+
+  it('categories を指定すると対象カテゴリだけ表示する', async () => {
+    renderPanel({ categories: ['voice_actor'] });
+
+    await screen.findByText('声優A');
+
+    expect(screen.queryByText('睡眠用')).toBeNull();
+    expect(screen.queryByText('癒し')).toBeNull();
+    expect(screen.queryByText('耳かき')).toBeNull();
+  });
+
+  it('defaultExpandedCategories 指定時は指定カテゴリだけ初期展開する', async () => {
+    renderPanel({
+      categories: ['custom', 'genre', 'detail_genre'],
+      defaultExpandedCategories: ['custom', 'detail_genre'],
+    });
+
+    await screen.findByText('睡眠用');
+
+    expect(screen.getByText('耳かき')).toBeInTheDocument();
+    expect(screen.queryByText('癒し')).toBeNull();
+    const genreButton = screen
+      .getAllByRole('button', { name: /ジャンル/ })
+      .find((button) => button.textContent?.includes('ジャンル') && !button.textContent?.includes('詳細'));
+    expect(genreButton).toHaveAttribute('aria-expanded', 'false');
   });
 });

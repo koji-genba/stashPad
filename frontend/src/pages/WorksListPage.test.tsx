@@ -41,6 +41,7 @@ const PAGINATED_RESPONSE = {
       title: 'テスト作品',
       circle: 'テストサークル',
       age_rating: 'general',
+      rating: null,
       has_folder: true,
       thumbnail_url: '/api/works/1/thumbnail',
       favorited: false,
@@ -310,6 +311,52 @@ describe('種別・年齢指定フィルタとRJ番号ソート (issues #92, #93
         expect.anything(),
       );
     });
+  });
+});
+
+describe('一覧左ペインの表示改善 (issue #97)', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('PC向け左ペインは 種別 > 年齢指定 > タグ > サークル > 声優 > シナリオ > イラスト > 音楽 の順に並ぶ', async () => {
+    renderPage();
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+
+    const sidebar = document.querySelector('aside')!;
+    const headings = Array.from(sidebar.querySelectorAll('h2, h3')).map((el) =>
+      el.textContent?.trim(),
+    );
+
+    expect(headings).toEqual([
+      '種別',
+      '年齢指定',
+      'タグ',
+      'サークル',
+      '声優',
+      'シナリオ',
+      'イラスト',
+      '音楽',
+    ]);
+  });
+
+  it('種別・年齢指定のセレクトは上部ツールバーではなく左ペイン側に表示される', async () => {
+    renderPage();
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+
+    const toolbar = document.querySelector('[class*="toolbar"]');
+    expect(toolbar?.querySelector('[aria-label="種別"]')).toBeNull();
+    expect(toolbar?.querySelector('[aria-label="年齢指定"]')).toBeNull();
+
+    const sidebar = document.querySelector('aside')!;
+    expect(sidebar.querySelector('[aria-label="種別"]')).toBeInTheDocument();
+    expect(sidebar.querySelector('[aria-label="年齢指定"]')).toBeInTheDocument();
   });
 });
 

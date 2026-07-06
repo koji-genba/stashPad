@@ -29,6 +29,7 @@ type metadataWorkItem struct {
 	ManuallyEdited bool     `json:"manually_edited"`
 	Hidden         bool     `json:"hidden"`
 	FavoritedAt    *string  `json:"favorited_at"`
+	Rating         *int     `json:"rating"`
 	CustomTags     []string `json:"custom_tags"`
 }
 
@@ -57,9 +58,10 @@ func (s *Server) handleExportMetadata(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := tx.Query(`
 		SELECT w.id, w.rj_number, w.root_path, w.title, w.circle,
-		       w.manually_edited, w.hidden, w.favorited_at
+		       w.manually_edited, w.hidden, w.favorited_at, w.rating
 		FROM works w
 		WHERE w.favorited_at IS NOT NULL
+		   OR w.rating IS NOT NULL
 		   OR w.hidden = 1
 		   OR w.manually_edited = 1
 		   OR EXISTS (
@@ -82,12 +84,13 @@ func (s *Server) handleExportMetadata(w http.ResponseWriter, r *http.Request) {
 		manuallyEdited int
 		hidden         int
 		favoritedAt    sql.NullString
+		rating         sql.NullInt64
 	}
 	var collected []workRow
 	for rows.Next() {
 		var wr workRow
 		if err := rows.Scan(&wr.id, &wr.rjNumber, &wr.rootPath, &wr.title, &wr.circle,
-			&wr.manuallyEdited, &wr.hidden, &wr.favoritedAt); err != nil {
+			&wr.manuallyEdited, &wr.hidden, &wr.favoritedAt, &wr.rating); err != nil {
 			rows.Close()
 			respondInternalError(w, "行読み込み失敗", err)
 			return
@@ -119,6 +122,7 @@ func (s *Server) handleExportMetadata(w http.ResponseWriter, r *http.Request) {
 			ManuallyEdited: wr.manuallyEdited != 0,
 			Hidden:         wr.hidden != 0,
 			FavoritedAt:    nullableString(wr.favoritedAt),
+			Rating:         nullableInt(wr.rating),
 			CustomTags:     tags,
 		})
 	}
@@ -193,6 +197,7 @@ type importMetadataResult struct {
 // 復元は加算のみで既存データを消さない(design.md 決定事項ログ参照。issue #78):
 //   - custom_tags は upsert して work_tags に追加するのみ(既存タグは維持)
 //   - favorited_at はエクスポート値が非 null のときだけ SET(上書き可)
+//   - rating はエクスポート値が非 null のときだけ SET(上書き可)
 //   - hidden は true のときだけ 1 に SET(false→クリアはしない)
 //   - manually_edited は true のときだけ title/circle を復元して 1 を SET
 //
@@ -346,6 +351,19 @@ func applyMetadataItem(tx *sql.Tx, workID int64, item metadataWorkItem) (tagsAdd
 			*item.FavoritedAt, workID,
 		); err != nil {
 			return tagsAdded, fmt.Errorf("favorited_at 更新失敗: %w", err)
+		}
+	}
+
+	// rating: エクスポート値が非 null のときだけ SET(既存が非 NULL でも上書き可)
+	if item.Rating != nil {
+		if *item.Rating < 1 || *item.Rating > 5 {
+			return tagsAdded, fmt.Errorf("rating は1〜5で指定してください")
+		}
+		if _, err = tx.Exec(
+			"UPDATE works SET rating=?, updated_at=datetime('now') WHERE id=?",
+			*item.Rating, workID,
+		); err != nil {
+			return tagsAdded, fmt.Errorf("rating 更新失敗: %w", err)
 		}
 	}
 

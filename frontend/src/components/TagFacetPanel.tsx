@@ -15,6 +15,12 @@ interface Props {
   /** 除外中のタグ ID リスト */
   excluded: number[];
   onToggle: (tagId: number) => void;
+  /** 表示するタグカテゴリ。未指定なら全カテゴリを表示する */
+  categories?: string[];
+  /** 初期表示で展開するカテゴリ。未指定なら全カテゴリを展開する */
+  defaultExpandedCategories?: string[];
+  /** 絞り込み入力を表示するか */
+  showSearch?: boolean;
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -37,7 +43,14 @@ const CATEGORY_ORDER = [
   'music',
 ];
 
-export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
+export default function TagFacetPanel({
+  selected,
+  excluded,
+  onToggle,
+  categories,
+  defaultExpandedCategories,
+  showSearch = true,
+}: Props) {
   const [searchQ, setSearchQ] = useState('');
 
   // 共有ストアから全タグを参照する(q の有無に関わらず常にこれを使う)
@@ -45,8 +58,15 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
   const loading = useTagStore((s) => s.loading);
   const failed = useTagStore((s) => s.error !== null);
 
-  // 折りたたみ中のカテゴリ。デフォルトは全て開。
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // 折りたたみ中のカテゴリ。指定があれば defaultExpandedCategories 以外を初期折りたたみ。
+  const [collapsed, setCollapsed] = useState<Set<string>>(
+    () =>
+      new Set(
+        defaultExpandedCategories
+          ? CATEGORY_ORDER.filter((cat) => !defaultExpandedCategories.includes(cat))
+          : [],
+      ),
+  );
 
   const toggleCategory = (cat: string) => {
     setCollapsed((prev) => {
@@ -64,10 +84,14 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
 
   // 絞り込み入力はクライアントサイドで行う(サーバへの再フェッチはしない)
   const tags = useMemo(() => {
-    if (!searchQ) return storeItems;
+    const categorySet = categories ? new Set(categories) : null;
+    const scoped = categorySet
+      ? storeItems.filter((t) => categorySet.has(t.category))
+      : storeItems;
+    if (!searchQ) return scoped;
     const needle = searchQ.toLowerCase();
-    return storeItems.filter((t) => t.name.toLowerCase().includes(needle));
-  }, [storeItems, searchQ]);
+    return scoped.filter((t) => t.name.toLowerCase().includes(needle));
+  }, [storeItems, searchQ, categories]);
 
   // #22: selected/excluded を Set に変換してレンダー内の includes(O(n²)) を排除する
   const selectedSet = useMemo(() => new Set(selected), [selected]);
@@ -90,13 +114,15 @@ export default function TagFacetPanel({ selected, excluded, onToggle }: Props) {
 
   return (
     <div className={styles.panel}>
-      <input
-        className="input"
-        type="search"
-        placeholder="タグを絞り込み"
-        value={searchQ}
-        onChange={(e) => setSearchQ(e.target.value)}
-      />
+      {showSearch && (
+        <input
+          className="input"
+          type="search"
+          placeholder="タグを絞り込み"
+          value={searchQ}
+          onChange={(e) => setSearchQ(e.target.value)}
+        />
+      )}
       {loading ? (
         <div className={styles.center}>
           <div className="spinner" />

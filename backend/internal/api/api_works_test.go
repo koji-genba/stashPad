@@ -1430,6 +1430,106 @@ func TestPatchWorkFavorite(t *testing.T) {
 	}
 }
 
+// ---- 評価機能(issue #95) -----------------------------------------------------
+
+func TestPatchWorkRating(t *testing.T) {
+	h, database, id := newTestServer(t)
+
+	w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"rating":5}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("rating=5 status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var rating sql.NullInt64
+	if err := database.QueryRow("SELECT rating FROM works WHERE id=?", id).Scan(&rating); err != nil {
+		t.Fatal(err)
+	}
+	if !rating.Valid || rating.Int64 != 5 {
+		t.Fatalf("rating = %+v, want 5", rating)
+	}
+
+	getResp := doGet(t, h, urlf("/api/works/%d", id))
+	var getBody struct {
+		Rating *int `json:"rating"`
+	}
+	if err := json.Unmarshal(getResp.Body.Bytes(), &getBody); err != nil {
+		t.Fatal(err)
+	}
+	if getBody.Rating == nil || *getBody.Rating != 5 {
+		t.Fatalf("GET /api/works/{id} rating = %v, want 5", getBody.Rating)
+	}
+
+	w = doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), `{"rating":null}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("rating=null status = %d, body = %s", w.Code, w.Body.String())
+	}
+	rating = sql.NullInt64{}
+	if err := database.QueryRow("SELECT rating FROM works WHERE id=?", id).Scan(&rating); err != nil {
+		t.Fatal(err)
+	}
+	if rating.Valid {
+		t.Fatalf("rating=null で NULL に戻っていない: %+v", rating)
+	}
+}
+
+func TestPatchWorkRatingRejectsOutOfRange(t *testing.T) {
+	h, database, id := newTestServer(t)
+
+	for _, body := range []string{`{"rating":0}`, `{"rating":6}`, `{"rating":-1}`} {
+		w := doJSON(t, h, http.MethodPatch, urlf("/api/works/%d", id), body)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s status = %d, want 400", body, w.Code)
+		}
+	}
+
+	var rating sql.NullInt64
+	if err := database.QueryRow("SELECT rating FROM works WHERE id=?", id).Scan(&rating); err != nil {
+		t.Fatal(err)
+	}
+	if rating.Valid {
+		t.Fatalf("不正 rating PATCH で値が入った: %+v", rating)
+	}
+}
+
+func TestListWorksRatingFieldAndSort(t *testing.T) {
+	h, database, id := newTestServer(t)
+	res, err := database.Exec("INSERT INTO works (rj_number, title, rating) VALUES ('RJ950001', '星3', 3)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, _ := res.LastInsertId()
+	res, err = database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ950002', '未評価')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id3, _ := res.LastInsertId()
+	if _, err := database.Exec("UPDATE works SET rating=5 WHERE id=?", id); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doGet(t, h, "/api/works?sort=rating&order=desc")
+	var body struct {
+		Items []struct {
+			ID     int64 `json:"id"`
+			Rating *int  `json:"rating"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 3 {
+		t.Fatalf("items 数 = %d, want 3", len(body.Items))
+	}
+	if body.Items[0].ID != id || body.Items[1].ID != id2 || body.Items[2].ID != id3 {
+		t.Fatalf("rating desc order = %+v, want [%d,%d,%d]", body.Items, id, id2, id3)
+	}
+	if body.Items[0].Rating == nil || *body.Items[0].Rating != 5 {
+		t.Fatalf("先頭 rating = %v, want 5", body.Items[0].Rating)
+	}
+	if body.Items[2].Rating != nil {
+		t.Fatalf("未評価作品 rating = %v, want null", body.Items[2].Rating)
+	}
+}
+
 // favorite キーを含まない PATCH では favorited_at が変化しないこと
 func TestPatchWorkFavoriteUntouchedWhenOmitted(t *testing.T) {
 	h, database, id := newTestServer(t)
