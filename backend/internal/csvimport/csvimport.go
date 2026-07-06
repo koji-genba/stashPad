@@ -310,7 +310,7 @@ func parseTags(genres, detailGenres, voiceActor, scenario, illustration, music s
 	var tags []TagEntry
 
 	// genres: カンマ区切り → category=genre
-	// ただし age_rating(全年齢/R-15/R-18)は genres カラムに混じっているので
+	// ただし age_rating(全年齢/R-15/R18)は genres カラムに混じっているので
 	// そのままタグとして扱う(design.md §4.3 の例がそうなっている)
 	for _, s := range splitTrim(genres, ",") {
 		tags = append(tags, TagEntry{Category: "genre", Name: s})

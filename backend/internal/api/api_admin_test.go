@@ -547,7 +547,7 @@ func TestImportCSV(t *testing.T) {
 	}
 
 	csvContent := "rj_number,title,circle,genres,voice_actor\n" +
-		"RJ900001,新作タイトル,新作サークル,\"R-18, ボイス・ASMR\",声優A/声優B\n" +
+		"RJ900001,新作タイトル,新作サークル,\"R18, ボイス・ASMR\",声優A/声優B\n" +
 		"RJ900002,未スキャン作品,別サークル,癒し,声優C\n"
 
 	req, _ := multipartCSV(t, csvContent)

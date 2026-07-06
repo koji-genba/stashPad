@@ -91,7 +91,7 @@ func TestE2EFullFlow(t *testing.T) {
 
 	// --- ステップ2: import/csv(scan 済み RJ 番号を含む CSV で linked を確認) ---
 	csvContent := "rj_number,title,series_name,circle,purchase_date,genres,voice_actor\n" +
-		"RJ123456,CSVタイトル,シリーズZ,サークルQ,2026/03/03 12:00,\"R-18, ボイス・ASMR\",声優X\n"
+		"RJ123456,CSVタイトル,シリーズZ,サークルQ,2026/03/03 12:00,\"R18, ボイス・ASMR\",声優X\n"
 	req := multipartCSVReq(t, csvContent)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

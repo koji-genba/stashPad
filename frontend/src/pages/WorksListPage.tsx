@@ -28,7 +28,7 @@ const SORT_LABELS: Record<SortKey, string> = {
 };
 
 const WORK_TYPE_OPTIONS = ['ボイス・ASMR', '動画', 'マンガ'];
-const AGE_RATING_OPTIONS = ['全年齢', 'R-15', 'R-18'];
+const AGE_RATING_OPTIONS = ['全年齢', 'R-15', 'R18'];
 const RATING_FILTER_OPTIONS = ['5', '4', '3', '2', '1', 'none'];
 const PRIMARY_TAG_CATEGORIES = ['custom', 'genre', 'detail_genre'];
 const DEFAULT_EXPANDED_TAG_CATEGORIES = ['custom', 'detail_genre'];

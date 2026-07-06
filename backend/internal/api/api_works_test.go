@@ -114,7 +114,7 @@ func TestGetWorkFullMetadata(t *testing.T) {
 	if _, err := database.Exec(`
 		UPDATE works SET
 			circle='サークルX', series_name='シリーズY', purchase_date='2026/01/01 00:00',
-			work_type='ボイス・ASMR', age_rating='R-18', file_format='WAV/MP3',
+			work_type='ボイス・ASMR', age_rating='R18', file_format='WAV/MP3',
 			file_size_text='1.2GB'
 		WHERE id=?`, id); err != nil {
 		t.Fatal(err)
@@ -159,7 +159,7 @@ func TestGetWorkFullMetadata(t *testing.T) {
 	}
 	if body.Circle != "サークルX" || body.SeriesName != "シリーズY" ||
 		body.PurchaseDate != "2026/01/01 00:00" || body.WorkType != "ボイス・ASMR" ||
-		body.AgeRating != "R-18" || body.FileFormat != "WAV/MP3" ||
+		body.AgeRating != "R18" || body.FileFormat != "WAV/MP3" ||
 		body.FileSizeText != "1.2GB" {
 		t.Errorf("メタデータ不一致: %+v", body)
 	}
