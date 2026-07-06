@@ -61,6 +61,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	seriesFilter := q.Get("series")
 	workTypeFilter := q.Get("work_type")
 	ageRatingFilter := q.Get("age_rating")
+	ratingFilter := q.Get("rating")
 	sortBy := q.Get("sort")
 	order := q.Get("order")
 	pageStr := q.Get("page")
@@ -163,6 +164,14 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	if ageRatingFilter != "" {
 		whereClause += " AND w.age_rating=?"
 		args = append(args, ageRatingFilter)
+	}
+
+	// rating 完全一致フィルタ。"none" は未評価(NULL)のみ。
+	if ratingFilter == "none" {
+		whereClause += " AND w.rating IS NULL"
+	} else if rating, err := strconv.Atoi(ratingFilter); err == nil && rating >= 1 && rating <= 5 {
+		whereClause += " AND w.rating=?"
+		args = append(args, rating)
 	}
 
 	for _, tid := range tagIDs {

@@ -29,6 +29,7 @@ const SORT_LABELS: Record<SortKey, string> = {
 
 const WORK_TYPE_OPTIONS = ['ボイス・ASMR', '動画', 'マンガ'];
 const AGE_RATING_OPTIONS = ['全年齢', 'R-15', 'R-18'];
+const RATING_FILTER_OPTIONS = ['5', '4', '3', '2', '1', 'none'];
 const PRIMARY_TAG_CATEGORIES = ['custom', 'genre', 'detail_genre'];
 const DEFAULT_EXPANDED_TAG_CATEGORIES = ['custom', 'detail_genre'];
 
@@ -67,6 +68,19 @@ function parseTags(value: string | null): number[] {
     .filter((n) => Number.isFinite(n) && n > 0);
 }
 
+function normalizeRatingFilter(value: string | null): '' | '1' | '2' | '3' | '4' | '5' | 'none' {
+  if (value === 'none') return 'none';
+  if (value && /^[1-5]$/.test(value)) return value as '1' | '2' | '3' | '4' | '5';
+  return '';
+}
+
+function formatRatingFilter(value: string): string {
+  if (value === 'none') return '未評価';
+  const rating = Number(value);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return value;
+  return '★'.repeat(rating);
+}
+
 // フィルタ変更が結果セット全体に影響するとき、ユーザーが先頭に戻れるよう
 // スクロールトップをオプションで指示できる型。
 // replace: true のときは history を積まずに現在のエントリを置き換える
@@ -83,6 +97,8 @@ export default function WorksListPage() {
   const series = params.get('series') ?? '';
   const workType = params.get('work_type') ?? '';
   const ageRating = params.get('age_rating') ?? '';
+  const ratingParam = normalizeRatingFilter(params.get('rating'));
+  const ratingFilter = ratingParam === '' ? undefined : ratingParam === 'none' ? 'none' : Number(ratingParam);
   const favorite = params.get('favorite') === '1';
   const sort = (params.get('sort') as SortKey) || 'purchase_date';
   // デフォルトは降順。降順のときは URL にパラメータを付けない(#59)
@@ -168,6 +184,7 @@ export default function WorksListPage() {
         series: series || undefined,
         workType: workType || undefined,
         ageRating: ageRating || undefined,
+        rating: ratingFilter,
         favorite: favorite || undefined,
         sort,
         order,
@@ -186,7 +203,7 @@ export default function WorksListPage() {
         setLoading(false);
       });
     return () => ac.abort();
-  }, [q, tags, excludeTags, circle, series, workType, ageRating, favorite, sort, order, page, retryNonce]);
+  }, [q, tags, excludeTags, circle, series, workType, ageRating, ratingFilter, favorite, sort, order, page, retryNonce]);
 
   // URL が変わるたびに検索クエリを sessionStorage に保存(詳細→一覧の戻り先に使う)
   useEffect(() => {
@@ -265,6 +282,14 @@ export default function WorksListPage() {
     }, { scrollToTop: true });
   };
 
+  const setRatingFilter = (value: string) => {
+    update((p) => {
+      if (value) p.set('rating', value);
+      else p.delete('rating');
+      p.delete('page');
+    }, { scrollToTop: true });
+  };
+
   const renderOptionFilter = (
     label: string,
     value: string,
@@ -299,6 +324,24 @@ export default function WorksListPage() {
           setAgeRating(value);
           onPicked?.();
         })}
+      </SidebarSection>
+      <SidebarSection title="評価">
+        <select
+          className={styles.filterSelect}
+          value={ratingParam}
+          onChange={(e) => {
+            setRatingFilter(e.target.value);
+            onPicked?.();
+          }}
+          aria-label="評価"
+        >
+          <option value="">評価: すべて</option>
+          {RATING_FILTER_OPTIONS.map((option) => (
+            <option key={option} value={option}>
+              {formatRatingFilter(option)}
+            </option>
+          ))}
+        </select>
       </SidebarSection>
       <SidebarSection title="タグ">
         <TagFacetPanel
@@ -412,7 +455,7 @@ export default function WorksListPage() {
     if (clamped !== page) goPage(clamped);
   };
 
-  const clearParam = (key: 'circle' | 'series' | 'work_type' | 'age_rating') => {
+  const clearParam = (key: 'circle' | 'series' | 'work_type' | 'age_rating' | 'rating') => {
     update((p) => {
       p.delete(key);
       p.delete('page');
@@ -429,6 +472,7 @@ export default function WorksListPage() {
       p.delete('series');
       p.delete('work_type');
       p.delete('age_rating');
+      p.delete('rating');
       p.delete('favorite');
       p.delete('page');
     }, { scrollToTop: true });
@@ -448,6 +492,7 @@ export default function WorksListPage() {
     !!series ||
     !!workType ||
     !!ageRating ||
+    !!ratingParam ||
     searchTerms.include.length > 0 ||
     searchTerms.exclude.length > 0;
 
@@ -576,6 +621,17 @@ export default function WorksListPage() {
                 >
                   <span className={styles.chipKind}>年齢指定</span>
                   {ageRating}
+                  <span className={styles.chipX}>✕</span>
+                </button>
+              )}
+              {ratingParam && (
+                <button
+                  className={styles.chip}
+                  onClick={() => clearParam('rating')}
+                  title="クリックで解除"
+                >
+                  <span className={styles.chipKind}>評価</span>
+                  {formatRatingFilter(ratingParam)}
                   <span className={styles.chipX}>✕</span>
                 </button>
               )}

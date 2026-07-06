@@ -282,8 +282,56 @@ describe('種別・年齢指定フィルタとRJ番号ソート (issues #92, #93
     });
   });
 
+  it('評価を選ぶと URL に rating が付き、fetchWorks が rating 付きで呼ばれる', async () => {
+    const { getParams } = renderPage();
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByRole('combobox', { name: '評価' }), {
+      target: { value: '4' },
+    });
+
+    await waitFor(() => {
+      expect(getParams().get('rating')).toBe('4');
+    });
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenLastCalledWith(
+        expect.objectContaining({ rating: 4 }),
+        expect.anything(),
+      );
+    });
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it('未評価を選ぶと rating=none で fetchWorks が呼ばれる', async () => {
+    const { getParams } = renderPage();
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByRole('combobox', { name: '評価' }), {
+      target: { value: 'none' },
+    });
+
+    await waitFor(() => {
+      expect(getParams().get('rating')).toBe('none');
+    });
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenLastCalledWith(
+        expect.objectContaining({ rating: 'none' }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('URL の rating がセレクトとチップに反映される', async () => {
+    renderPage('/?rating=5');
+
+    expect(screen.getByRole('combobox', { name: '評価' })).toHaveValue('5');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /評価.*★★★★★/ })).toBeInTheDocument();
+    });
+  });
+
   it('全てクリアで work_type / age_rating も URL から消える', async () => {
-    const { getParams } = renderPage('/?work_type=%E5%8B%95%E7%94%BB&age_rating=R-18&page=2');
+    const { getParams } = renderPage('/?work_type=%E5%8B%95%E7%94%BB&age_rating=R-18&rating=none&page=2');
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '全てクリア' })).toBeInTheDocument();
@@ -293,6 +341,7 @@ describe('種別・年齢指定フィルタとRJ番号ソート (issues #92, #93
     await waitFor(() => {
       expect(getParams().has('work_type')).toBe(false);
       expect(getParams().has('age_rating')).toBe(false);
+      expect(getParams().has('rating')).toBe(false);
       expect(getParams().has('page')).toBe(false);
     });
   });
@@ -325,7 +374,7 @@ describe('一覧左ペインの表示改善 (issue #97)', () => {
     vi.restoreAllMocks();
   });
 
-  it('PC向け左ペインは 種別 > 年齢指定 > タグ > サークル > 声優 > シナリオ > イラスト > 音楽 の順に並ぶ', async () => {
+  it('PC向け左ペインは 種別 > 年齢指定 > 評価 > タグ > サークル > 声優 > シナリオ > イラスト > 音楽 の順に並ぶ', async () => {
     renderPage();
     await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
 
@@ -337,6 +386,7 @@ describe('一覧左ペインの表示改善 (issue #97)', () => {
     expect(headings).toEqual([
       '種別',
       '年齢指定',
+      '評価',
       'タグ',
       'サークル',
       '声優',
@@ -346,17 +396,19 @@ describe('一覧左ペインの表示改善 (issue #97)', () => {
     ]);
   });
 
-  it('種別・年齢指定のセレクトは上部ツールバーではなく左ペイン側に表示される', async () => {
+  it('種別・年齢指定・評価のセレクトは上部ツールバーではなく左ペイン側に表示される', async () => {
     renderPage();
     await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
 
     const toolbar = document.querySelector('[class*="toolbar"]');
     expect(toolbar?.querySelector('[aria-label="種別"]')).toBeNull();
     expect(toolbar?.querySelector('[aria-label="年齢指定"]')).toBeNull();
+    expect(toolbar?.querySelector('[aria-label="評価"]')).toBeNull();
 
     const sidebar = document.querySelector('aside')!;
     expect(sidebar.querySelector('[aria-label="種別"]')).toBeInTheDocument();
     expect(sidebar.querySelector('[aria-label="年齢指定"]')).toBeInTheDocument();
+    expect(sidebar.querySelector('[aria-label="評価"]')).toBeInTheDocument();
   });
 });
 
