@@ -90,7 +90,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	// NULLS LAST で未再生が常に末尾に来るようにする。
 	allowedSort := map[string]string{
 		"purchase_date": "w.purchase_date",
-		"rj_number":     "w.rj_number",
+		"rj_number":     "CAST(SUBSTR(w.rj_number, 3) AS INTEGER)",
 		"title":         "w.title",
 		"created_at":    "w.created_at",
 		"circle":        "w.circle",

@@ -339,7 +339,9 @@ func TestListWorksSortRJNumber(t *testing.T) {
 		VALUES
 		  ('RJ000020', 'RJ20'),
 		  ('RJ000010', 'RJ10'),
-		  ('RJ000030', 'RJ30')
+		  ('RJ000030', 'RJ30'),
+		  ('RJ999999', '6桁系RJ'),
+		  ('RJ01000000', '8桁系RJ')
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -348,8 +350,8 @@ func TestListWorksSortRJNumber(t *testing.T) {
 		order string
 		want  []string
 	}{
-		{"asc", []string{"RJ000001", "RJ000010", "RJ000020", "RJ000030"}},
-		{"desc", []string{"RJ000030", "RJ000020", "RJ000010", "RJ000001"}},
+		{"asc", []string{"RJ000001", "RJ000010", "RJ000020", "RJ000030", "RJ999999", "RJ01000000"}},
+		{"desc", []string{"RJ01000000", "RJ999999", "RJ000030", "RJ000020", "RJ000010", "RJ000001"}},
 	} {
 		t.Run(tc.order, func(t *testing.T) {
 			w := doGet(t, h, "/api/works?sort=rj_number&order="+tc.order)
