@@ -1530,6 +1530,59 @@ func TestListWorksRatingFieldAndSort(t *testing.T) {
 	}
 }
 
+func TestListWorksRatingFilter(t *testing.T) {
+	h, database, id := newTestServer(t)
+	if _, err := database.Exec("UPDATE works SET rating=5 WHERE id=?", id); err != nil {
+		t.Fatal(err)
+	}
+	res, err := database.Exec("INSERT INTO works (rj_number, title, rating) VALUES ('RJ950003', '星3', 3)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, _ := res.LastInsertId()
+	res, err = database.Exec("INSERT INTO works (rj_number, title) VALUES ('RJ950004', '未評価')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id3, _ := res.LastInsertId()
+
+	w := doGet(t, h, "/api/works?rating=3")
+	var body struct {
+		Items []struct {
+			ID     int64 `json:"id"`
+			Rating *int  `json:"rating"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Total != 1 || len(body.Items) != 1 || body.Items[0].ID != id2 {
+		t.Fatalf("rating=3: total=%d items=%+v, want id=%d のみ", body.Total, body.Items, id2)
+	}
+	if body.Items[0].Rating == nil || *body.Items[0].Rating != 3 {
+		t.Fatalf("rating=3 item rating = %v", body.Items[0].Rating)
+	}
+
+	w = doGet(t, h, "/api/works?rating=none")
+	body = struct {
+		Items []struct {
+			ID     int64 `json:"id"`
+			Rating *int  `json:"rating"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Total != 1 || len(body.Items) != 1 || body.Items[0].ID != id3 {
+		t.Fatalf("rating=none: total=%d items=%+v, want id=%d のみ", body.Total, body.Items, id3)
+	}
+	if body.Items[0].Rating != nil {
+		t.Fatalf("rating=none item rating = %v, want nil", body.Items[0].Rating)
+	}
+}
+
 // favorite キーを含まない PATCH では favorited_at が変化しないこと
 func TestPatchWorkFavoriteUntouchedWhenOmitted(t *testing.T) {
 	h, database, id := newTestServer(t)

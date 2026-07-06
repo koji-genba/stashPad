@@ -80,6 +80,8 @@ export interface WorksQuery {
   workType?: string;
   /** 年齢指定の完全一致フィルタ */
   ageRating?: string;
+  /** 評価の完全一致フィルタ。none は未評価のみ */
+  rating?: number | 'none';
   /** true のとき非表示作品のみを返す */
   hidden?: boolean;
   /** true のときお気に入り作品のみを返す */
@@ -100,6 +102,7 @@ export function fetchWorks(query: WorksQuery, signal?: AbortSignal): Promise<Wor
   if (query.series) params.set('series', query.series);
   if (query.workType) params.set('work_type', query.workType);
   if (query.ageRating) params.set('age_rating', query.ageRating);
+  if (query.rating !== undefined) params.set('rating', String(query.rating));
   if (query.sort) params.set('sort', query.sort);
   if (query.order) params.set('order', query.order);
   if (query.page) params.set('page', String(query.page));

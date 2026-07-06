@@ -155,6 +155,28 @@ describe('fetchWorks', () => {
     expect(params.get('age_rating')).toBe('R-15');
   });
 
+  it('rating パラメータを送る', async () => {
+    fetchMock = mockFetchOk({ items: [], total: 0, page: 1, limit: 20 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchWorks({ rating: 4 });
+
+    const [url] = fetchMock.mock.calls[0] as [string, ...unknown[]];
+    const params = new URL(url, 'http://localhost').searchParams;
+    expect(params.get('rating')).toBe('4');
+  });
+
+  it('未評価フィルタは rating=none を送る', async () => {
+    fetchMock = mockFetchOk({ items: [], total: 0, page: 1, limit: 20 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchWorks({ rating: 'none' });
+
+    const [url] = fetchMock.mock.calls[0] as [string, ...unknown[]];
+    const params = new URL(url, 'http://localhost').searchParams;
+    expect(params.get('rating')).toBe('none');
+  });
+
   it('日本語クエリの URL エンコードが正しく行われる', async () => {
     fetchMock = mockFetchOk({ items: [], total: 0, page: 1, limit: 20 });
     vi.stubGlobal('fetch', fetchMock);
