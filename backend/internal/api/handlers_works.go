@@ -58,6 +58,8 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	tagsParam := q.Get("tags")
 	circleFilter := q.Get("circle")
 	seriesFilter := q.Get("series")
+	workTypeFilter := q.Get("work_type")
+	ageRatingFilter := q.Get("age_rating")
 	sortBy := q.Get("sort")
 	order := q.Get("order")
 	pageStr := q.Get("page")
@@ -88,6 +90,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	// NULLS LAST で未再生が常に末尾に来るようにする。
 	allowedSort := map[string]string{
 		"purchase_date": "w.purchase_date",
+		"rj_number":     "w.rj_number",
 		"title":         "w.title",
 		"created_at":    "w.created_at",
 		"circle":        "w.circle",
@@ -146,6 +149,18 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	if seriesFilter != "" {
 		whereClause += " AND w.series_name=?"
 		args = append(args, seriesFilter)
+	}
+
+	// work_type 完全一致フィルタ
+	if workTypeFilter != "" {
+		whereClause += " AND w.work_type=?"
+		args = append(args, workTypeFilter)
+	}
+
+	// age_rating 完全一致フィルタ
+	if ageRatingFilter != "" {
+		whereClause += " AND w.age_rating=?"
+		args = append(args, ageRatingFilter)
 	}
 
 	for _, tid := range tagIDs {

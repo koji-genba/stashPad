@@ -248,6 +248,52 @@ func TestListWorksCircleSeriesFilter(t *testing.T) {
 	}
 }
 
+func TestListWorksWorkTypeAgeRatingFilter(t *testing.T) {
+	h, database, _ := newTestServer(t)
+
+	if _, err := database.Exec(`
+		INSERT INTO works (rj_number, title, work_type, age_rating)
+		VALUES
+		  ('RJ000020', '全年齢ボイス', 'ボイス・ASMR', '全年齢'),
+		  ('RJ000021', 'R15ボイス', 'ボイス・ASMR', 'R-15'),
+		  ('RJ000022', 'R18マンガ', 'マンガ', 'R-18')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		path string
+		want int
+	}{
+		{"work_type", "/api/works?work_type=" + url.QueryEscape("ボイス・ASMR"), 2},
+		{"age_rating", "/api/works?age_rating=" + url.QueryEscape("R-18"), 1},
+		{
+			"combined",
+			"/api/works?work_type=" + url.QueryEscape("ボイス・ASMR") + "&age_rating=" + url.QueryEscape("R-15"),
+			1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := doGet(t, h, tc.path)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+			var body struct {
+				Total int `json:"total"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Total != tc.want {
+				t.Errorf("total = %d, want %d", body.Total, tc.want)
+			}
+		})
+	}
+}
+
 func TestListWorksSortCircle(t *testing.T) {
 	h, database, _ := newTestServer(t)
 
@@ -282,6 +328,52 @@ func TestListWorksSortCircle(t *testing.T) {
 	}
 	if len(circles) >= 2 && circles[0] != "AAA" {
 		t.Errorf("sort=circle asc: first non-null circle = %q, want AAA", circles[0])
+	}
+}
+
+func TestListWorksSortRJNumber(t *testing.T) {
+	h, database, _ := newTestServer(t)
+
+	if _, err := database.Exec(`
+		INSERT INTO works (rj_number, title)
+		VALUES
+		  ('RJ000020', 'RJ20'),
+		  ('RJ000010', 'RJ10'),
+		  ('RJ000030', 'RJ30')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		order string
+		want  []string
+	}{
+		{"asc", []string{"RJ000001", "RJ000010", "RJ000020", "RJ000030"}},
+		{"desc", []string{"RJ000030", "RJ000020", "RJ000010", "RJ000001"}},
+	} {
+		t.Run(tc.order, func(t *testing.T) {
+			w := doGet(t, h, "/api/works?sort=rj_number&order="+tc.order)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+			var body struct {
+				Items []struct {
+					RJNumber *string `json:"rj_number"`
+				} `json:"items"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, item := range body.Items {
+				if item.RJNumber != nil {
+					got = append(got, *item.RJNumber)
+				}
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("rj_number order = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
