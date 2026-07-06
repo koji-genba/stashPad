@@ -61,3 +61,9 @@ func within(root, p string) bool {
 	}
 	return strings.HasPrefix(p, root+string(filepath.Separator))
 }
+
+// IsHiddenName は macOS の AppleDouble(._*)や .DS_Store を含む dotfile / dotdir
+// として扱う名前かどうかを返す。os.ReadDir のエントリ名に対して使う想定。
+func IsHiddenName(name string) bool {
+	return strings.HasPrefix(name, ".")
+}

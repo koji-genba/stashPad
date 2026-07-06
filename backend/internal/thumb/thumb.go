@@ -4,6 +4,7 @@
 package thumb
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif" // GIF デコード登録
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/koji-genba/stashpad/backend/internal/media"
@@ -88,26 +90,31 @@ func (g *Generator) Refresh(workID int64, rootPath string) (regenerated bool, ou
 		return false, "", false, nil
 	}
 
-	chosen := chooseBestImage(rootPath, candidates)
-
-	srcStat, err := os.Stat(chosen)
-	if err != nil {
-		return false, "", true, fmt.Errorf("ソース画像 Stat 失敗: %w", err)
-	}
-
-	if !needsRegenerate(rootPath, chosen, outPath, srcRecord, srcStat) {
-		// 旧バージョンで生成されたキャッシュには記録が無いので、次回の差し替え検出用に残す
-		if _, recErr := os.Stat(srcRecord); recErr != nil {
-			_ = os.WriteFile(srcRecord, []byte(chosen), 0o644)
+	var candidateErrs []error
+	for _, chosen := range orderedImageCandidates(rootPath, candidates) {
+		srcStat, err := os.Stat(chosen)
+		if err != nil {
+			candidateErrs = append(candidateErrs, fmt.Errorf("%q: ソース画像 Stat 失敗: %w", chosen, err))
+			continue
 		}
-		return false, outPath, true, nil
+
+		if !needsRegenerate(rootPath, chosen, outPath, srcRecord, srcStat) {
+			// 旧バージョンで生成されたキャッシュには記録が無いので、次回の差し替え検出用に残す
+			if _, recErr := os.Stat(srcRecord); recErr != nil {
+				_ = os.WriteFile(srcRecord, []byte(chosen), 0o644)
+			}
+			return false, outPath, true, nil
+		}
+
+		if err := g.generateThumbnail(chosen, outPath); err != nil {
+			candidateErrs = append(candidateErrs, fmt.Errorf("%q: %w", chosen, err))
+			continue
+		}
+		_ = os.WriteFile(srcRecord, []byte(chosen), 0o644)
+		return true, outPath, true, nil
 	}
 
-	if err := g.generateThumbnail(chosen, outPath); err != nil {
-		return false, "", true, fmt.Errorf("サムネイル生成失敗 %q: %w", chosen, err)
-	}
-	_ = os.WriteFile(srcRecord, []byte(chosen), 0o644)
-	return true, outPath, true, nil
+	return false, "", true, fmt.Errorf("サムネイル生成失敗: %w", errors.Join(candidateErrs...))
 }
 
 // RemoveCache は workID のサムネイルキャッシュファイル({workID}.jpg / {workID}.src)
@@ -188,6 +195,9 @@ func walkDepth(dir string, depth, maxDepth int, callback func(string)) (hadError
 		return true, err
 	}
 	for _, e := range entries {
+		if media.IsHiddenName(e.Name()) {
+			continue
+		}
 		path := filepath.Join(dir, e.Name())
 		if e.IsDir() {
 			if depth < maxDepth {
@@ -216,30 +226,59 @@ func isImageFile(name string) bool {
 //  2. 名前が priorityPattern(表紙|cover|jacket|サムネ|main)にマッチするもの
 //  3. 自然順で最初の画像
 func chooseBestImage(rootPath string, candidates []string) string {
+	ordered := orderedImageCandidates(rootPath, candidates)
+	if len(ordered) == 0 {
+		return ""
+	}
+	return ordered[0]
+}
+
+func orderedImageCandidates(rootPath string, candidates []string) []string {
+	ordered := make([]string, 0, len(candidates))
+	used := make([]bool, len(candidates))
+
 	// 最優先: ルート直下の thumbnail.*
-	for _, c := range candidates {
+	for i, c := range candidates {
 		if isRootThumbnail(rootPath, c) {
-			return c
+			ordered = append(ordered, c)
+			used[i] = true
 		}
 	}
 
 	// 次優先: 名前が priorityPattern にマッチするもの(ディレクトリ名は除いてファイル名部分だけを確認)
-	for _, c := range candidates {
+	for i, c := range candidates {
+		if used[i] {
+			continue
+		}
 		base := filepath.Base(c)
 		noExt := strings.TrimSuffix(base, filepath.Ext(base))
 		if priorityPattern.MatchString(noExt) {
-			return c
+			ordered = append(ordered, c)
+			used[i] = true
 		}
 	}
 
 	// なければ自然順で最初の画像
-	best := candidates[0]
-	for _, c := range candidates[1:] {
-		if media.NaturalLess(filepath.Base(c), filepath.Base(best)) {
-			best = c
+	rest := make([]string, 0, len(candidates)-len(ordered))
+	for i, c := range candidates {
+		if !used[i] {
+			rest = append(rest, c)
 		}
 	}
-	return best
+	sortImageCandidates(rest)
+	ordered = append(ordered, rest...)
+	return ordered
+}
+
+func sortImageCandidates(candidates []string) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left := filepath.Base(candidates[i])
+		right := filepath.Base(candidates[j])
+		if left == right {
+			return candidates[i] < candidates[j]
+		}
+		return media.NaturalLess(left, right)
+	})
 }
 
 // generateThumbnail は src 画像を読み込み、長辺 512px・jpeg q85 で dst に保存する。

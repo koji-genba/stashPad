@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/koji-genba/stashpad/backend/internal/media"
 )
 
 // ErrAllRootsUnreadable は全ライブラリルートが読めずスキャンを中断したことを示す。
@@ -114,6 +116,9 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 				continue
 			}
 			dirName := e.Name()
+			if media.IsHiddenName(dirName) {
+				continue
+			}
 			absPath := filepath.Join(root, dirName)
 			foundPaths[absPath] = true
 			res.WorksFound++
