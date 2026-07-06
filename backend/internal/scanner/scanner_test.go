@@ -317,3 +317,49 @@ func TestScanTitleExtraction(t *testing.T) {
 		})
 	}
 }
+
+// TestScanSkipsHiddenRootDirectories はライブラリルート直下の dotdir / AppleDouble 風
+// ディレクトリを work として登録しないことをテスト(issue #90)。
+func TestScanSkipsHiddenRootDirectories(t *testing.T) {
+	db := openTestDB(t)
+	base := t.TempDir()
+	lib := filepath.Join(base, "library")
+
+	dirs := []string{
+		filepath.Join(lib, "RJ900001_通常作品"),
+		filepath.Join(lib, ".hidden-work"),
+		filepath.Join(lib, "._RJ900002_AppleDouble"),
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	res, err := Scan(db, []string{lib}, nil)
+	if err != nil {
+		t.Fatalf("Scan 失敗: %v", err)
+	}
+	if res.WorksFound != 1 {
+		t.Errorf("WorksFound = %d, want 1", res.WorksFound)
+	}
+	if res.NewlyRegistered != 1 {
+		t.Errorf("NewlyRegistered = %d, want 1", res.NewlyRegistered)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM works").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("works count = %d, want 1", count)
+	}
+
+	var title string
+	if err := db.QueryRow("SELECT title FROM works").Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if title != "通常作品" {
+		t.Errorf("title = %q, want 通常作品", title)
+	}
+}

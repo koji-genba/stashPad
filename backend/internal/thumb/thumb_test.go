@@ -454,3 +454,75 @@ func TestRefreshLegacyCacheWithRootThumbnail(t *testing.T) {
 		t.Error("記録なしキャッシュ + thumbnail.* で再生成されなかった")
 	}
 }
+
+// TestRefreshFallsBackWhenPreferredCandidateCannotDecode は優先候補が画像として
+// デコードできない場合、同一 work 内の次候補からサムネイル生成できることをテスト(issue #90)。
+func TestRefreshFallsBackWhenPreferredCandidateCannotDecode(t *testing.T) {
+	dir := t.TempDir()
+	thumbsDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dir, "thumbnail.jpg"), []byte("not an image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	valid := filepath.Join(dir, "cover.png")
+	createTestImage(t, valid, 100, 100)
+
+	g := New(thumbsDir)
+	regen, path, found, err := g.Refresh(90, dir)
+	if err != nil {
+		t.Fatalf("Refresh は次候補へフォールバックすべき: %v", err)
+	}
+	if !regen {
+		t.Error("正常な次候補から生成されたのに regenerated=false")
+	}
+	if !found {
+		t.Error("candidateFound=false, want true")
+	}
+	if path == "" {
+		t.Fatal("outPath が空")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("サムネイルファイルが生成されていない: %v", err)
+	}
+
+	srcRecord, err := os.ReadFile(filepath.Join(thumbsDir, "90.src"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(srcRecord) != valid {
+		t.Errorf(".src = %q, want %q", string(srcRecord), valid)
+	}
+}
+
+// TestRefreshSkipsAppleDoubleAndUsesNormalCover は AppleDouble 風の ._*.jpg が
+// 候補外になり、通常の cover.jpg が使われることをテスト(issue #90)。
+func TestRefreshSkipsAppleDoubleAndUsesNormalCover(t *testing.T) {
+	dir := t.TempDir()
+	thumbsDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dir, "._cover.jpg"), []byte("appledouble"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	valid := filepath.Join(dir, "cover.jpg")
+	createJPEGTestImage(t, valid, 100, 100)
+
+	g := New(thumbsDir)
+	_, path, found, err := g.Refresh(91, dir)
+	if err != nil {
+		t.Fatalf("Refresh 失敗: %v", err)
+	}
+	if !found {
+		t.Error("candidateFound=false, want true")
+	}
+	if path == "" {
+		t.Fatal("outPath が空")
+	}
+
+	srcRecord, err := os.ReadFile(filepath.Join(thumbsDir, "91.src"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(srcRecord) != valid {
+		t.Errorf(".src = %q, want %q", string(srcRecord), valid)
+	}
+}

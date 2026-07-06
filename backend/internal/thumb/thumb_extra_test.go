@@ -260,6 +260,39 @@ func TestCollectImageCandidatesDepthLimit(t *testing.T) {
 	}
 }
 
+// TestCollectImageCandidatesSkipsHiddenEntries は AppleDouble / dotfile と
+// 隠しディレクトリ配下の画像がサムネイル候補から除外されることをテスト(issue #90)。
+func TestCollectImageCandidatesSkipsHiddenEntries(t *testing.T) {
+	dir := t.TempDir()
+
+	createTestImage(t, filepath.Join(dir, "cover.png"), 100, 100)
+	if err := os.WriteFile(filepath.Join(dir, "._cover.jpg"), []byte("appledouble"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".hidden.jpg"), []byte("hidden image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".DS_Store"), []byte("metadata"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hiddenDir := filepath.Join(dir, ".hidden-dir")
+	if err := os.MkdirAll(hiddenDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	createTestImage(t, filepath.Join(hiddenDir, "inside.png"), 100, 100)
+
+	candidates, _, err := collectImageCandidates(dir, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %v, want cover.png のみ", candidates)
+	}
+	if filepath.Base(candidates[0]) != "cover.png" {
+		t.Errorf("candidate = %q, want cover.png", candidates[0])
+	}
+}
+
 // TestGenerateThumbnailPNGSource は PNG ソースから正しい JPEG が生成されることをテスト。
 func TestGenerateThumbnailPNGSource(t *testing.T) {
 	dir := t.TempDir()
