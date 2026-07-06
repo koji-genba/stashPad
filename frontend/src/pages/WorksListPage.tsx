@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { SortKey, SortOrder, WorksResponse } from '@/api/types';
 import { fetchWorks } from '@/api/client';
@@ -20,6 +21,7 @@ const SORT_LABELS: Record<SortKey, string> = {
   title: 'タイトル',
   created_at: '登録日',
   circle: 'サークル名',
+  rating: '評価',
   favorited_at: 'お気に入り登録',
   last_played: '最近聴いた',
   play_count: 'よく聴く',
@@ -27,6 +29,35 @@ const SORT_LABELS: Record<SortKey, string> = {
 
 const WORK_TYPE_OPTIONS = ['ボイス・ASMR', '動画', 'マンガ'];
 const AGE_RATING_OPTIONS = ['全年齢', 'R-15', 'R-18'];
+const PRIMARY_TAG_CATEGORIES = ['custom', 'genre', 'detail_genre'];
+const DEFAULT_EXPANDED_TAG_CATEGORIES = ['custom', 'detail_genre'];
+
+interface SidebarSectionProps {
+  title: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}
+
+function SidebarSection({ title, children, defaultOpen = true }: SidebarSectionProps) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className={styles.sidebarSection}>
+      <div className={styles.sidebarSectionHead}>
+        <h2 className={styles.sidebarTitle}>{title}</h2>
+        <button
+          type="button"
+          className={styles.sectionToggle}
+          onClick={() => setOpen((v) => !v)}
+          aria-label={open ? `${title}を折りたたむ` : `${title}を展開`}
+          aria-expanded={open}
+        >
+          {open ? '▼' : '▶'}
+        </button>
+      </div>
+      {open && children}
+    </section>
+  );
+}
 
 function parseTags(value: string | null): number[] {
   if (!value) return [];
@@ -234,6 +265,102 @@ export default function WorksListPage() {
     }, { scrollToTop: true });
   };
 
+  const renderOptionFilter = (
+    label: string,
+    value: string,
+    options: string[],
+    onChange: (value: string) => void,
+  ) => (
+    <select
+      className={styles.filterSelect}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label={label}
+    >
+      <option value="">{label}: すべて</option>
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
+  );
+
+  const renderFacetSections = (onPicked?: () => void) => (
+    <>
+      <SidebarSection title="種別">
+        {renderOptionFilter('種別', workType, WORK_TYPE_OPTIONS, (value) => {
+          setWorkType(value);
+          onPicked?.();
+        })}
+      </SidebarSection>
+      <SidebarSection title="年齢指定">
+        {renderOptionFilter('年齢指定', ageRating, AGE_RATING_OPTIONS, (value) => {
+          setAgeRating(value);
+          onPicked?.();
+        })}
+      </SidebarSection>
+      <SidebarSection title="タグ">
+        <TagFacetPanel
+          selected={tags}
+          excluded={excludeTags}
+          onToggle={toggleTag}
+          categories={PRIMARY_TAG_CATEGORIES}
+          defaultExpandedCategories={DEFAULT_EXPANDED_TAG_CATEGORIES}
+        />
+      </SidebarSection>
+      <SidebarSection title="サークル">
+        <CircleFacetPanel
+          selected={circle}
+          onSelect={(name) => {
+            setCircle(name);
+            onPicked?.();
+          }}
+        />
+      </SidebarSection>
+      <SidebarSection title="声優">
+        <TagFacetPanel
+          selected={tags}
+          excluded={excludeTags}
+          onToggle={toggleTag}
+          categories={['voice_actor']}
+          defaultExpandedCategories={['voice_actor']}
+          showSearch={false}
+        />
+      </SidebarSection>
+      <SidebarSection title="シナリオ">
+        <TagFacetPanel
+          selected={tags}
+          excluded={excludeTags}
+          onToggle={toggleTag}
+          categories={['scenario']}
+          defaultExpandedCategories={['scenario']}
+          showSearch={false}
+        />
+      </SidebarSection>
+      <SidebarSection title="イラスト">
+        <TagFacetPanel
+          selected={tags}
+          excluded={excludeTags}
+          onToggle={toggleTag}
+          categories={['illustration']}
+          defaultExpandedCategories={['illustration']}
+          showSearch={false}
+        />
+      </SidebarSection>
+      <SidebarSection title="音楽">
+        <TagFacetPanel
+          selected={tags}
+          excluded={excludeTags}
+          onToggle={toggleTag}
+          categories={['music']}
+          defaultExpandedCategories={['music']}
+          showSearch={false}
+        />
+      </SidebarSection>
+    </>
+  );
+
   const toggleFavorite = () => {
     update((p) => {
       if (p.get('favorite') === '1') p.delete('favorite');
@@ -328,10 +455,7 @@ export default function WorksListPage() {
     <div className={styles.layout}>
       {/* PC: 左サイドパネル / スマホ: 非表示 */}
       <aside className={styles.sidebar}>
-        <h2 className={styles.sidebarTitle}>サークル</h2>
-        <CircleFacetPanel selected={circle} onSelect={setCircle} />
-        <h2 className={`${styles.sidebarTitle} ${styles.sidebarTitleSpaced}`}>タグ</h2>
-        <TagFacetPanel selected={tags} excluded={excludeTags} onToggle={toggleTag} />
+        {renderFacetSections()}
       </aside>
 
       <div className={styles.content}>
@@ -364,32 +488,6 @@ export default function WorksListPage() {
             >
               ★ お気に入りのみ
             </button>
-            <select
-              className={styles.filterSelect}
-              value={workType}
-              onChange={(e) => setWorkType(e.target.value)}
-              aria-label="種別"
-            >
-              <option value="">種別: すべて</option>
-              {WORK_TYPE_OPTIONS.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-            <select
-              className={styles.filterSelect}
-              value={ageRating}
-              onChange={(e) => setAgeRating(e.target.value)}
-              aria-label="年齢指定"
-            >
-              <option value="">年齢指定: すべて</option>
-              {AGE_RATING_OPTIONS.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
             <select
               className={styles.sortSelect}
               value={sort}
@@ -533,6 +631,7 @@ export default function WorksListPage() {
                   thumbnailUrl={w.thumbnail_url}
                   hasFolder={w.has_folder}
                   favorited={w.favorited}
+                  rating={w.rating}
                 />
               ))}
             </div>
@@ -606,10 +705,7 @@ export default function WorksListPage() {
                 ✕
               </button>
             </div>
-            <h3 className={styles.sidebarTitle}>サークル</h3>
-            <CircleFacetPanel selected={circle} onSelect={(name) => { setCircle(name); setDrawerOpen(false); }} />
-            <h3 className={`${styles.sidebarTitle} ${styles.sidebarTitleSpaced}`}>タグ</h3>
-            <TagFacetPanel selected={tags} excluded={excludeTags} onToggle={toggleTag} />
+            {renderFacetSections(() => setDrawerOpen(false))}
           </div>
         </div>
       )}

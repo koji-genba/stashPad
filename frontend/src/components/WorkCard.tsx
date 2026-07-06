@@ -13,6 +13,8 @@ interface Props {
   badge?: string;
   /** お気に入り登録済みなら右上に ★ バッジを出す */
   favorited?: boolean;
+  /** 1〜5 の評価。未評価は null/undefined */
+  rating?: number | null;
 }
 
 export default function WorkCard({
@@ -24,6 +26,7 @@ export default function WorkCard({
   hasFolder = true,
   badge,
   favorited,
+  rating,
 }: Props) {
   return (
     <Link to={`/works/${id}`} className={styles.card}>
@@ -33,6 +36,11 @@ export default function WorkCard({
         {favorited && (
           <span className={styles.favoriteBadge} aria-label="お気に入り">
             ★
+          </span>
+        )}
+        {rating && (
+          <span className={styles.ratingBadge} aria-label={`評価 ${rating}`}>
+            {'★'.repeat(rating)}
           </span>
         )}
         {ageRating && <span className={styles.age}>{ageRating}</span>}

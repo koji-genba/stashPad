@@ -22,6 +22,7 @@ type exportMetadataWork struct {
 	ManuallyEdited bool     `json:"manually_edited"`
 	Hidden         bool     `json:"hidden"`
 	FavoritedAt    *string  `json:"favorited_at"`
+	Rating         *int     `json:"rating"`
 	CustomTags     []string `json:"custom_tags"`
 }
 
@@ -85,6 +86,12 @@ func TestExportMetadataOnlyIncludesWorksWithUserMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// 評価済み作品
+	if _, err := database.Exec(
+		"INSERT INTO works (rj_number, title, rating) VALUES ('RJ100005', '評価済み作品', 4)"); err != nil {
+		t.Fatal(err)
+	}
+
 	w := doGet(t, h, "/api/export")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
@@ -116,7 +123,7 @@ func TestExportMetadataOnlyIncludesWorksWithUserMetadata(t *testing.T) {
 	if _, ok := byRJ["RJ000001"]; ok {
 		t.Error("メタデータなしの作品(RJ000001)が出力された")
 	}
-	for _, rj := range []string{"RJ100001", "RJ100002", "RJ100003", "RJ100004"} {
+	for _, rj := range []string{"RJ100001", "RJ100002", "RJ100003", "RJ100004", "RJ100005"} {
 		if _, ok := byRJ[rj]; !ok {
 			t.Errorf("%s が出力対象に含まれない", rj)
 		}
@@ -134,6 +141,9 @@ func TestExportMetadataOnlyIncludesWorksWithUserMetadata(t *testing.T) {
 	if item := byRJ["RJ100004"]; !item.ManuallyEdited || item.Circle == nil || *item.Circle != "サークルZ" {
 		t.Errorf("manually_edited/circle 不一致: edited=%v circle=%v", item.ManuallyEdited, item.Circle)
 	}
+	if item := byRJ["RJ100005"]; item.Rating == nil || *item.Rating != 4 {
+		t.Errorf("rating = %v, want 4", item.Rating)
+	}
 }
 
 // ---- ラウンドトリップ: エクスポート → 新DB(スキャン相当)→ インポート -----------
@@ -142,9 +152,9 @@ func TestImportMetadataRoundTrip(t *testing.T) {
 	h1, database1, _ := newTestServer(t)
 
 	res, err := database1.Exec(
-		`INSERT INTO works (rj_number, title, circle, root_path, hidden, favorited_at, manually_edited)
-		 VALUES (?,?,?,?,?,?,?)`,
-		"RJ200001", "手動タイトル", "元サークル", "/media/RJ200001_元フォルダ", 1, "2026-06-01 09:00:00", 1)
+		`INSERT INTO works (rj_number, title, circle, root_path, hidden, favorited_at, manually_edited, rating)
+		 VALUES (?,?,?,?,?,?,?,?)`,
+		"RJ200001", "手動タイトル", "元サークル", "/media/RJ200001_元フォルダ", 1, "2026-06-01 09:00:00", 1, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,15 +211,16 @@ func TestImportMetadataRoundTrip(t *testing.T) {
 	var title, circle string
 	var hidden, manuallyEdited int
 	var favoritedAt string
+	var rating int
 	if err := database2.QueryRow(
-		"SELECT title, circle, hidden, manually_edited, favorited_at FROM works WHERE rj_number='RJ200001'").
-		Scan(&title, &circle, &hidden, &manuallyEdited, &favoritedAt); err != nil {
+		"SELECT title, circle, hidden, manually_edited, favorited_at, rating FROM works WHERE rj_number='RJ200001'").
+		Scan(&title, &circle, &hidden, &manuallyEdited, &favoritedAt, &rating); err != nil {
 		t.Fatal(err)
 	}
 	if title != "手動タイトル" || circle != "元サークル" || hidden != 1 || manuallyEdited != 1 ||
-		favoritedAt != "2026-06-01 09:00:00" {
-		t.Errorf("復元後: title=%q circle=%q hidden=%d manually_edited=%d favorited_at=%q",
-			title, circle, hidden, manuallyEdited, favoritedAt)
+		favoritedAt != "2026-06-01 09:00:00" || rating != 5 {
+		t.Errorf("復元後: title=%q circle=%q hidden=%d manually_edited=%d favorited_at=%q rating=%d",
+			title, circle, hidden, manuallyEdited, favoritedAt, rating)
 	}
 
 	var tagCount int

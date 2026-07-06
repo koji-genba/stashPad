@@ -19,6 +19,7 @@ export interface WorkListItem {
   title: string;
   circle: string | null;
   age_rating: string | null;
+  rating: number | null;
   has_folder: boolean;
   thumbnail_url: string | null;
   favorited: boolean;
@@ -48,6 +49,7 @@ export interface WorkDetail {
   purchase_date: string | null;
   work_type: string | null;
   age_rating: string | null;
+  rating: number | null;
   file_format: string | null;
   file_size_text: string | null;
   has_folder: boolean;
@@ -184,6 +186,7 @@ export type SortKey =
   | 'title'
   | 'created_at'
   | 'circle'
+  | 'rating'
   | 'favorited_at'
   | 'last_played'
   | 'play_count';

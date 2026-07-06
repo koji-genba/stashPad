@@ -58,6 +58,27 @@
   color: #ffb300;
   border-color: #ffb300;
 }
+.ratingControl {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0 0 8px;
+}
+.ratingStar {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 20px;
+  line-height: 1;
+  padding: 0;
+}
+.ratingStar:hover:not(:disabled) {
+  color: #ffcf33;
+}
+.ratingStarActive {
+  color: #ffb300;
+}
 .notImported {
   display: inline-block;
   background: var(--text-faint);
@@ -120,7 +141,13 @@
   overflow: hidden;
 }
 .tagCustom {
-  border-color: var(--accent-dim);
+  background: rgba(20, 184, 166, 0.16);
+  border-color: rgba(20, 184, 166, 0.7);
+  border-radius: 6px 999px 999px 6px;
+  box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.95);
+}
+.tagCustom .tagCat {
+  color: #5eead4;
 }
 .tagBtn {
   display: inline-flex;

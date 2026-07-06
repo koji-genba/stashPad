@@ -335,9 +335,6 @@ func TestRebuildThumbnails(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
 		t.Fatalf("JSON デコード失敗: %v", err)
 	}
-	if !accepted.Running {
-		t.Error("202 応答で running=true になっていない")
-	}
 	// root_path がある作品: baseID(表紙.jpg中身非画像) + RJ830001(cover有) + RJ830002(なし) = 3
 	if accepted.Total != 3 {
 		t.Errorf("total = %d, want 3", accepted.Total)

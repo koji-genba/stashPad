@@ -132,6 +132,11 @@ export function setWorkFavorite(workId: number, favorite: boolean): Promise<void
   return sendJson<void>('PATCH', `${API_BASE}/works/${workId}`, { favorite });
 }
 
+/** 作品の評価(1〜5)を変更する。null で評価を解除する(PATCH /api/works/{id}) */
+export function setWorkRating(workId: number, rating: number | null): Promise<void> {
+  return sendJson<void>('PATCH', `${API_BASE}/works/${workId}`, { rating });
+}
+
 // ---- タグ ----
 
 export function fetchTags(

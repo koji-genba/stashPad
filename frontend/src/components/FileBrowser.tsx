@@ -3,6 +3,7 @@
 // ファイルタップで media_kind に応じて プレイヤー / 画像ビューア / 動画 / テキスト を起動。
 // audio 行の「⋮」ボタンからボトムシートでキュー操作が可能。
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useStore } from 'zustand';
 import type { EntriesResponse, Entry } from '@/api/types';
 import { fetchEntries, fileUrl } from '@/api/client';
@@ -28,7 +29,8 @@ const KIND_ICON: Record<string, string> = {
 };
 
 export default function FileBrowser({ workId, workTitle }: Props) {
-  const [path, setPath] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const path = searchParams.get('path') ?? '';
   const [data, setData] = useState<EntriesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +87,12 @@ export default function FileBrowser({ workId, workTitle }: Props) {
   //  誤って強調が一瞬付いてしまうのを回避する)
   const navigateTo = (newPath: string) => {
     setLoading(true);
-    setPath(newPath);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (newPath) next.set('path', newPath);
+      else next.delete('path');
+      return next;
+    });
   };
 
   const openEntry = (entry: Entry) => {

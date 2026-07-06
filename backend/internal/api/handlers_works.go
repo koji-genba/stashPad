@@ -37,6 +37,7 @@ type workListItem struct {
 	Title        string  `json:"title"`
 	Circle       *string `json:"circle"`
 	AgeRating    *string `json:"age_rating"`
+	Rating       *int    `json:"rating"`
 	HasFolder    bool    `json:"has_folder"`
 	ThumbnailURL *string `json:"thumbnail_url"`
 	Favorited    bool    `json:"favorited"`
@@ -94,6 +95,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 		"title":         "w.title",
 		"created_at":    "w.created_at",
 		"circle":        "w.circle",
+		"rating":        "w.rating",
 		"favorited_at":  "w.favorited_at",
 		"last_played":   "(SELECT MAX(ph.played_at) FROM play_history ph WHERE ph.work_id=w.id)",
 		"play_count":    "(SELECT NULLIF(COUNT(*), 0) FROM play_history ph WHERE ph.work_id=w.id)",
@@ -195,7 +197,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 
 	offset := (page - 1) * limit
 	dataQuery := fmt.Sprintf(
-		`SELECT w.id, w.rj_number, w.title, w.circle, w.age_rating,
+		`SELECT w.id, w.rj_number, w.title, w.circle, w.age_rating, w.rating,
 		        (w.root_path IS NOT NULL) AS has_folder,
 		        w.thumbnail_path, w.favorited_at
 		 FROM works w
@@ -219,10 +221,11 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id int64
 		var rj, circle, ageRating, thumbPath, favoritedAt sql.NullString
+		var rating sql.NullInt64
 		var title string
 		var hasFolder bool
 
-		if err := rows.Scan(&id, &rj, &title, &circle, &ageRating, &hasFolder, &thumbPath, &favoritedAt); err != nil {
+		if err := rows.Scan(&id, &rj, &title, &circle, &ageRating, &rating, &hasFolder, &thumbPath, &favoritedAt); err != nil {
 			respondInternalError(w, "スキャン失敗", err)
 			return
 		}
@@ -233,6 +236,7 @@ func (s *Server) handleListWorks(w http.ResponseWriter, r *http.Request) {
 			Title:     title,
 			Circle:    nullableString(circle),
 			AgeRating: nullableString(ageRating),
+			Rating:    nullableInt(rating),
 			HasFolder: hasFolder,
 			Favorited: favoritedAt.Valid,
 		}
@@ -274,6 +278,7 @@ type workDetailResponse struct {
 	PurchaseDate *string       `json:"purchase_date"`
 	WorkType     *string       `json:"work_type"`
 	AgeRating    *string       `json:"age_rating"`
+	Rating       *int          `json:"rating"`
 	FileFormat   *string       `json:"file_format"`
 	FileSizeText *string       `json:"file_size_text"`
 	HasFolder    bool          `json:"has_folder"`
@@ -302,6 +307,7 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 		ageRating    sql.NullString
 		fileFormat   sql.NullString
 		fileSizeText sql.NullString
+		rating       sql.NullInt64
 		rootPath     sql.NullString
 		thumbPath    sql.NullString
 		hiddenInt    int // hidden は INTEGER(0/1)。bool 変換して返す
@@ -309,11 +315,11 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 	)
 	err = s.db.QueryRow(
 		`SELECT id, rj_number, title, circle, series_name, purchase_date,
-		        work_type, age_rating, file_format, file_size_text,
+		        work_type, age_rating, rating, file_format, file_size_text,
 		        root_path, thumbnail_path, hidden, favorited_at
 		 FROM works WHERE id=?`, workID,
 	).Scan(&id, &rjNumber, &title, &circle, &seriesName,
-		&purchaseDate, &workType, &ageRating, &fileFormat,
+		&purchaseDate, &workType, &ageRating, &rating, &fileFormat,
 		&fileSizeText, &rootPath, &thumbPath, &hiddenInt, &favoritedAt)
 	if err == sql.ErrNoRows {
 		respondError(w, http.StatusNotFound, "作品が見つかりません")
@@ -362,6 +368,7 @@ func (s *Server) handleGetWork(w http.ResponseWriter, r *http.Request) {
 		PurchaseDate: nullableString(purchaseDate),
 		WorkType:     nullableString(workType),
 		AgeRating:    nullableString(ageRating),
+		Rating:       nullableInt(rating),
 		FileFormat:   nullableString(fileFormat),
 		FileSizeText: nullableString(fileSizeText),
 		HasFolder:    rootPath.Valid,
@@ -403,10 +410,44 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 		Circle   *string `json:"circle"`
 		Hidden   *bool   `json:"hidden"`   // 非表示フラグ。true→非表示、false→可視
 		Favorite *bool   `json:"favorite"` // お気に入りフラグ。true→登録、false→解除
+		Rating   *int    `json:"rating"`   // 1〜5。null は評価解除
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	raw := map[string]json.RawMessage{}
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&raw); err != nil {
 		respondError(w, http.StatusBadRequest, "JSON パース失敗: "+err.Error())
 		return
+	}
+	for key, value := range raw {
+		switch key {
+		case "title":
+			if err := json.Unmarshal(value, &body.Title); err != nil {
+				respondError(w, http.StatusBadRequest, "JSON パース失敗: "+err.Error())
+				return
+			}
+		case "circle":
+			if err := json.Unmarshal(value, &body.Circle); err != nil {
+				respondError(w, http.StatusBadRequest, "JSON パース失敗: "+err.Error())
+				return
+			}
+		case "hidden":
+			if err := json.Unmarshal(value, &body.Hidden); err != nil {
+				respondError(w, http.StatusBadRequest, "JSON パース失敗: "+err.Error())
+				return
+			}
+		case "favorite":
+			if err := json.Unmarshal(value, &body.Favorite); err != nil {
+				respondError(w, http.StatusBadRequest, "JSON パース失敗: "+err.Error())
+				return
+			}
+		case "rating":
+			if string(value) != "null" {
+				if err := json.Unmarshal(value, &body.Rating); err != nil {
+					respondError(w, http.StatusBadRequest, "JSON パース失敗: "+err.Error())
+					return
+				}
+			}
+		}
 	}
 
 	// title: TrimSpace 後に空文字になる場合は 400(作品名を空にできてしまう
@@ -436,6 +477,10 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, fmt.Sprintf("サークル名は%d文字以内で指定してください", maxCircleRunes))
 			return
 		}
+	}
+	if body.Rating != nil && (*body.Rating < 1 || *body.Rating > 5) {
+		respondError(w, http.StatusBadRequest, "評価は1〜5で指定してください")
+		return
 	}
 
 	// 存在確認(DB エラーは 500、不存在は 404 を返す)
@@ -480,6 +525,14 @@ func (s *Server) handlePatchWork(w http.ResponseWriter, r *http.Request) {
 			setClauses = append(setClauses, "favorited_at=datetime('now')")
 		} else {
 			setClauses = append(setClauses, "favorited_at=NULL")
+		}
+	}
+	if _, ok := raw["rating"]; ok {
+		if body.Rating == nil {
+			setClauses = append(setClauses, "rating=NULL")
+		} else {
+			setClauses = append(setClauses, "rating=?")
+			args = append(args, *body.Rating)
 		}
 	}
 	// Title または Circle が非 nil のときだけ manually_edited=1 を立てる
@@ -1246,6 +1299,15 @@ func nullableString(v sql.NullString) *string {
 		return nil
 	}
 	return &v.String
+}
+
+// nullableInt は sql.NullInt64 を *int に変換する。rating など小さい整数値用。
+func nullableInt(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	i := int(v.Int64)
+	return &i
 }
 
 // strPtr は string の値から *string を作る小さなヘルパー(複合リテラルの & を避けるため)。

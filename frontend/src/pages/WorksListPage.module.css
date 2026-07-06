@@ -13,11 +13,27 @@
 
 .sidebarTitle {
   font-size: 15px;
-  margin: 0 0 12px;
+  margin: 0;
 }
-/* 2 つ目以降のファセット見出し(サークル/タグの区切り) */
-.sidebarTitleSpaced {
-  margin-top: 20px;
+.sidebarSection {
+  margin-bottom: 18px;
+}
+.sidebarSectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.sectionToggle {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev2);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1;
 }
 
 .content {
@@ -69,6 +85,11 @@
 }
 .filterSelect {
   flex: 1 1 138px;
+}
+.sidebar .filterSelect,
+.drawer .filterSelect {
+  width: 100%;
+  flex: none;
 }
 .sortSelect {
   flex: 1 1 144px;

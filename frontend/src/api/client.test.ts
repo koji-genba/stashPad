@@ -23,6 +23,7 @@ import {
   refreshThumbnail,
   removeTag,
   runScan,
+  setWorkRating,
   thumbnailUrl,
 } from './client';
 
@@ -243,6 +244,36 @@ describe('removeTag', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(removeTag(1, 5)).rejects.toThrow(ApiRequestError);
+  });
+});
+
+// ---- setWorkRating ----
+
+describe('setWorkRating', () => {
+  it('PATCH /api/works/:id に rating を送る', async () => {
+    fetchMock = mockFetchNoContent();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await setWorkRating(1, 5);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/works/1', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rating: 5 }),
+    });
+  });
+
+  it('null を渡すと rating:null を送って評価を解除する', async () => {
+    fetchMock = mockFetchNoContent();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await setWorkRating(1, null);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/works/1', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rating: null }),
+    });
   });
 });
 

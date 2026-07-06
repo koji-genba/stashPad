@@ -2,6 +2,7 @@
 // audio 行の「⋮」ボタンとボトムシート(QueueActionSheet)のキュー操作を検証する。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '@/store/playerStore';
 import { useOverlayStore } from '@/store/overlayStore';
 
@@ -59,9 +60,34 @@ const mockSubEntries = {
   ],
 };
 
+function renderBrowser(workId = 1, workTitle = 'テスト作品', initialUrl = '/works/1') {
+  let currentLocation = '';
+  function LocationProbe() {
+    const location = useLocation();
+    currentLocation = `${location.pathname}${location.search}`;
+    return null;
+  }
+  function BackProbe() {
+    const navigate = useNavigate();
+    return (
+      <button type="button" onClick={() => navigate(-1)} aria-label="履歴を戻る">
+        back
+      </button>
+    );
+  }
+  const result = render(
+    <MemoryRouter initialEntries={[initialUrl]}>
+      <FileBrowser workId={workId} workTitle={workTitle} />
+      <LocationProbe />
+      <BackProbe />
+    </MemoryRouter>,
+  );
+  return { ...result, getLocation: () => currentLocation };
+}
+
 /** FileBrowser をレンダリングして fetchEntries の解決を待つ */
-async function renderAndWait(workId = 1, workTitle = 'テスト作品') {
-  const result = render(<FileBrowser workId={workId} workTitle={workTitle} />);
+async function renderAndWait(workId = 1, workTitle = 'テスト作品', initialUrl = '/works/1') {
+  const result = renderBrowser(workId, workTitle, initialUrl);
   // ローディング完了を待つ
   await screen.findByText('track01.mp3');
   return result;
@@ -233,7 +259,7 @@ describe('FileBrowser サブディレクトリ閲覧中の path join', () => {
       .mockResolvedValueOnce(mockEntries)
       .mockResolvedValueOnce(mockSubEntries);
 
-    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+    renderBrowser(1, 'テスト作品');
 
     // ルート読み込み完了を待つ
     await screen.findByText('track01.mp3');
@@ -254,6 +280,29 @@ describe('FileBrowser サブディレクトリ閲覧中の path join', () => {
     // path は subdir/bonus.mp3 に join される
     expect(queue[0].path).toBe('subdir/bonus.mp3');
     expect(queue[0].name).toBe('bonus.mp3');
+  });
+});
+
+describe('FileBrowser ブラウザ履歴連動 (issue #99)', () => {
+  it('ディレクトリへ進むと URL に path が積まれ、履歴戻りで親階層へ戻る', async () => {
+    vi.mocked(fetchEntries)
+      .mockResolvedValueOnce(mockEntries)
+      .mockResolvedValueOnce(mockSubEntries)
+      .mockResolvedValueOnce(mockEntries);
+
+    const { getLocation } = renderBrowser(1, 'テスト作品');
+    await screen.findByText('track01.mp3');
+
+    fireEvent.click(screen.getByText('subdir').closest('button')!);
+
+    await screen.findByText('bonus.mp3');
+    expect(getLocation()).toBe('/works/1?path=subdir');
+
+    fireEvent.click(screen.getByRole('button', { name: '履歴を戻る' }));
+
+    await screen.findByText('track01.mp3');
+    expect(getLocation()).toBe('/works/1');
+    expect(vi.mocked(fetchEntries)).toHaveBeenLastCalledWith(1, '', expect.anything());
   });
 });
 
@@ -317,7 +366,7 @@ describe('FileBrowser 再生中ファイルのインジケータ (issue #31)', (
       video: { workId: 1, workTitle: 'テスト作品', path: 'movie.mp4', name: 'movie.mp4' },
     });
 
-    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+    renderBrowser(1, 'テスト作品');
     await screen.findByText('movie.mp4');
 
     expect(screen.getByText('movie.mp4').closest('button')!).toHaveAttribute('aria-current', 'true');
@@ -336,7 +385,7 @@ describe('FileBrowser 再生中ファイルのインジケータ (issue #31)', (
       text: { workId: 1, path: 'readme.txt', name: 'readme.txt' },
     });
 
-    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+    renderBrowser(1, 'テスト作品');
     await screen.findByText('readme.txt');
 
     expect(screen.getByText('readme.txt').closest('button')!).toHaveAttribute('aria-current', 'true');
@@ -374,7 +423,7 @@ describe('FileBrowser 再生中ファイルのインジケータ (issue #31)', (
       isPlaying: true,
     });
 
-    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+    renderBrowser(1, 'テスト作品');
     await screen.findByText('track01.mp3');
     fireEvent.click(screen.getByText('subdir').closest('button')!);
     await screen.findByText('bonus.mp3');
@@ -393,7 +442,7 @@ describe('FileBrowser fetch 失敗時の再試行導線 (issue #70)', () => {
   it('fetch 失敗でエラーメッセージと再試行ボタンが表示される', async () => {
     vi.mocked(fetchEntries).mockRejectedValueOnce(new Error('エントリ取得失敗'));
 
-    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+    renderBrowser(1, 'テスト作品');
 
     await screen.findByText('エントリ取得失敗');
     expect(screen.getByRole('button', { name: '再試行' })).toBeInTheDocument();
@@ -403,7 +452,7 @@ describe('FileBrowser fetch 失敗時の再試行導線 (issue #70)', () => {
     // 1 回目は失敗、2 回目以降は beforeEach の mockResolvedValue(mockEntries) が使われる
     vi.mocked(fetchEntries).mockRejectedValueOnce(new Error('エントリ取得失敗'));
 
-    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+    renderBrowser(1, 'テスト作品');
 
     await screen.findByText('エントリ取得失敗');
     fireEvent.click(screen.getByRole('button', { name: '再試行' }));
@@ -433,7 +482,7 @@ describe('FileBrowser 行本体の挙動が維持される', () => {
       .mockResolvedValueOnce(mockEntries)
       .mockResolvedValueOnce(mockSubEntries);
 
-    render(<FileBrowser workId={1} workTitle='テスト作品' />);
+    renderBrowser(1, 'テスト作品');
     await screen.findByText('track01.mp3');
 
     // ボタンのアクセシブル名はアイコン込みになるため、テキスト要素から辿る
