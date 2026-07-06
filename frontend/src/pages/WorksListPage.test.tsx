@@ -219,6 +219,100 @@ describe('お気に入りフィルタ (issue #72)', () => {
   });
 });
 
+describe('種別・年齢指定フィルタとRJ番号ソート (issues #92, #93)', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('種別を選ぶと URL に work_type が付き、fetchWorks が workType 付きで呼ばれる', async () => {
+    const { getParams } = renderPage();
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByRole('combobox', { name: '種別' }), {
+      target: { value: 'ボイス・ASMR' },
+    });
+
+    await waitFor(() => {
+      expect(getParams().get('work_type')).toBe('ボイス・ASMR');
+    });
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workType: 'ボイス・ASMR' }),
+        expect.anything(),
+      );
+    });
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it('年齢指定を選ぶと URL に age_rating が付き、fetchWorks が ageRating 付きで呼ばれる', async () => {
+    const { getParams } = renderPage();
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByRole('combobox', { name: '年齢指定' }), {
+      target: { value: 'R-18' },
+    });
+
+    await waitFor(() => {
+      expect(getParams().get('age_rating')).toBe('R-18');
+    });
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenLastCalledWith(
+        expect.objectContaining({ ageRating: 'R-18' }),
+        expect.anything(),
+      );
+    });
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it('URL の work_type / age_rating がセレクトとチップに反映される', async () => {
+    renderPage('/?work_type=%E3%83%9C%E3%82%A4%E3%82%B9%E3%83%BBASMR&age_rating=R-15');
+
+    expect(screen.getByRole('combobox', { name: '種別' })).toHaveValue('ボイス・ASMR');
+    expect(screen.getByRole('combobox', { name: '年齢指定' })).toHaveValue('R-15');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /種別.*ボイス・ASMR/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /年齢指定.*R-15/ })).toBeInTheDocument();
+    });
+  });
+
+  it('全てクリアで work_type / age_rating も URL から消える', async () => {
+    const { getParams } = renderPage('/?work_type=%E5%8B%95%E7%94%BB&age_rating=R-18&page=2');
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '全てクリア' })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: '全てクリア' }));
+
+    await waitFor(() => {
+      expect(getParams().has('work_type')).toBe(false);
+      expect(getParams().has('age_rating')).toBe(false);
+      expect(getParams().has('page')).toBe(false);
+    });
+  });
+
+  it('RJ番号順を選ぶと fetchWorks が sort: "rj_number" で呼ばれる', async () => {
+    renderPage();
+    await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByRole('combobox', { name: '並び替え' }), {
+      target: { value: 'rj_number' },
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchWorks)).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sort: 'rj_number' }),
+        expect.anything(),
+      );
+    });
+  });
+});
+
 describe('全てクリアボタン (#30)', () => {
   beforeEach(() => {
     vi.spyOn(window, 'scrollTo').mockImplementation(() => {});

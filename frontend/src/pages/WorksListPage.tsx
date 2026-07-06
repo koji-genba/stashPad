@@ -16,6 +16,7 @@ const LIMIT = 40;
 
 const SORT_LABELS: Record<SortKey, string> = {
   purchase_date: '購入日',
+  rj_number: 'RJ番号',
   title: 'タイトル',
   created_at: '登録日',
   circle: 'サークル名',
@@ -23,6 +24,9 @@ const SORT_LABELS: Record<SortKey, string> = {
   last_played: '最近聴いた',
   play_count: 'よく聴く',
 };
+
+const WORK_TYPE_OPTIONS = ['ボイス・ASMR', '動画', 'マンガ'];
+const AGE_RATING_OPTIONS = ['全年齢', 'R-15', 'R-18'];
 
 function parseTags(value: string | null): number[] {
   if (!value) return [];
@@ -46,6 +50,8 @@ export default function WorksListPage() {
   const excludeTags = useMemo(() => parseTags(params.get('exclude_tags')), [params]);
   const circle = params.get('circle') ?? '';
   const series = params.get('series') ?? '';
+  const workType = params.get('work_type') ?? '';
+  const ageRating = params.get('age_rating') ?? '';
   const favorite = params.get('favorite') === '1';
   const sort = (params.get('sort') as SortKey) || 'purchase_date';
   // デフォルトは降順。降順のときは URL にパラメータを付けない(#59)
@@ -129,6 +135,8 @@ export default function WorksListPage() {
         excludeTags,
         circle: circle || undefined,
         series: series || undefined,
+        workType: workType || undefined,
+        ageRating: ageRating || undefined,
         favorite: favorite || undefined,
         sort,
         order,
@@ -147,7 +155,7 @@ export default function WorksListPage() {
         setLoading(false);
       });
     return () => ac.abort();
-  }, [q, tags, excludeTags, circle, series, favorite, sort, order, page, retryNonce]);
+  }, [q, tags, excludeTags, circle, series, workType, ageRating, favorite, sort, order, page, retryNonce]);
 
   // URL が変わるたびに検索クエリを sessionStorage に保存(詳細→一覧の戻り先に使う)
   useEffect(() => {
@@ -210,6 +218,22 @@ export default function WorksListPage() {
     }, { scrollToTop: true });
   };
 
+  const setWorkType = (value: string) => {
+    update((p) => {
+      if (value) p.set('work_type', value);
+      else p.delete('work_type');
+      p.delete('page');
+    }, { scrollToTop: true });
+  };
+
+  const setAgeRating = (value: string) => {
+    update((p) => {
+      if (value) p.set('age_rating', value);
+      else p.delete('age_rating');
+      p.delete('page');
+    }, { scrollToTop: true });
+  };
+
   const toggleFavorite = () => {
     update((p) => {
       if (p.get('favorite') === '1') p.delete('favorite');
@@ -261,7 +285,7 @@ export default function WorksListPage() {
     if (clamped !== page) goPage(clamped);
   };
 
-  const clearParam = (key: 'circle' | 'series') => {
+  const clearParam = (key: 'circle' | 'series' | 'work_type' | 'age_rating') => {
     update((p) => {
       p.delete(key);
       p.delete('page');
@@ -276,6 +300,8 @@ export default function WorksListPage() {
       p.delete('exclude_tags');
       p.delete('circle');
       p.delete('series');
+      p.delete('work_type');
+      p.delete('age_rating');
       p.delete('favorite');
       p.delete('page');
     }, { scrollToTop: true });
@@ -293,6 +319,8 @@ export default function WorksListPage() {
     excludeTags.length > 0 ||
     !!circle ||
     !!series ||
+    !!workType ||
+    !!ageRating ||
     searchTerms.include.length > 0 ||
     searchTerms.exclude.length > 0;
 
@@ -336,6 +364,32 @@ export default function WorksListPage() {
             >
               ★ お気に入りのみ
             </button>
+            <select
+              className={styles.filterSelect}
+              value={workType}
+              onChange={(e) => setWorkType(e.target.value)}
+              aria-label="種別"
+            >
+              <option value="">種別: すべて</option>
+              {WORK_TYPE_OPTIONS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+            <select
+              className={styles.filterSelect}
+              value={ageRating}
+              onChange={(e) => setAgeRating(e.target.value)}
+              aria-label="年齢指定"
+            >
+              <option value="">年齢指定: すべて</option>
+              {AGE_RATING_OPTIONS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
             <select
               className={styles.sortSelect}
               value={sort}
@@ -402,6 +456,28 @@ export default function WorksListPage() {
                 >
                   <span className={styles.chipKind}>シリーズ</span>
                   {series}
+                  <span className={styles.chipX}>✕</span>
+                </button>
+              )}
+              {workType && (
+                <button
+                  className={styles.chip}
+                  onClick={() => clearParam('work_type')}
+                  title="クリックで解除"
+                >
+                  <span className={styles.chipKind}>種別</span>
+                  {workType}
+                  <span className={styles.chipX}>✕</span>
+                </button>
+              )}
+              {ageRating && (
+                <button
+                  className={styles.chip}
+                  onClick={() => clearParam('age_rating')}
+                  title="クリックで解除"
+                >
+                  <span className={styles.chipKind}>年齢指定</span>
+                  {ageRating}
                   <span className={styles.chipX}>✕</span>
                 </button>
               )}

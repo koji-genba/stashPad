@@ -142,6 +142,18 @@ describe('fetchWorks', () => {
     expect(params.get('series')).toBe('シリーズB');
   });
 
+  it('work_type / age_rating パラメータを送る', async () => {
+    fetchMock = mockFetchOk({ items: [], total: 0, page: 1, limit: 20 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchWorks({ workType: 'ボイス・ASMR', ageRating: 'R-15' });
+
+    const [url] = fetchMock.mock.calls[0] as [string, ...unknown[]];
+    const params = new URL(url, 'http://localhost').searchParams;
+    expect(params.get('work_type')).toBe('ボイス・ASMR');
+    expect(params.get('age_rating')).toBe('R-15');
+  });
+
   it('日本語クエリの URL エンコードが正しく行われる', async () => {
     fetchMock = mockFetchOk({ items: [], total: 0, page: 1, limit: 20 });
     vi.stubGlobal('fetch', fetchMock);

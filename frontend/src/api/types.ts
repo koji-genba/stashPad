@@ -180,6 +180,7 @@ export interface ApiError {
 
 export type SortKey =
   | 'purchase_date'
+  | 'rj_number'
   | 'title'
   | 'created_at'
   | 'circle'

@@ -42,6 +42,7 @@
 
 .controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
@@ -56,6 +57,7 @@
   color: var(--accent);
   border-color: var(--accent-dim);
 }
+.filterSelect,
 .sortSelect {
   background: var(--bg-elev2);
   border: 1px solid var(--border);
@@ -63,6 +65,13 @@
   color: var(--text);
   padding: 8px 10px;
   font-size: 14px;
+  min-width: 0;
+}
+.filterSelect {
+  flex: 1 1 138px;
+}
+.sortSelect {
+  flex: 1 1 144px;
 }
 
 .chips {

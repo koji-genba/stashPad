@@ -76,6 +76,10 @@ export interface WorksQuery {
   circle?: string;
   /** シリーズ名の完全一致フィルタ */
   series?: string;
+  /** 種別の完全一致フィルタ */
+  workType?: string;
+  /** 年齢指定の完全一致フィルタ */
+  ageRating?: string;
   /** true のとき非表示作品のみを返す */
   hidden?: boolean;
   /** true のときお気に入り作品のみを返す */
@@ -94,6 +98,8 @@ export function fetchWorks(query: WorksQuery, signal?: AbortSignal): Promise<Wor
     params.set('exclude_tags', query.excludeTags.join(','));
   if (query.circle) params.set('circle', query.circle);
   if (query.series) params.set('series', query.series);
+  if (query.workType) params.set('work_type', query.workType);
+  if (query.ageRating) params.set('age_rating', query.ageRating);
   if (query.sort) params.set('sort', query.sort);
   if (query.order) params.set('order', query.order);
   if (query.page) params.set('page', String(query.page));
