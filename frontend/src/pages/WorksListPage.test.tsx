@@ -256,15 +256,15 @@ describe('種別・年齢指定フィルタとRJ番号ソート (issues #92, #93
     await waitFor(() => expect(fetchWorks).toHaveBeenCalled());
 
     fireEvent.change(screen.getByRole('combobox', { name: '年齢指定' }), {
-      target: { value: 'R-18' },
+      target: { value: 'R18' },
     });
 
     await waitFor(() => {
-      expect(getParams().get('age_rating')).toBe('R-18');
+      expect(getParams().get('age_rating')).toBe('R18');
     });
     await waitFor(() => {
       expect(vi.mocked(fetchWorks)).toHaveBeenLastCalledWith(
-        expect.objectContaining({ ageRating: 'R-18' }),
+        expect.objectContaining({ ageRating: 'R18' }),
         expect.anything(),
       );
     });
@@ -331,7 +331,7 @@ describe('種別・年齢指定フィルタとRJ番号ソート (issues #92, #93
   });
 
   it('全てクリアで work_type / age_rating も URL から消える', async () => {
-    const { getParams } = renderPage('/?work_type=%E5%8B%95%E7%94%BB&age_rating=R-18&rating=none&page=2');
+    const { getParams } = renderPage('/?work_type=%E5%8B%95%E7%94%BB&age_rating=R18&rating=none&page=2');
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '全てクリア' })).toBeInTheDocument();

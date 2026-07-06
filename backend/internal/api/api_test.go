@@ -256,7 +256,7 @@ func TestListWorksWorkTypeAgeRatingFilter(t *testing.T) {
 		VALUES
 		  ('RJ000020', '全年齢ボイス', 'ボイス・ASMR', '全年齢'),
 		  ('RJ000021', 'R15ボイス', 'ボイス・ASMR', 'R-15'),
-		  ('RJ000022', 'R18マンガ', 'マンガ', 'R-18')
+		  ('RJ000022', 'R18マンガ', 'マンガ', 'R18')
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestListWorksWorkTypeAgeRatingFilter(t *testing.T) {
 		want int
 	}{
 		{"work_type", "/api/works?work_type=" + url.QueryEscape("ボイス・ASMR"), 2},
-		{"age_rating", "/api/works?age_rating=" + url.QueryEscape("R-18"), 1},
+		{"age_rating", "/api/works?age_rating=" + url.QueryEscape("R18"), 1},
 		{
 			"combined",
 			"/api/works?work_type=" + url.QueryEscape("ボイス・ASMR") + "&age_rating=" + url.QueryEscape("R-15"),

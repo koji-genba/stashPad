@@ -164,7 +164,7 @@ erDiagram
 | series_name | TEXT NULL | シリーズ名 |
 | purchase_date | TEXT NULL | 購入日時 |
 | work_type | TEXT NULL | ボイス・ASMR / 動画 / マンガ 等 |
-| age_rating | TEXT NULL | 全年齢 / R-15 / R-18 |
+| age_rating | TEXT NULL | 全年齢 / R-15 / R18 |
 | file_format | TEXT NULL | CSV 由来の参考情報 |
 | file_size_text | TEXT NULL | CSV 由来の参考情報("4.91GB" 等そのまま) |
 | event | TEXT NULL | CSV 由来 |
