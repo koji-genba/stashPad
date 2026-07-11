@@ -799,6 +799,16 @@ type rebuildWorkEntry struct {
 	rootPath string
 }
 
+// thumbRefresher は一括再生成ジョブが使う最小インターフェース(*thumb.Generator が満たす)。
+type thumbRefresher interface {
+	Refresh(workID int64, rootPath string) (regenerated bool, outPath string, candidateFound bool, err error)
+}
+
+// newThumbRefresher は一括再生成ジョブのサムネイル生成器のコンストラクタ。
+// テストから「Refresh が指示するまでブロックする偽物」を注入して、ジョブ実行中の
+// 並行書き込み(plays/PATCH が 500 にならないこと)を決定的に検証するための差し替え点(issue #85)。
+var newThumbRefresher = func(thumbsDir string) thumbRefresher { return thumb.New(thumbsDir) }
+
 // handleRebuildThumbnails は POST /api/thumbnails/rebuild を処理する。
 // root_path がある全作品に対して mtime 判定付きサムネイル再生成を worker pool で並列実行する。
 // scanMu を TryLock できない場合(スキャンや別の一括再生成と競合)は 409 を返す。
@@ -865,7 +875,7 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 	defer s.rebuildProgress.finish()
 
 	thumbsDir := filepath.Join(s.cfg.DataDir, "thumbs")
-	gen := thumb.New(thumbsDir)
+	gen := newThumbRefresher(thumbsDir)
 
 	type result struct {
 		id          int64
