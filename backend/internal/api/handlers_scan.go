@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -37,8 +38,15 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, res)
 }
 
-// RunStartupScan は起動時自動スキャン(STASHPAD_SCAN_ON_START)を実行する。
-// main.go から go srv.RunStartupScan() として呼ばれる想定。
+// StartStartupScan は起動時自動スキャン(STASHPAD_SCAN_ON_START)を jobsWG に
+// 登録してバックグラウンドで開始する。main.go から呼ばれる想定
+// (シャットダウン時に CancelJobs/WaitJobs で安全に畳めるよう startJob 経由にする。issue #83)。
+func (s *Server) StartStartupScan() {
+	s.startJob(s.RunStartupScan)
+}
+
+// RunStartupScan は起動時自動スキャン(STASHPAD_SCAN_ON_START)の本体。
+// StartStartupScan から jobsWG 登録済みの goroutine として呼ばれる想定。
 // 起動時はブロッキング Lock でよい(他の経路と競合していれば完了を待ってから実行する)。
 func (s *Server) RunStartupScan() {
 	s.scanMu.Lock()
@@ -47,8 +55,12 @@ func (s *Server) RunStartupScan() {
 	thumbsDir := filepath.Join(s.cfg.DataDir, "thumbs")
 	gen := thumb.New(thumbsDir)
 
-	res, err := scanner.Scan(s.db, s.cfg.LibraryRoots, gen)
+	res, err := scanner.ScanContext(s.jobCtx, s.db, s.cfg.LibraryRoots, gen)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Printf("起動時スキャン中断(シャットダウン): %v", err)
+			return
+		}
 		log.Printf("起動時スキャン失敗: %v", err)
 		return
 	}

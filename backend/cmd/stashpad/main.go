@@ -95,7 +95,7 @@ func main() {
 	// 大規模ライブラリでも起動をブロックしないようバックグラウンドで実行する。
 	// POST /api/scan・POST /api/thumbnails/rebuild と scanMu を共有し相互排他する。
 	if cfg.ScanOnStart {
-		go svc.RunStartupScan()
+		svc.StartStartupScan()
 	}
 
 	router := svc.Router()
@@ -121,7 +121,13 @@ func main() {
 	log.Printf("シグナル受信、シャットダウン中(最大 10 秒)...")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	svc.CancelJobs() // ジョブへ先に中断を通知し、HTTP ドレインと並行して畳ませる
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("graceful shutdown 失敗: %v", err)
 	}
+	if err := svc.WaitJobs(shutdownCtx); err != nil {
+		log.Printf("バックグラウンドジョブの終了待機がタイムアウト(DB クローズ時にエラーが出る可能性があります): %v", err)
+	}
+	// この後 defer database.Close() が実行される。バックグラウンドジョブの終了を
+	// 待ってから DB を閉じることで、ジョブの DB アクセスとの競合を防ぐ(issue #83)。
 }

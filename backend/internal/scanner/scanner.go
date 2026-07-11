@@ -4,6 +4,7 @@
 package scanner
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -63,7 +64,17 @@ const upsertChunkSize = 500
 // 消えたパスの root_path を NULL に戻す。
 // thumbGen が nil の場合はサムネイル生成をスキップする。
 // サムネイル生成のみ worker pool(NumCPU)で並列化する。
+//
+// ctx を指定しない従来 API。database/sql の Query/QueryContext と同じ流儀で、
+// 内部的には ScanContext(context.Background(), ...) に委譲するだけのラッパー
+// (キャンセル不可。呼び出し元に中断させたい場合は ScanContext を直接使うこと)。
 func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, error) {
+	return ScanContext(context.Background(), db, roots, thumbGen)
+}
+
+// ScanContext は Scan の本体。ctx がキャンセルされた場合、データ整合性を壊さない
+// 安全なチェックポイントでのみ中断する(各チェックポイントのコメント参照)。
+func ScanContext(ctx context.Context, db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, error) {
 	var res Result
 
 	// roots を filepath.Clean で正規化する。config.Load 側でも Clean するが、
@@ -112,6 +123,17 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 		}
 
 		for _, e := range entries {
+			// チェックポイント(a): ディレクトリエントリごとの先頭で中断を確認する。
+			// 現在のチャンクの tx は Commit してから返す(コミット済み分は残す思想)。
+			// この時点ではまだステップ2(markMissingPaths)に到達していないため、
+			// 未走査分を含む不完全な foundPaths で消失判定される心配はない。
+			if ctx.Err() != nil {
+				if cErr := tx.Commit(); cErr != nil {
+					return res, fmt.Errorf("upsert トランザクションのコミット失敗: %w", cErr)
+				}
+				return res, fmt.Errorf("スキャン中断: %w", ctx.Err())
+			}
+
 			if !e.IsDir() {
 				continue
 			}
@@ -167,6 +189,15 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 		)
 	}
 
+	// チェックポイント(b): ステップ2(markMissingPaths)の直前でも中断を確認する。
+	// 本 issue の最重要安全条件: キャンセル時は markMissingPaths を絶対に実行しない。
+	// ステップ1(upsert ループ)が全ルートを最後まで走査していない場合、foundPaths は
+	// 不完全な集合になる。この状態で消失判定を行うと、まだ見ていないだけの作品の
+	// root_path を「フォルダが消えた」と誤判定して NULL 化してしまう。
+	if ctx.Err() != nil {
+		return res, fmt.Errorf("スキャン中断: %w", ctx.Err())
+	}
+
 	// ステップ2: 既存 works の root_path が消えていたら NULL に戻す。
 	// ただし読み込み失敗したルート配下は「消えた」と判定できないので対象外とする。
 	// thumbnail_path も同時に NULL 化する(残すと /api/works が has_folder=false でも
@@ -208,6 +239,12 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 			go func() {
 				defer wg.Done()
 				for j := range jobs {
+					// チェックポイント(c): jobs チャネルのドレインは続けるが、
+					// 中断後は Refresh(ファイル IO)を呼ばず、results への送信もしない。
+					if ctx.Err() != nil {
+						continue
+					}
+
 					_, thumbPath, candidateFound, tErr := thumbGen.Refresh(j.workID, j.absPath)
 					if tErr != nil {
 						log.Printf("サムネイル生成失敗 work_id=%d: %v", j.workID, tErr)
@@ -255,6 +292,13 @@ func Scan(db *sql.DB, roots []string, thumbGen ThumbnailGenerator) (Result, erro
 				}
 			}
 		}
+	}
+
+	// チェックポイント(d): ステップ3(サムネイル生成)完了後の中断確認。
+	// markMissingPaths は既に完了しておりデータ整合性は問題ないため、ここは
+	// 呼び出し元が中断を検知できるようにエラーを返すだけの位置付け。
+	if ctx.Err() != nil {
+		return res, fmt.Errorf("スキャン中断(サムネイル生成): %w", ctx.Err())
 	}
 
 	return res, nil

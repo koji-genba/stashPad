@@ -3,8 +3,10 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -30,6 +32,13 @@ type Server struct {
 	// 進捗。ジョブ実行は goroutine に委譲されるため(issue #55)、GET
 	// /api/thumbnails/rebuild/status から並行に読み取られる。
 	rebuildProgress rebuildProgress
+
+	// jobCtx / jobCancel / jobsWG はバックグラウンドジョブ(起動時スキャン・
+	// サムネイル一括再生成)のライフサイクル管理用(issue #83)。シャットダウン時に
+	// CancelJobs で中断を通知し、WaitJobs で終了を待ってから DB を閉じられるようにする。
+	jobCtx    context.Context
+	jobCancel context.CancelFunc
+	jobsWG    sync.WaitGroup
 }
 
 // rebuildStatusSnapshot は進捗のスナップショット。POST /api/thumbnails/rebuild(202)
@@ -96,7 +105,39 @@ func (p *rebuildProgress) finish() {
 
 // New は Server を生成する。
 func New(db *sql.DB, cfg *config.Config) *Server {
-	return &Server{db: db, cfg: cfg}
+	jobCtx, jobCancel := context.WithCancel(context.Background())
+	return &Server{db: db, cfg: cfg, jobCtx: jobCtx, jobCancel: jobCancel}
+}
+
+// startJob は fn をバックグラウンドジョブとして jobsWG に登録して goroutine で実行する。
+// WaitJobs との競合を避けるため、Add は goroutine の外(呼び出し元 goroutine)で行う。
+func (s *Server) startJob(fn func()) {
+	s.jobsWG.Add(1)
+	go func() {
+		defer s.jobsWG.Done()
+		fn()
+	}()
+}
+
+// CancelJobs は実行中のバックグラウンドジョブへ中断を通知する(終了は待たない)。
+func (s *Server) CancelJobs() {
+	s.jobCancel()
+}
+
+// WaitJobs はバックグラウンドジョブの終了を ctx の期限まで待つ。
+// 期限内に終わらなければ ctx.Err() を包んだエラーを返す。
+func (s *Server) WaitJobs(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		s.jobsWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("バックグラウンドジョブの終了待機がタイムアウトしました: %w", ctx.Err())
+	}
 }
 
 // Router は chi.Router を構築して返す。
