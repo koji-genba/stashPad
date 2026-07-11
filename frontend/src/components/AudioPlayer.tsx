@@ -198,12 +198,13 @@ export default function AudioPlayer() {
         ref={audioRef}
         onTimeUpdate={(e) => {
           const el = e.currentTarget;
-          usePlayerStore.getState().setCurrentTime(el.currentTime);
           // el.src の一致確認: トラック切替の再レンダー後・load effect 前に旧トラックの
-          // timeupdate が割り込むと、旧位置が新トラックのキーで保存されてしまうのを防ぐ
-          if (track && src && el.src === absoluteUrl(src)) {
-            recordProgress(track.workId, track.path, el.currentTime, el.duration);
-          }
+          // timeupdate が割り込むと、setCurrentTime がシークバーを一瞬古い位置に巻き戻したり、
+          // 旧位置が新トラックのキーで保存されてしまったりするのを防ぐ(issue #85)。
+          // setCurrentTime と recordProgress の両方を同じガード下に置く。
+          if (!(track && src && el.src === absoluteUrl(src))) return;
+          usePlayerStore.getState().setCurrentTime(el.currentTime);
+          recordProgress(track.workId, track.path, el.currentTime, el.duration);
         }}
         onLoadedMetadata={(e) => {
           const el = e.currentTarget;

@@ -212,8 +212,20 @@ export default function WorksListPage() {
 
   useBodyScrollLock(drawerOpen);
 
+  // #85: 300ms デバウンスで既に URL 反映済みの検索語に対する Enter で、
+  // 同一 URL への push が history に積まれてしまうのを防ぐ。
+  // 変更後の URLSearchParams を組み立てて現在の params と比較し、同一なら
+  // push せずスクロールのみ行う。異なる場合は従来どおり update(push) する。
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    const next = new URLSearchParams(params);
+    if (qInput) next.set('q', qInput);
+    else next.delete('q');
+    next.delete('page');
+    if (next.toString() === params.toString()) {
+      window.scrollTo(0, 0);
+      return;
+    }
     update((p) => {
       if (qInput) p.set('q', qInput);
       else p.delete('q');
