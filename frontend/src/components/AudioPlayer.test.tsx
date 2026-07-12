@@ -247,6 +247,37 @@ describe('AudioPlayer 続きから再生(playbackMemory 連携)', () => {
   });
 });
 
+describe('AudioPlayer トラック切替直後の timeupdate レース対策 (issue #85)', () => {
+  beforeEach(setupPlayingState);
+
+  it('el.src が現在トラックと異なる場合、timeupdate が来ても store.currentTime は更新されない', () => {
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+
+    // トラック切替の再レンダー後・load effect 前を模して、旧トラックの src のままにする
+    Object.defineProperty(audio, 'src', {
+      value: 'http://localhost/old-track.mp3',
+      configurable: true,
+    });
+    Object.defineProperty(audio, 'currentTime', { value: 999, configurable: true, writable: true });
+
+    fireEvent.timeUpdate(audio);
+
+    expect(usePlayerStore.getState().currentTime).toBe(30); // setupPlayingState の初期値のまま
+  });
+
+  it('el.src が現在トラックと一致する場合、timeupdate で store.currentTime が更新される', () => {
+    const { container } = renderPlayer();
+    const audio = container.querySelector('audio')!;
+
+    Object.defineProperty(audio, 'currentTime', { value: 55, configurable: true, writable: true });
+
+    fireEvent.timeUpdate(audio);
+
+    expect(usePlayerStore.getState().currentTime).toBe(55);
+  });
+});
+
 describe('AudioPlayer Media Session', () => {
   // jsdom は navigator.mediaSession / MediaMetadata を実装していないため、
   // このブロックでのみ最小限のモックを差し込む(他ブロックには影響させない)

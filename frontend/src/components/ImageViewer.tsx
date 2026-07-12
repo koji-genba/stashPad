@@ -4,7 +4,7 @@
 // index+1〜+3 の 3 枚を先読みプリロードする。
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
-import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from 'react-zoom-pan-pinch';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { fileUrl } from '@/api/client';
 import { useOverlayStore } from '@/store/overlayStore';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
@@ -34,14 +34,17 @@ export default function ImageViewer() {
 
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
-  const transformRef = useRef<ReactZoomPanPinchRef>(null);
   const [zoomed, setZoomed] = useState(false);
 
   const index = image?.index ?? -1;
 
-  // ページ切替時に transform をリセットし、常に等倍から始める
+  // ページ切替時にズーム状態を等倍に戻す。transform 自体のリセットは
+  // <TransformWrapper key={idx}> によるページごとの再マウントに任せる
+  // (resetTransform(0) だと前ページのズーム状態が新ページに1フレーム
+  // 適用されてしまうちらつきが issue #85 で報告されたため)。
+  // 再マウントでは onTransformed が発火せず親の zoomed が古いままになるので、
+  // この setState は引き続き必要。
   useEffect(() => {
-    transformRef.current?.resetTransform(0);
     // ページ切替時にズーム状態も等倍に戻す意図的な setState
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setZoomed(false);
@@ -100,8 +103,13 @@ export default function ImageViewer() {
         </button>
       </div>
 
+      {/*
+        key={idx} でページごとに TransformWrapper を再マウントする。プリロード用 img は
+        TransformWrapper の外にあるため影響を受けず、新ページの img はプリロード済み
+        キャッシュから即表示されるため、再マウントしても表示上の遅延は生じない。
+      */}
       <TransformWrapper
-        ref={transformRef}
+        key={idx}
         minScale={1}
         maxScale={5}
         limitToBounds

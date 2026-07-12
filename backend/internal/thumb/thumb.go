@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -26,6 +27,35 @@ import (
 // 20000x20000 の PNG のような decompression bomb が worker pool で同時に複数枚展開されると
 // OOM でコンテナが落ちるリスクがあるため、デコード前にヘッダ情報だけで足切りする(#69)。
 const defaultMaxPixels = 100_000_000 // 100MP(例: 10000x10000)
+
+// decodeConcurrency は numCPU から同時デコード許容数を決める(#82)。
+// numCPU が 1 or 2 ならそのまま、3 以上なら 2 に丸める。numCPU < 1 は不正値として 1 を返す。
+func decodeConcurrency(numCPU int) int {
+	if numCPU < 1 {
+		return 1
+	}
+	if numCPU <= 2 {
+		return numCPU
+	}
+	return 2
+}
+
+// decodeSlots は image.Decode(全ピクセル展開)〜縮小の区間を同時に実行できる数を
+// 制限するパッケージレベルのセマフォ(#82)。
+//
+// decompression bomb ガード(maxPixels、defaultMaxPixels 参照)はデコード前に単発の
+// 即死(20000x20000 のような極端な画像)を防ぐだけで、scanner のフォルダ走査や
+// 一括再生成ジョブは NumCPU 個の worker が並列で Generator.Refresh を呼ぶため、
+// 上限内の画像であっても NumCPU × 最大 100MP 分のデコード済みピクセルバッファが
+// 同時にメモリ上へ積み上がり得る(例: NumCPU=8 なら最悪 8 × 約400MB)。
+// Generator は scanner / 一括再生成 / 単発リフレッシュのそれぞれの経路で都度
+// thumb.New() されるインスタンスなので、インスタンス変数のセマフォではプロセス全体の
+// 同時デコード数を抑えられない。そのためパッケージレベルの変数として持つ。
+var decodeSlots = make(chan struct{}, decodeConcurrency(runtime.NumCPU()))
+
+// decodeImageFunc は image.Decode の差し替え可能な参照。テストから同時実行数の
+// 計測用ラッパーを注入するために使う(readDirFunc と同じ流儀)。
+var decodeImageFunc = image.Decode
 
 // priorityPattern はサムネイル優先ファイル名のパターン(大文字小文字無視)。
 // thumbnail.* の特別ルールより低い優先度として使う。
@@ -310,12 +340,10 @@ func (g *Generator) generateThumbnail(src, dst string) error {
 		return fmt.Errorf("ソース画像シーク失敗: %w", err)
 	}
 
-	img, _, err := image.Decode(f)
+	resized, err := decodeAndResize(f, 512)
 	if err != nil {
-		return fmt.Errorf("画像デコード失敗: %w", err)
+		return err
 	}
-
-	resized := resizeLongEdge(img, 512)
 
 	// 出力先ディレクトリ({DataDir}/thumbs)が無ければ作成する。
 	// main.go の起動時 MkdirAll に依存せず、生成経路自身で保証する
@@ -333,6 +361,21 @@ func (g *Generator) generateThumbnail(src, dst string) error {
 		return fmt.Errorf("JPEG エンコード失敗: %w", err)
 	}
 	return nil
+}
+
+// decodeAndResize はセマフォ(decodeSlots)を取得してから src をデコードし、
+// 長辺 maxEdge に縮小して返す。巨大な展開済み画像がこの関数のスコープを出ないため、
+// 戻った時点で GC 回収可能になる(#82)。
+func decodeAndResize(r io.Reader, maxEdge int) (image.Image, error) {
+	decodeSlots <- struct{}{}
+	defer func() { <-decodeSlots }()
+
+	img, _, err := decodeImageFunc(r)
+	if err != nil {
+		return nil, fmt.Errorf("画像デコード失敗: %w", err)
+	}
+
+	return resizeLongEdge(img, maxEdge), nil
 }
 
 // resizeLongEdge は img を長辺が maxEdge になるようにアスペクト比を保って縮小する。

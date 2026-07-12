@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"mime"
@@ -797,6 +799,16 @@ type rebuildWorkEntry struct {
 	rootPath string
 }
 
+// thumbRefresher は一括再生成ジョブが使う最小インターフェース(*thumb.Generator が満たす)。
+type thumbRefresher interface {
+	Refresh(workID int64, rootPath string) (regenerated bool, outPath string, candidateFound bool, err error)
+}
+
+// newThumbRefresher は一括再生成ジョブのサムネイル生成器のコンストラクタ。
+// テストから「Refresh が指示するまでブロックする偽物」を注入して、ジョブ実行中の
+// 並行書き込み(plays/PATCH が 500 にならないこと)を決定的に検証するための差し替え点(issue #85)。
+var newThumbRefresher = func(thumbsDir string) thumbRefresher { return thumb.New(thumbsDir) }
+
 // handleRebuildThumbnails は POST /api/thumbnails/rebuild を処理する。
 // root_path がある全作品に対して mtime 判定付きサムネイル再生成を worker pool で並列実行する。
 // scanMu を TryLock できない場合(スキャンや別の一括再生成と競合)は 409 を返す。
@@ -842,7 +854,8 @@ func (s *Server) handleRebuildThumbnails(w http.ResponseWriter, r *http.Request)
 
 	// worker pool 実行と DB 更新はリクエスト goroutine をブロックしないよう別 goroutine に
 	// 委譲する。scanMu の解放と進捗の終了処理は runRebuildThumbnailsJob 側の defer で行う。
-	go s.runRebuildThumbnailsJob(works)
+	// startJob 経由にすることでシャットダウン時に CancelJobs/WaitJobs で安全に畳める(issue #83)。
+	s.startJob(func() { s.runRebuildThumbnailsJob(works) })
 
 	respondJSON(w, http.StatusAccepted, s.rebuildProgress.snapshot())
 }
@@ -862,7 +875,7 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 	defer s.rebuildProgress.finish()
 
 	thumbsDir := filepath.Join(s.cfg.DataDir, "thumbs")
-	gen := thumb.New(thumbsDir)
+	gen := newThumbRefresher(thumbsDir)
 
 	type result struct {
 		id          int64
@@ -884,6 +897,13 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 	for i := 0; i < numWorkers; i++ {
 		go func() {
 			for we := range jobs {
+				// jobCtx がキャンセル済み(シャットダウン)なら Refresh(ファイル IO)を
+				// 呼ばずに中断エラーを結果として送る。ドレインループは for range works
+				// で全件受信する設計のため、結果は必ず送る必要がある(issue #83)。
+				if s.jobCtx.Err() != nil {
+					results <- result{id: we.id, err: s.jobCtx.Err()}
+					continue
+				}
 				regen, outPath, found, err := gen.Refresh(we.id, we.rootPath)
 				results <- result{id: we.id, outPath: outPath, regenerated: regen, found: found, err: err}
 			}
@@ -908,10 +928,19 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 	}
 	var toUpdate []update
 	var toClear []int64
+	// interrupted はシャットダウン(jobCtx キャンセル)による中断結果が
+	// 1件でもあったかどうか。中断結果は N 件分ログすると大量のログスパムになるため、
+	// ループ後に 1 回だけまとめてログする(issue #83)。
+	var interrupted bool
 
 	for range works {
 		res := <-results
 		if res.err != nil {
+			if errors.Is(res.err, context.Canceled) {
+				interrupted = true
+				s.rebuildProgress.addChecked(1)
+				continue
+			}
 			// ログには出力するが全体は継続
 			log.Printf("サムネイル再生成失敗 work_id=%d: %v", res.id, res.err)
 			s.rebuildProgress.addChecked(1)
@@ -925,6 +954,11 @@ func (s *Server) runRebuildThumbnailsJob(works []rebuildWorkEntry) {
 		s.rebuildProgress.addChecked(1)
 	}
 
+	if interrupted {
+		log.Printf("サムネイル一括再生成を中断しました(シャットダウン)")
+	}
+
+	// 収集済みの toUpdate/toClear(処理済み分)は中断時も従来どおり DB へコミットする。
 	if len(toUpdate) == 0 && len(toClear) == 0 {
 		return
 	}

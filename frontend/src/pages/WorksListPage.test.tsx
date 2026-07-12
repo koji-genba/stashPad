@@ -2,7 +2,7 @@
 // フィルタドロワー開閉時の body スクロールロック動作を検証する。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { MemoryRouter, useNavigationType, useSearchParams } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigationType, useSearchParams } from 'react-router-dom';
 
 // API クライアントをモック化
 vi.mock('@/api/client', () => ({
@@ -57,11 +57,14 @@ const PAGINATED_RESPONSE = {
 function renderPage(initialUrl = '/') {
   let currentParams = new URLSearchParams();
   let currentNavType = '';
+  let currentLocationKey = '';
   function Probe() {
     const [p] = useSearchParams();
     const navType = useNavigationType();
+    const location = useLocation();
     currentParams = p;
     currentNavType = navType;
+    currentLocationKey = location.key;
     return null;
   }
   const utils = render(
@@ -70,7 +73,12 @@ function renderPage(initialUrl = '/') {
       <Probe />
     </MemoryRouter>,
   );
-  return { ...utils, getParams: () => currentParams, getNavType: () => currentNavType };
+  return {
+    ...utils,
+    getParams: () => currentParams,
+    getNavType: () => currentNavType,
+    getLocationKey: () => currentLocationKey,
+  };
 }
 
 describe('WorksListPage body スクロールロック', () => {
@@ -687,6 +695,79 @@ describe('デバウンス由来の history 汚染防止 (#58)', () => {
     });
 
     expect(getNavType()).toBe('PUSH');
+  });
+});
+
+describe('デバウンス確定後の Enter で重複 push しない (issue #85)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    vi.mocked(fetchWorks).mockResolvedValue({ items: [], total: 0, limit: 40, page: 1 });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('q が URL に反映済みの状態で入力を変えずに Enter しても history が積まれない', async () => {
+    // デバウンスを経て q=foo が URL に反映済みの状態を作る
+    const { getNavType, getLocationKey } = renderPage('/?q=foo');
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const input = screen.getByRole('searchbox');
+    expect(input).toHaveValue('foo');
+
+    const keyBeforeSubmit = getLocationKey();
+    const form = input.closest('form')!;
+    fireEvent.submit(form);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // push されていれば location.key が変わるはずだが、変わっていないことを確認する
+    expect(getLocationKey()).toBe(keyBeforeSubmit);
+    expect(getNavType()).not.toBe('PUSH');
+  });
+
+  it('q が変更されている状態で Enter すると history が積まれる(push される)', async () => {
+    const { getNavType, getLocationKey } = renderPage('/?q=foo');
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const input = screen.getByRole('searchbox');
+    fireEvent.change(input, { target: { value: 'bar' } });
+    // デバウンスが先に発火しないよう、確定前にタイマーは進めない
+
+    const keyBeforeSubmit = getLocationKey();
+    const form = input.closest('form')!;
+    fireEvent.submit(form);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(getLocationKey()).not.toBe(keyBeforeSubmit);
+    expect(getNavType()).toBe('PUSH');
+  });
+
+  it('q が URL に反映済みの状態で Enter しても window.scrollTo(0, 0) は呼ばれる', async () => {
+    const { getParams } = renderPage('/?q=foo');
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(getParams().get('q')).toBe('foo');
+
+    const input = screen.getByRole('searchbox');
+    const form = input.closest('form')!;
+    fireEvent.submit(form);
+
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
   });
 });
 

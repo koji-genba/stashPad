@@ -46,4 +46,12 @@ describe('parseSearchTerms', () => {
   it('前後の余分な空白のみの入力は空配列を返す', () => {
     expect(parseSearchTerms('   ')).toEqual({ include: [], exclude: [] });
   });
+
+  it('U+0085(NEL)で分割する(Go の unicode.IsSpace に合わせる)', () => {
+    expect(parseSearchTerms('foo\u0085bar')).toEqual({ include: ['foo', 'bar'], exclude: [] });
+  });
+
+  it('U+FEFF(BOM/ZWNBSP)では分割しない(語の一部として残る)', () => {
+    expect(parseSearchTerms('foo\ufeffbar')).toEqual({ include: ['foo\ufeffbar'], exclude: [] });
+  });
 });
