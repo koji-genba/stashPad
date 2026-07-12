@@ -10,6 +10,17 @@ import { joinPath } from '@/utils/format';
 /** 再生速度の選択肢。AudioPlayer / FullscreenPlayer で共用 */
 export const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 
+/** スリープタイマーの「N 分後」プリセット(分)。FullscreenPlayer のボタンに使う */
+export const SLEEP_PRESETS_MIN = [15, 30, 60] as const;
+
+/**
+ * スリープタイマーの状態。
+ * - 'off': 未設定
+ * - 'duration': N 分後に停止(期限は sleepEndsAt に絶対時刻で保持)
+ * - 'endOfTrack': 現在トラックの終端で停止(次トラックへ自動前進しない)
+ */
+export type SleepMode = 'off' | 'duration' | 'endOfTrack';
+
 export interface QueueTrack {
   /** キュー内アイテムの一意 ID(重複追加・並び替えに耐える React key / ドラッグ識別用) */
   uid: number;
@@ -34,6 +45,15 @@ interface PlayerState {
   volume: number;
   /** 次に採番する uid。トラックを積むたびに割り当てて加算する(キュー置換をまたいでもリセットしない) */
   nextUid: number;
+
+  /** スリープタイマーのモード(未設定 / N 分後 / トラック終端) */
+  sleepMode: SleepMode;
+  /**
+   * 'duration' モードの停止期限を**絶対時刻(epoch ms)**で保持する。
+   * 残り秒数のカウントダウンではなく絶対時刻にすることで、タブ非アクティブや
+   * setInterval のスロットリングで発火が遅れても期限判定がずれない。'duration' 以外では null。
+   */
+  sleepEndsAt: number | null;
 
   /** ディレクトリの entries から audio キューを構築し、指定ファイルから再生開始 */
   startFromEntries: (
@@ -73,6 +93,18 @@ interface PlayerState {
   /** 音量を [0, 1] にクランプして設定 */
   setVolume: (v: number) => void;
 
+  /** スリープタイマー「N 分後に停止」を設定(期限は絶対時刻で保持) */
+  setSleepAfter: (minutes: number) => void;
+  /** スリープタイマー「このトラックの終わりで停止」を設定 */
+  setSleepEndOfTrack: () => void;
+  /** スリープタイマーを解除して未設定に戻す */
+  clearSleepTimer: () => void;
+  /**
+   * 'duration' モードの期限到達を判定し、到達していれば一時停止してタイマーを解除する。
+   * AudioPlayer が一定間隔で呼ぶ。絶対時刻比較なので呼び出しが遅れても正しく発火する。
+   */
+  tickSleepTimer: () => void;
+
   // ---- 以下は AudioPlayer コンポーネントが <audio> を操作するための命令キュー ----
   // 数値を増やすことで「シーク/レート反映/ロードして再生」を要求する。
   seekRequest: { time: number; nonce: number } | null;
@@ -100,6 +132,8 @@ export const usePlayerStore = create<PlayerState>()(
   playbackRate: 1,
   volume: 1,
   nextUid: 1,
+  sleepMode: 'off',
+  sleepEndsAt: null,
   seekRequest: null,
   loadNonce: 0,
 
@@ -264,12 +298,37 @@ export const usePlayerStore = create<PlayerState>()(
   setVolume: (v) => set({ volume: Math.max(0, Math.min(1, v)) }),
 
   handleEnded: () => {
-    const { index, queue } = get();
+    const { index, queue, sleepMode } = get();
+    if (sleepMode === 'endOfTrack') {
+      // スリープタイマー(トラック終端): 次へ自動前進せず停止。キュー・index は保持
+      set({ isPlaying: false, sleepMode: 'off', sleepEndsAt: null });
+      return;
+    }
     if (index + 1 < queue.length) {
       get().playIndex(index + 1); // 自動送りでも履歴記録
     } else {
       set({ isPlaying: false });
     }
+  },
+
+  setSleepAfter: (minutes) => {
+    set({ sleepMode: 'duration', sleepEndsAt: Date.now() + minutes * 60_000 });
+  },
+
+  setSleepEndOfTrack: () => {
+    set({ sleepMode: 'endOfTrack', sleepEndsAt: null });
+  },
+
+  clearSleepTimer: () => {
+    set({ sleepMode: 'off', sleepEndsAt: null });
+  },
+
+  tickSleepTimer: () => {
+    const { sleepMode, sleepEndsAt } = get();
+    if (sleepMode !== 'duration' || sleepEndsAt === null) return;
+    if (Date.now() < sleepEndsAt) return;
+    // 期限到達: 一時停止(キュー・再生位置は保持)しタイマーを解除
+    set({ isPlaying: false, sleepMode: 'off', sleepEndsAt: null });
   },
     }),
     {

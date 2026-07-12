@@ -1,7 +1,7 @@
 // playerStore の状態遷移テスト。
 // zustand ストアはモジュールレベルでシングルトンなので、
 // 各テスト前に setState で初期状態にリセットする。
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // recordPlay / thumbnailUrl / fileUrl をモック化し、副作用を切り離す
 vi.mock('@/api/client', () => ({
@@ -30,6 +30,8 @@ const initialState = {
   loadNonce: 0,
   volume: 1,
   nextUid: 1,
+  sleepMode: 'off' as const,
+  sleepEndsAt: null,
 };
 
 function resetStore() {
@@ -56,6 +58,8 @@ describe('playerStore 初期状態', () => {
     expect(s.seekRequest).toBeNull();
     expect(s.loadNonce).toBe(0);
     expect(s.nextUid).toBe(1);
+    expect(s.sleepMode).toBe('off');
+    expect(s.sleepEndsAt).toBeNull();
   });
 });
 
@@ -784,6 +788,143 @@ describe('handleEnded', () => {
     usePlayerStore.getState().handleEnded();
     expect(usePlayerStore.getState().index).toBe(1); // 変化なし
     expect(usePlayerStore.getState().isPlaying).toBe(false);
+  });
+});
+
+// スリープタイマー(issue #105)。Date.now() を固定するため vi.useFakeTimers を使う
+describe('スリープタイマー', () => {
+  beforeEach(() => {
+    resetStore();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-12T22:00:00Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  describe('setSleepAfter(N 分後に停止)', () => {
+    it('sleepMode=duration になり sleepEndsAt が「現在時刻 + N 分」の絶対時刻で保持される', () => {
+      usePlayerStore.getState().setSleepAfter(30);
+      const s = usePlayerStore.getState();
+      expect(s.sleepMode).toBe('duration');
+      expect(s.sleepEndsAt).toBe(Date.now() + 30 * 60_000);
+    });
+
+    it('期限前に tickSleepTimer を呼んでも再生は止まらずタイマーも維持される', () => {
+      usePlayerStore.setState({ isPlaying: true });
+      usePlayerStore.getState().setSleepAfter(15);
+      vi.advanceTimersByTime(14 * 60_000); // 期限の 1 分前
+      usePlayerStore.getState().tickSleepTimer();
+      const s = usePlayerStore.getState();
+      expect(s.isPlaying).toBe(true);
+      expect(s.sleepMode).toBe('duration');
+    });
+
+    it('期限到達後の tickSleepTimer で一時停止し、タイマーが解除される', () => {
+      usePlayerStore.setState({ isPlaying: true });
+      usePlayerStore.getState().setSleepAfter(15);
+      vi.advanceTimersByTime(15 * 60_000); // 期限ちょうど
+      usePlayerStore.getState().tickSleepTimer();
+      const s = usePlayerStore.getState();
+      expect(s.isPlaying).toBe(false);
+      expect(s.sleepMode).toBe('off');
+      expect(s.sleepEndsAt).toBeNull();
+    });
+
+    it('停止しても queue と index は保持される(pause であって clear ではない)', () => {
+      usePlayerStore.setState({
+        queue: [
+          { uid: 1, workId: 1, workTitle: 'テスト', name: 'a.mp3', path: 'a.mp3' },
+          { uid: 2, workId: 1, workTitle: 'テスト', name: 'b.mp3', path: 'b.mp3' },
+        ],
+        index: 1,
+        isPlaying: true,
+        currentTime: 42,
+      });
+      usePlayerStore.getState().setSleepAfter(15);
+      vi.advanceTimersByTime(15 * 60_000);
+      usePlayerStore.getState().tickSleepTimer();
+      const s = usePlayerStore.getState();
+      expect(s.isPlaying).toBe(false);
+      expect(s.queue).toHaveLength(2);
+      expect(s.index).toBe(1);
+      expect(s.currentTime).toBe(42); // 再生位置は保持
+    });
+
+    it('絶対時刻保持: 期限を大きく過ぎてから 1 回だけ tick しても停止する(スロットリング耐性)', () => {
+      usePlayerStore.setState({ isPlaying: true });
+      usePlayerStore.getState().setSleepAfter(15);
+      // タブ非アクティブで interval が発火せず、20 分後に 1 回だけ発火した状況
+      vi.advanceTimersByTime(20 * 60_000);
+      usePlayerStore.getState().tickSleepTimer();
+      expect(usePlayerStore.getState().isPlaying).toBe(false);
+    });
+  });
+
+  describe('setSleepEndOfTrack(このトラックの終わりで停止)', () => {
+    it('sleepMode=endOfTrack になり sleepEndsAt は null', () => {
+      usePlayerStore.getState().setSleepEndOfTrack();
+      const s = usePlayerStore.getState();
+      expect(s.sleepMode).toBe('endOfTrack');
+      expect(s.sleepEndsAt).toBeNull();
+    });
+
+    it('handleEnded で次トラックがあっても前進せず停止し、タイマーが解除される', () => {
+      usePlayerStore.setState({
+        queue: [
+          { uid: 1, workId: 1, workTitle: 'テスト', name: 'a.mp3', path: 'a.mp3' },
+          { uid: 2, workId: 1, workTitle: 'テスト', name: 'b.mp3', path: 'b.mp3' },
+        ],
+        index: 0,
+        isPlaying: true,
+      });
+      usePlayerStore.getState().setSleepEndOfTrack();
+      usePlayerStore.getState().handleEnded();
+      const s = usePlayerStore.getState();
+      expect(s.index).toBe(0); // 前進しない
+      expect(s.isPlaying).toBe(false);
+      expect(s.sleepMode).toBe('off');
+    });
+
+    it('endOfTrack 未設定(off)なら handleEnded は従来どおり次トラックへ進む(回帰確認)', () => {
+      usePlayerStore.setState({
+        queue: [
+          { uid: 1, workId: 1, workTitle: 'テスト', name: 'a.mp3', path: 'a.mp3' },
+          { uid: 2, workId: 1, workTitle: 'テスト', name: 'b.mp3', path: 'b.mp3' },
+        ],
+        index: 0,
+        isPlaying: true,
+      });
+      usePlayerStore.getState().handleEnded();
+      expect(usePlayerStore.getState().index).toBe(1);
+      expect(usePlayerStore.getState().isPlaying).toBe(true);
+    });
+  });
+
+  describe('clearSleepTimer / tickSleepTimer のガード', () => {
+    it('clearSleepTimer で未設定に戻る', () => {
+      usePlayerStore.getState().setSleepAfter(30);
+      usePlayerStore.getState().clearSleepTimer();
+      const s = usePlayerStore.getState();
+      expect(s.sleepMode).toBe('off');
+      expect(s.sleepEndsAt).toBeNull();
+    });
+
+    it('off のとき tickSleepTimer は何もしない', () => {
+      usePlayerStore.setState({ isPlaying: true });
+      usePlayerStore.getState().tickSleepTimer();
+      expect(usePlayerStore.getState().isPlaying).toBe(true);
+    });
+
+    it('endOfTrack のとき tickSleepTimer は時間経過で停止させない(終端イベント専用)', () => {
+      usePlayerStore.setState({ isPlaying: true });
+      usePlayerStore.getState().setSleepEndOfTrack();
+      vi.advanceTimersByTime(60 * 60_000);
+      usePlayerStore.getState().tickSleepTimer();
+      const s = usePlayerStore.getState();
+      expect(s.isPlaying).toBe(true);
+      expect(s.sleepMode).toBe('endOfTrack');
+    });
   });
 });
 
