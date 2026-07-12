@@ -27,6 +27,8 @@ const initialState = {
   loadNonce: 0,
   volume: 1,
   nextUid: 1,
+  sleepMode: 'off' as const,
+  sleepEndsAt: null,
 };
 
 function resetStore() {
@@ -372,6 +374,51 @@ describe('FullscreenPlayer スワイプ操作', () => {
       changedTouches: [{ clientX: 100, clientY: 90 }], // dy=40(60px 未満)
     });
     expect(playerVisible()).toBe(true);
+  });
+});
+
+describe('FullscreenPlayer スリープタイマー', () => {
+  beforeEach(() => {
+    resetStore();
+    setupPlayingState();
+  });
+  afterEach(cleanup);
+
+  it('未設定のときプリセット(15/30/60分)と「曲終わり」ボタンが表示される', () => {
+    renderPlayer();
+    expect(screen.getByRole('button', { name: '15分後に停止' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '30分後に停止' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '60分後に停止' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'このトラックの終わりで停止' }),
+    ).toBeInTheDocument();
+  });
+
+  it('プリセットをクリックすると sleepMode=duration になり残り時間が表示される', () => {
+    renderPlayer();
+    fireEvent.click(screen.getByRole('button', { name: '30分後に停止' }));
+    expect(usePlayerStore.getState().sleepMode).toBe('duration');
+    expect(usePlayerStore.getState().sleepEndsAt).not.toBeNull();
+    // 作動中インジケータ(status ロール)に切り替わる
+    expect(screen.getByRole('status')).toHaveTextContent('停止まで');
+  });
+
+  it('「このトラックの終わりで停止」をクリックすると endOfTrack 表示になる', () => {
+    renderPlayer();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'このトラックの終わりで停止' }),
+    );
+    expect(usePlayerStore.getState().sleepMode).toBe('endOfTrack');
+    expect(screen.getByRole('status')).toHaveTextContent('このトラックの終わりで停止');
+  });
+
+  it('作動中に「解除」を押すと未設定に戻る', () => {
+    usePlayerStore.setState({ sleepMode: 'endOfTrack', sleepEndsAt: null });
+    renderPlayer();
+    fireEvent.click(screen.getByRole('button', { name: 'スリープタイマーを解除' }));
+    expect(usePlayerStore.getState().sleepMode).toBe('off');
+    // 解除後はプリセットボタンが再表示される
+    expect(screen.getByRole('button', { name: '15分後に停止' })).toBeInTheDocument();
   });
 });
 

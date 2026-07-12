@@ -3,13 +3,14 @@
 // 全画面オーバーレイ。表示状態は history(location.state)が持ち、Android の
 // 「戻る」やスワイプ・Escape で 1 段ずつ閉じる。
 // 大きなアートワーク・トランスポート・スキップ・速度/音量スライダーを持つ。
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from 'zustand';
 import {
   currentTrack,
   PLAYBACK_RATES,
   playerThumbUrl,
+  SLEEP_PRESETS_MIN,
   usePlayerStore,
 } from '@/store/playerStore';
 import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
@@ -30,7 +31,24 @@ export default function FullscreenPlayer() {
   const duration = useStore(usePlayerStore, (s) => s.duration);
   const playbackRate = useStore(usePlayerStore, (s) => s.playbackRate);
   const volume = useStore(usePlayerStore, (s) => s.volume);
+  const sleepMode = useStore(usePlayerStore, (s) => s.sleepMode);
+  const sleepEndsAt = useStore(usePlayerStore, (s) => s.sleepEndsAt);
   const track = useStore(usePlayerStore, currentTrack);
+
+  // スリープタイマー「N 分後」の残り時間表示を毎秒更新する。
+  // 現在時刻を state に持ち、有効化直後(seed)と毎秒(interval)で更新する。
+  // 実際の停止判定は AudioPlayer 側(絶対時刻)が担い、ここは表示だけを持つ。
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!overlay.playerOpen || sleepMode !== 'duration') return;
+    const tick = () => setNow(Date.now());
+    const seed = setTimeout(tick, 0); // 有効化直後に現在時刻へ追いつく
+    const id = setInterval(tick, 1000);
+    return () => {
+      clearTimeout(seed);
+      clearInterval(id);
+    };
+  }, [overlay.playerOpen, sleepMode]);
 
   // Escape キーで 1 段閉じる(キュー画面 → プレイヤー → ミニプレイヤーの順)
   useEffect(() => {
@@ -73,6 +91,9 @@ export default function FullscreenPlayer() {
   const thumbUrl = playerThumbUrl(track);
   // シークバーの進捗表示用パーセント
   const progressPct = duration ? (currentTime / duration) * 100 : 0;
+  // スリープタイマー「N 分後」の残り秒数(絶対時刻 - 現在時刻)。0 未満にはしない
+  const sleepRemainingSec =
+    sleepEndsAt !== null ? Math.max(0, (sleepEndsAt - now) / 1000) : 0;
 
   const onSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     store.seekTo(Number(e.target.value));
@@ -278,6 +299,53 @@ export default function FullscreenPlayer() {
             aria-label="音量"
           />
         </label>
+      </div>
+
+      {/* スリープタイマー(N 分後 / このトラックの終わりで停止) */}
+      <div className={styles.sleepRow}>
+        {sleepMode === 'off' ? (
+          <>
+            <span className={styles.sleepLabel} aria-hidden>
+              💤
+            </span>
+            {SLEEP_PRESETS_MIN.map((min) => (
+              <button
+                key={min}
+                type="button"
+                className={styles.sleepBtn}
+                onClick={() => store.setSleepAfter(min)}
+                aria-label={`${min}分後に停止`}
+              >
+                {min}分
+              </button>
+            ))}
+            <button
+              type="button"
+              className={styles.sleepBtn}
+              onClick={() => store.setSleepEndOfTrack()}
+              aria-label="このトラックの終わりで停止"
+            >
+              曲終わり
+            </button>
+          </>
+        ) : (
+          <>
+            <span className={styles.sleepActive} role="status" aria-live="polite">
+              💤{' '}
+              {sleepMode === 'duration'
+                ? `停止まで ${formatTime(sleepRemainingSec)}`
+                : 'このトラックの終わりで停止'}
+            </span>
+            <button
+              type="button"
+              className={styles.sleepCancelBtn}
+              onClick={() => store.clearSleepTimer()}
+              aria-label="スリープタイマーを解除"
+            >
+              解除
+            </button>
+          </>
+        )}
       </div>
 
       {/* キュー画面を開く */}

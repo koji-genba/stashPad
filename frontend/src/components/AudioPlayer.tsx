@@ -44,6 +44,7 @@ export default function AudioPlayer() {
   const volume = useStore(usePlayerStore, (s) => s.volume);
   const loadNonce = useStore(usePlayerStore, (s) => s.loadNonce);
   const seekRequest = useStore(usePlayerStore, (s) => s.seekRequest);
+  const sleepMode = useStore(usePlayerStore, (s) => s.sleepMode);
   const src = useStore(usePlayerStore, currentSrc);
   const track = useStore(usePlayerStore, currentTrack);
 
@@ -163,6 +164,15 @@ export default function AudioPlayer() {
       position: Math.min(currentTime, duration),
     });
   }, [duration, playbackRate, currentTime]);
+
+  // ---- スリープタイマー(N 分後に停止): 期限を毎秒チェックする ----
+  // 期限は絶対時刻(sleepEndsAt)なので、タブ非アクティブで interval が遅れても
+  // 発火時に一度チェックすれば正しく停止する。'duration' のときだけ interval を張る。
+  useEffect(() => {
+    if (sleepMode !== 'duration') return;
+    const id = setInterval(() => usePlayerStore.getState().tickSleepTimer(), 1000);
+    return () => clearInterval(id);
+  }, [sleepMode]);
 
   // キューが空になったら、オーバーレイ用に積んだ history エントリを巻き戻す
   // (再生キュー全削除など。畳み忘れると「戻る」が見かけ上の無反応になる)

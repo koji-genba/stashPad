@@ -263,14 +263,69 @@
   accent-color: var(--accent);
 }
 
+/* ─── スリープタイマー ─── */
+.sleepRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 16px 4px;
+  flex-shrink: 0;
+  /* 余った縦スペースを上に寄せ、スリープ行とキュー行を画面下端へ寄せる */
+  margin-top: auto;
+}
+
+.sleepLabel {
+  font-size: 13px;
+}
+
+.sleepBtn {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  min-width: 44px;
+  height: 32px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sleepBtn:hover {
+  background: var(--bg-hover);
+}
+
+/* 作動中インジケータ(残り時間 / トラック終端) */
+.sleepActive {
+  font-size: 13px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.sleepCancelBtn {
+  background: none;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font-size: 12px;
+  height: 32px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sleepCancelBtn:hover {
+  background: var(--bg-hover);
+}
+
 /* ─── キュー画面を開くボタン ─── */
 .queueBtnRow {
   display: flex;
   justify-content: center;
   padding: 4px 16px calc(env(safe-area-inset-bottom) + 12px);
   flex-shrink: 0;
-  /* 余った縦スペースを上に寄せ、ボタンを画面下端へ */
-  margin-top: auto;
 }
 
 .queueOpenBtn {
