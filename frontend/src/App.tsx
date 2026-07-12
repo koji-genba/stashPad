@@ -1,4 +1,4 @@
-import { NavLink, Route, Routes } from 'react-router-dom';
+import { NavLink, Route, Routes } from 'react-router';
 import { useStore } from 'zustand';
 import WorksListPage from './pages/WorksListPage';
 import WorkDetailPage from './pages/WorkDetailPage';

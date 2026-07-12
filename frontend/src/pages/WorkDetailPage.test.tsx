@@ -3,7 +3,7 @@
 // および正常 ID では詳細が表示されることを検証する(issue #56)。
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import type { WorkDetail } from '@/api/types';
 
 // API クライアントをモック化

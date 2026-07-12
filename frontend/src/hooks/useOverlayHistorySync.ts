@@ -16,7 +16,7 @@
 // よく、履歴の巻き戻しはこのフックが引き受ける。多重発火は useGuardedHistoryNav の
 // ガードで防ぐ。
 import { useEffect, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { useOverlayStore } from '@/store/overlayStore';
 import { stateOf, useGuardedHistoryNav } from './useGuardedHistoryNav';
 

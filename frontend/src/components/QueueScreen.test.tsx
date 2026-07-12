@@ -4,7 +4,7 @@
 // 「戻る」(history が 1 段戻る)でどちらのモードからもプレイヤーへ戻る。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router';
 import { usePlayerStore } from '@/store/playerStore';
 
 // API クライアントをモック化(playerStore.test.ts と同様)

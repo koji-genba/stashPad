@@ -3,7 +3,7 @@
 // 描画・操作を検証する。閉じる操作 = history が 1 段戻ること。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router';
 import { usePlayerStore } from '@/store/playerStore';
 
 // API クライアントをモック化(playerStore.test.ts と同様)

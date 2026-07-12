@@ -4,7 +4,7 @@
 // - <Overlays> が history 同期フックをマウントしている(戻るで閉じられる)
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router';
 import { useOverlayStore } from '@/store/overlayStore';
 import { __resetForTests } from '@/hooks/useBodyScrollLock';
 import { __resetForTests as __resetGuardedNavForTests } from '@/hooks/useGuardedHistoryNav';

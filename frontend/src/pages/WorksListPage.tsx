@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import type { SortKey, SortOrder, WorksResponse } from '@/api/types';
 import { fetchWorks } from '@/api/client';
 import { useTagStore, useTagNameMap } from '@/store/tagStore';

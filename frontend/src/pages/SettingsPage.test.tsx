@@ -2,7 +2,7 @@
 // メンテナンス節の「再生履歴を全削除」ボタン(confirm → API 呼び出し → 結果表示)を検証する。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import type { ThumbnailRebuildStatus } from '@/api/types';
 
 vi.mock('@/api/client', () => ({

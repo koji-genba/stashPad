@@ -2,7 +2,7 @@
 // フィルタドロワー開閉時の body スクロールロック動作を検証する。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { MemoryRouter, useLocation, useNavigationType, useSearchParams } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigationType, useSearchParams } from 'react-router';
 
 // API クライアントをモック化
 vi.mock('@/api/client', () => ({

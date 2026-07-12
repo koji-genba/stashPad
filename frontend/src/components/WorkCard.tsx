@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import Thumbnail from './Thumbnail';
 import styles from './WorkCard.module.css';
 

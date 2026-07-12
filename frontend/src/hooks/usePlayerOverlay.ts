@@ -7,7 +7,7 @@
 // history には積まない(編集モード中の「戻る」はキュー画面ごと閉じてプレイヤーに戻す要件)。
 //
 // 多重発火(Escape 連打等)の防止は useGuardedHistoryNav のモジュール共有ガードに委譲する。
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { stateOf, useGuardedHistoryNav } from './useGuardedHistoryNav';
 
 export interface PlayerOverlay {

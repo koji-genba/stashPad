@@ -2,7 +2,7 @@
 // <audio> 要素を ref で保持し、store の命令を反映する構造をテストする。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { usePlayerStore } from '@/store/playerStore';
 
 // API クライアントをモック化(FullscreenPlayer.test.tsx と同一)

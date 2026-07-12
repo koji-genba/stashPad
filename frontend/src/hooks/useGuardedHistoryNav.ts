@@ -7,7 +7,7 @@
 // 同一 history エントリ(location.key)からの push / back を 1 回だけ通す
 // モジュール共有ガードを提供する。
 import { useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 
 // 同一 history エントリからの二重 push / 二重 back 防止(全フックインスタンス共有)。
 let lastPushKey: string | null = null;

@@ -5,7 +5,7 @@
 import { StrictMode, useEffect } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router';
 import { usePlayerOverlay } from './usePlayerOverlay';
 
 // フックの状態と操作ボタンを露出するテスト用プローブ。

@@ -3,7 +3,7 @@
 // ファイルタップで media_kind に応じて プレイヤー / 画像ビューア / 動画 / テキスト を起動。
 // audio 行の「⋮」ボタンからボトムシートでキュー操作が可能。
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { useStore } from 'zustand';
 import type { EntriesResponse, Entry } from '@/api/types';
 import { fetchEntries, fileUrl } from '@/api/client';

@@ -2,7 +2,7 @@
 // 履歴行の削除ボタン(confirm → API 呼び出し → 一覧からの除去)を検証する。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 
 vi.mock('@/api/client', () => {
   const historyItems = [

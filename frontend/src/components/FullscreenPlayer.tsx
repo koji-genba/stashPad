@@ -4,7 +4,7 @@
 // 「戻る」やスワイプ・Escape で 1 段ずつ閉じる。
 // 大きなアートワーク・トランスポート・スキップ・速度/音量スライダーを持つ。
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useStore } from 'zustand';
 import {
   currentTrack,

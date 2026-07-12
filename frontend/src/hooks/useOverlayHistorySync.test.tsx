@@ -8,7 +8,7 @@
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router';
 import { useOverlayStore } from '@/store/overlayStore';
 import { __resetForTests } from './useGuardedHistoryNav';
 import { useOverlayHistorySync, MEDIA_OVERLAY_FLAG } from './useOverlayHistorySync';
