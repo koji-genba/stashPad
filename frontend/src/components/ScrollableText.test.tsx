@@ -15,6 +15,8 @@
 // - ResizeObserver のコールバックで再計測される(要素サイズ変化 = 画面回転など)
 // - アンマウントで scroll リスナと ResizeObserver.disconnect が呼ばれる
 // - title props がそのまま span の title 属性になる
+// - テキストが変わると(呼び出し側が key を付けなくても)自動的に再計測される
+// - テキストが変わるとスクロール位置が先頭に戻る(内部で要素ごと作り直される)
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import ScrollableText from './ScrollableText';
@@ -126,5 +128,38 @@ describe('ScrollableText', () => {
   it('title props がそのまま span の title 属性になる', () => {
     render(<ScrollableText title="フルネーム.mp3">表示テキスト</ScrollableText>);
     expect(screen.getByTitle('フルネーム.mp3')).toBeInTheDocument();
+  });
+});
+
+describe('ScrollableText テキスト変更時の挙動(issue #107 プレイヤーでの曲名変化対応)', () => {
+  it('テキストが変わると呼び出し側で key を付けなくても自動的に再計測される', () => {
+    // scrollWidth はテキストの長さに比例する想定のダミー実装。
+    // clientWidth は固定し、短いテキストでは収まり・長いテキストでははみ出すようにする。
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(100);
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return (this.textContent?.length ?? 0) * 20;
+    });
+
+    const { rerender } = render(<ScrollableText title="short">short</ScrollableText>);
+    // "short" は 5 文字 * 20 = 100 = clientWidth なので収まっている
+    expect(screen.getByTitle('short')).not.toHaveAttribute('data-overflow-end');
+
+    const longText = 'a much longer track name that definitely overflows';
+    rerender(<ScrollableText title={longText}>{longText}</ScrollableText>);
+
+    expect(screen.getByTitle(longText)).toHaveAttribute('data-overflow-end', 'true');
+  });
+
+  it('テキストが変わるとスクロール位置が先頭に戻る', () => {
+    const { rerender } = render(<ScrollableText title="short">short</ScrollableText>);
+    const before = screen.getByTitle('short');
+    // 末尾までスクロールして読んでいた状態を模す
+    Object.defineProperty(before, 'scrollLeft', { configurable: true, value: 120, writable: true });
+    expect(before.scrollLeft).toBe(120);
+
+    rerender(<ScrollableText title="long name after change">long name after change</ScrollableText>);
+    const after = screen.getByTitle('long name after change');
+
+    expect(after.scrollLeft).toBe(0);
   });
 });

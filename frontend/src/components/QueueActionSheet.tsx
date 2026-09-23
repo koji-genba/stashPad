@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import type { EnqueueInput } from '@/store/playerStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import ScrollableText from './ScrollableText';
 import styles from './QueueActionSheet.module.css';
 
 interface Props {
@@ -48,7 +49,9 @@ export default function QueueActionSheet({ name, input, onClose }: Props) {
         aria-label={`${name} のキュー操作`}
         className={styles.panel}
       >
-        <p className={styles.fileName}>{name}</p>
+        <ScrollableText className={styles.fileName} title={name}>
+          {name}
+        </ScrollableText>
 
         <button
           type="button"

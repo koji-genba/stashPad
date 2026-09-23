@@ -235,3 +235,19 @@ describe('HistoryPage 総件数と次へページングの整合性', () => {
     expect(screen.getByRole('button', { name: '次へ' })).toBeDisabled();
   });
 });
+
+describe('HistoryPage 長い作品名/ファイル名の可読性 (issue #107)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('作品名・ファイル名要素に title 属性でフルネームが付く', async () => {
+    renderPage();
+
+    await screen.findByText('猫の物語');
+    expect(screen.getByText('猫の物語')).toHaveAttribute('title', '猫の物語');
+    // last_file_path='a/02.mp3' の basename は '02.mp3'
+    expect(screen.getByText('02.mp3')).toHaveAttribute('title', '02.mp3');
+  });
+});

@@ -6,8 +6,9 @@
 // 再レンダーが走るのを防ぐ。
 //
 // 注意: 監視しているのは要素のサイズ・スクロール位置のみで、中身のテキスト
-// (props.children)の変更は監視しない。テキストが変わって overflow 状態が
-// 変わりうる場合は、呼び出し側で要素を key ごと作り直すこと。
+// (props.children)の変更そのものはこのフックでは検知しない。テキスト変更時の
+// 再計測は ScrollableText が内部コンポーネントを key で作り直すことで担保して
+// いる(呼び出し側がこのフックを直接使う場合は、同様に要素を作り直すこと)。
 import { useLayoutEffect, useState, type RefObject } from 'react';
 import { overflowEdges, type OverflowEdges } from '@/utils/overflowEdges';
 

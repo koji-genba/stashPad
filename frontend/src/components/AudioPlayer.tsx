@@ -16,6 +16,7 @@ import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
 import { formatTime } from '@/utils/format';
 import { clearProgress, flushProgress, loadResumePosition, recordProgress } from '@/lib/playbackMemory';
 import FullscreenPlayer from './FullscreenPlayer';
+import ScrollableText from './ScrollableText';
 import Thumbnail from './Thumbnail';
 import styles from './AudioPlayer.module.css';
 
@@ -280,12 +281,12 @@ export default function AudioPlayer() {
               src={playerThumbUrl(track) ?? ''}
             />
             <div className={styles.meta}>
-              <div className={styles.trackName} title={track.name}>
+              <ScrollableText className={styles.trackName} title={track.name}>
                 {track.name}
-              </div>
-              <div className={styles.workName} title={track.workTitle}>
+              </ScrollableText>
+              <ScrollableText className={styles.workName} title={track.workTitle}>
                 {track.workTitle}
-              </div>
+              </ScrollableText>
             </div>
           </button>
 

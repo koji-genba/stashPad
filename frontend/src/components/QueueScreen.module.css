@@ -114,17 +114,11 @@ button.rowBody:hover {
 
 .trackName {
   font-size: 14px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .workTitle {
   font-size: 12px;
   color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .rowCurrent .num,

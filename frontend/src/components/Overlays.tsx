@@ -8,6 +8,7 @@ import { useOverlayStore } from '@/store/overlayStore';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useOverlayHistorySync } from '@/hooks/useOverlayHistorySync';
 import ImageViewer from './ImageViewer';
+import ScrollableText from './ScrollableText';
 import styles from './Overlays.module.css';
 
 // Escape キーでオーバーレイを閉じる(active の間だけ購読する)
@@ -40,7 +41,9 @@ function VideoModal() {
   return (
     <div className={styles.overlay}>
       <div className={styles.topbar}>
-        <span className={styles.title}>{video.name}</span>
+        <ScrollableText className={styles.title} title={video.name}>
+          {video.name}
+        </ScrollableText>
         <button className={styles.close} onClick={close} aria-label="閉じる">
           ✕
         </button>
@@ -84,7 +87,9 @@ function TextModal() {
   return (
     <div className={styles.overlay}>
       <div className={styles.topbar}>
-        <span className={styles.title}>{text.name}</span>
+        <ScrollableText className={styles.title} title={text.name}>
+          {text.name}
+        </ScrollableText>
         <button className={styles.close} onClick={close} aria-label="閉じる">
           ✕
         </button>

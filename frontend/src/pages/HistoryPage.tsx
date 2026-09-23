@@ -4,6 +4,7 @@ import type { HistoryItem, HistorySort, HistoryOrder } from '@/api/types';
 import { deleteHistory, fetchHistory } from '@/api/client';
 import Thumbnail from '@/components/Thumbnail';
 import FetchError from '@/components/FetchError';
+import ScrollableText from '@/components/ScrollableText';
 import { basename, formatDateTime } from '@/utils/format';
 import styles from './HistoryPage.module.css';
 
@@ -148,10 +149,12 @@ export default function HistoryPage() {
                     loading="lazy"
                   />
                   <div className={styles.info}>
-                    <div className={styles.workTitle}>{item.work.title}</div>
-                    <div className={styles.sub}>
+                    <ScrollableText className={styles.workTitle} title={item.work.title}>
+                      {item.work.title}
+                    </ScrollableText>
+                    <ScrollableText className={styles.sub} title={basename(item.last_file_path)}>
                       {basename(item.last_file_path)}
-                    </div>
+                    </ScrollableText>
                     <div className={styles.meta}>
                       <span>{formatDateTime(item.last_played_at)}</span>
                       <span className={styles.count}>{item.play_count} 回</span>
