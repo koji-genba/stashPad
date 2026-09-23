@@ -492,3 +492,10 @@ describe('FileBrowser 行本体の挙動が維持される', () => {
     expect(screen.queryByText('track01.mp3')).toBeNull();
   });
 });
+
+describe('FileBrowser 長い名前の可読性 (issue #106)', () => {
+  it('行の名前要素に title 属性でフルネームが付く', async () => {
+    await renderAndWait();
+    expect(screen.getByText('track01.mp3')).toHaveAttribute('title', 'track01.mp3');
+  });
+});

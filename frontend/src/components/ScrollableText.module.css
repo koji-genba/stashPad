@@ -1,0 +1,38 @@
+.scroller {
+  --fade: 24px;
+  display: block;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.scroller::-webkit-scrollbar {
+  display: none;
+}
+
+/* はみ出している側だけフェードを掛ける。両方はみ出しているときは両端フェード */
+.scroller[data-overflow-start] {
+  mask-image: linear-gradient(to right, transparent, black var(--fade));
+  -webkit-mask-image: linear-gradient(to right, transparent, black var(--fade));
+}
+.scroller[data-overflow-end] {
+  mask-image: linear-gradient(to left, transparent, black var(--fade));
+  -webkit-mask-image: linear-gradient(to left, transparent, black var(--fade));
+}
+.scroller[data-overflow-start][data-overflow-end] {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--fade),
+    black calc(100% - var(--fade)),
+    transparent
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--fade),
+    black calc(100% - var(--fade)),
+    transparent
+  );
+}
