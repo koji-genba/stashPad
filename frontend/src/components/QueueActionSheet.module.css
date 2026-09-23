@@ -27,7 +27,7 @@
   flex-direction: column;
 }
 
-/* パネル先頭のファイル名(1 行 ellipsis) */
+/* パネル先頭のファイル名(横スクロール + フェードで全文を読める。ScrollableText) */
 .fileName {
   margin: 0 0 8px;
   padding: 0 20px 12px;
@@ -35,9 +35,6 @@
   font-size: 14px;
   font-weight: 600;
   color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* アクションボタン共通 */

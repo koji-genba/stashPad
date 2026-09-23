@@ -16,6 +16,7 @@ import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { formatTime } from '@/utils/format';
 import QueueScreen from './QueueScreen';
+import ScrollableText from './ScrollableText';
 import Thumbnail from './Thumbnail';
 import styles from './FullscreenPlayer.module.css';
 
@@ -127,12 +128,12 @@ export default function FullscreenPlayer() {
 
       {/* トラック名 + 作品タイトル */}
       <div className={styles.trackInfo}>
-        <div className={styles.trackName} title={track.name}>
+        <ScrollableText className={styles.trackName} title={track.name}>
           {track.name}
-        </div>
-        <div className={styles.workTitle} title={track.workTitle}>
+        </ScrollableText>
+        <ScrollableText className={styles.workTitle} title={track.workTitle}>
           {track.workTitle}
-        </div>
+        </ScrollableText>
       </div>
 
       {/* 大シークバー */}

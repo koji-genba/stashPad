@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
 import { usePlayerStore } from '@/store/playerStore';
 import { usePlayerOverlay } from '@/hooks/usePlayerOverlay';
+import ScrollableText from './ScrollableText';
 import styles from './QueueScreen.module.css';
 
 /** リスト端から何 px 以内で自動スクロールを始めるか */
@@ -118,8 +119,12 @@ export default function QueueScreen() {
                 {i + 1}
               </span>
               <span className={styles.texts}>
-                <span className={styles.trackName}>{t.name}</span>
-                <span className={styles.workTitle}>{t.workTitle}</span>
+                <ScrollableText className={styles.trackName} title={t.name}>
+                  {t.name}
+                </ScrollableText>
+                <ScrollableText className={styles.workTitle} title={t.workTitle}>
+                  {t.workTitle}
+                </ScrollableText>
               </span>
             </>
           );

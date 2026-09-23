@@ -12,6 +12,7 @@ import { useOverlayStore } from '@/store/overlayStore';
 import { formatBytes, joinPath, pathCrumbs } from '@/utils/format';
 import FetchError from './FetchError';
 import QueueActionSheet from './QueueActionSheet';
+import ScrollableText from './ScrollableText';
 import styles from './FileBrowser.module.css';
 
 interface Props {
@@ -194,7 +195,9 @@ export default function FileBrowser({ workId, workTitle }: Props) {
                   <span className={`${styles.icon} ${entry.is_dir ? styles.dir : ''}`}>
                     {entry.is_dir ? '📁' : (KIND_ICON[entry.media_kind] ?? '·')}
                   </span>
-                  <span className={styles.name}>{entry.name}</span>
+                  <ScrollableText className={styles.name} title={entry.name}>
+                    {entry.name}
+                  </ScrollableText>
                   {!entry.is_dir && entry.size > 0 && (
                     <span className={styles.size}>{formatBytes(entry.size)}</span>
                   )}
